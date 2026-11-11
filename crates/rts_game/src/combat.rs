@@ -71,8 +71,7 @@ pub fn sylves() -> CombatRules {
 }
 
 /// Le Collectif : beaucoup d'unités volantes, peu d'unités au sol mais
-/// chères et solides. Pas encore de fiches de bâtiments (leurs bâtiments
-/// arrivent : en attendant, armure 1 et pas d'arme).
+/// chères et solides.
 pub fn collectif() -> CombatRules {
     CombatRules {
         // Ordre de `collectif::kind` : Collecteur, Automate, Perceur, Essaim, Essaimeur, Titan.
@@ -90,6 +89,15 @@ pub fn collectif() -> CombatRules {
                 vec![Weapon::new(40.0, 9.0, 2.8, GROUND).with_splash(1.8).with_bonus(Structure, 10.0)],
             ),
         ],
-        buildings: Vec::new(),
+        // Ordre de `collectif::building` : Écrin, Résonateur, Creuset,
+        // Orfèvrerie, Aiguillon (défense fixe : sol et air, cadence rapide
+        // mais dégâts faibles, valeurs proposées).
+        buildings: vec![
+            CombatStats::structure(1.0, &[Armored], Vec::new()),
+            CombatStats::structure(1.0, &[Armored], Vec::new()),
+            CombatStats::structure(1.0, &[Armored], Vec::new()),
+            CombatStats::structure(1.0, &[Armored], Vec::new()),
+            CombatStats::structure(1.0, &[Armored], vec![Weapon::new(9.0, 7.0, 0.7, BOTH)]),
+        ],
     }
 }

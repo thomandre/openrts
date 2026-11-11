@@ -1,8 +1,8 @@
 //! Démonstration de bataille (`OPENRTS_DEMO=battle`) : deux armées de la
 //! même faction (`OPENRTS_FACTION`, la Garde par défaut), le joueur 1 en
 //! orange au sud, le joueur 2 en bleu au nord, chacune devant deux défenses
-//! fixes (Tourelles de la Garde, Épineux des Sylves ; le Collectif n'a pas
-//! encore de bâtiments). Au bout de quelques secondes, les deux armées
+//! fixes (Tourelles de la Garde, Épineux des Sylves, Aiguillons du
+//! Collectif). Au bout de quelques secondes, les deux armées
 //! reçoivent un ordre d'attaque-déplacement vers la base adverse, par la file
 //! des ordres comme le ferait un joueur, et se rencontrent au milieu.
 //!
@@ -106,7 +106,8 @@ pub fn spawn(commands: &mut Commands, faction: Faction, units: &UnitCatalog, bui
         let defense = match faction {
             Faction::Garde => Some(garde::building::TOURELLE),
             Faction::Sylves => Some(sylves::building::EPINEUX),
-            Faction::Collectif | Faction::CollectifOrRose => None,
+            Faction::Collectif => Some(collectif::building::AIGUILLON),
+            Faction::CollectifOrRose => None,
         };
         if let (Some(catalog), Some(defense)) = (buildings, defense) {
             for x in [-9.0, 9.0] {

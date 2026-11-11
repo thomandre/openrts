@@ -10,7 +10,7 @@ Le design du jeu est décrit dans [GAME_DESIGN.md](GAME_DESIGN.md).
 | Dossier | Rôle |
 | --- | --- |
 | `crates/rts_engine` | Le moteur générique : entrées, caméra, sélection, joueurs (`players`), file des ordres (`orders`), simulation, collisions, navigation (grille, A\*), bâtiments (pose, chantiers), économie (`economy` : gisements, récolte, production, population, interface), combat (`combat` : armes, ciblage, ordres, dégâts, barre d'ordres, effets), rendu (`graphics`). Aucun contenu de jeu. |
-| `crates/rts_game` | Le jeu : unités, bâtiments, factions, cartes, gisements (`garde.rs`, `sylves.rs`, `collectif.rs`, `map.rs`, `base.rs`, `base_sylves.rs`, `gisements.rs`, `combat.rs` : fiches de combat, `battle.rs` : démonstration de bataille). Utilise `rts_engine`. |
+| `crates/rts_game` | Le jeu : unités, bâtiments, factions, cartes, gisements (`garde.rs`, `sylves.rs`, `collectif.rs`, `map.rs`, `base.rs`, `base_sylves.rs`, `base_collectif.rs`, `gisements.rs`, `combat.rs` : fiches de combat, `battle.rs` : démonstration de bataille). Utilise `rts_engine`. |
 
 ## Compiler et lancer
 
@@ -38,7 +38,7 @@ Sous Linux, il faut aussi les dépendances système de Bevy
 | Stop / Tenir la position | S / H, ou boutons de la barre d'ordres (en bas à gauche, visible avec des unités sélectionnées) |
 | Quitter le mode visée | Clic droit ou Échap (Maj + clic : donner l'ordre sans quitter le mode) |
 | Voir une unité adverse | Clic gauche dessus (anneau rouge ; pas d'ordre possible) |
-| Récolter (Techniciens ou Pousses sélectionnés) | Clic droit sur un gisement de Cristal, ou sur un Extracteur (Calice chez les Sylves) terminé |
+| Récolter (Techniciens, Pousses ou Collecteurs sélectionnés) | Clic droit sur un gisement de Cristal, ou sur un Extracteur (Calice chez les Sylves, Creuset chez le Collectif) terminé |
 | Point de ralliement (bâtiment producteur sélectionné) | Clic droit sur le sol, ou sur un gisement (les Techniciens produits y récoltent directement) |
 | Produire (Quartier général ou Caserne sélectionné) | Touche de l'unité ou bouton du panneau en bas : T (Technicien, QG) ; S (Sentinelle), V, L, F (Caserne, grisés tant que leur bâtiment n'existe pas) |
 | Annuler une unité en file | Clic sur sa case dans la file (remboursée) |
@@ -46,7 +46,7 @@ Sous Linux, il faut aussi les dépendances système de Bevy
 | Faire défiler la caméra | Flèches ou souris au bord de l'écran |
 | Zoomer | Molette ou trackpad |
 | Test de charge (300 unités) | F3 |
-| Construire (un Technicien ou une Pousse sélectionné) | B puis la touche du bâtiment, ou un bouton de la barre en bas de l'écran |
+| Construire (un Technicien, une Pousse ou un Collecteur sélectionné) | B puis la touche du bâtiment, ou un bouton de la barre en bas de l'écran |
 | Poser le bâtiment | Clic gauche (Maj + clic : en poser un autre) |
 | Annuler la pose | Clic droit ou Échap |
 | Libérer la souris | Échap (un clic dans le jeu la reprend ; pendant une pose, le premier Échap annule la pose) |
@@ -102,6 +102,28 @@ Donner un autre ordre à la Pousse avant qu'elle arrive annule la promesse,
 remboursée en entier ; annuler un chantier qui pousse (X) rend 75 % du coût
 et la Pousse ressort de terre.
 
+### Bâtiments du Collectif (`OPENRTS_FACTION=collectif`)
+
+| Touche (après B) | Bâtiment | Empreinte | Prérequis | Rôle |
+| --- | --- | --- | --- | --- |
+| E | Écrin | 7 × 7 m | — | Cœur de base, dépôt, produit les Collecteurs (C), 15 de population, champ de résonance de 8 m |
+| R | Résonateur | 2 × 2 m | — | Relais : 8 de population, champ de résonance de 6,5 m |
+| C | Creuset | 4 × 4 m | — (pile sur une source d'Éther libre) | Récolte de l'Éther |
+| O | Orfèvrerie | 5 × 5 m | Écrin, dans un champ | Produit les Automates (A) ; Perceur (P) grisé |
+| A | Aiguillon | 2 × 2 m | Orfèvrerie, dans un champ | Défense fixe |
+
+Le Collectif construit par **sertissage à distance**. Avec des Collecteurs
+sélectionnés, B puis une lettre ouvre la pose ; les **champs de résonance**
+de l'Écrin et des Résonateurs terminés apparaissent alors au sol (cercles
+vert d'eau). Orfèvrerie et Aiguillon ne se posent qu'à l'intérieur d'un
+champ : ailleurs, leur fantôme est rouge et le clic affiche « Hors champ ».
+Le coût est débité à la pose et l'emplacement promis au Collecteur libre le
+plus proche ; il vole jusque-là, pose une gemme d'ancrage et **repart
+aussitôt** à sa récolte (ou au gisement de Cristal le plus proche). Le
+bâtiment s'assemble ensuite seul, sous sa gemme qui tourne. Un autre ordre
+donné au Collecteur avant qu'il arrive annule la promesse, remboursée en
+entier ; annuler un chantier (X) rend 75 % de son coût.
+
 ### Combat
 
 Chaque unité et chaque bâtiment a des points de vie, une armure et des
@@ -143,7 +165,9 @@ compteurs en haut à droite montrent les stocks et la population
 La partie démarre avec 50 Cristal, un Quartier général, deux Modules
 d'habitat, les gisements et quatre Techniciens qui récoltent déjà. En
 Sylves : un Arbre-mère, deux Souches nourricières et quatre Pousses (elles
-rapportent à l'Arbre-mère, et récoltent l'Éther au pied d'un Calice).
+rapportent à l'Arbre-mère, et récoltent l'Éther au pied d'un Calice). En
+Collectif : un Écrin, trois Résonateurs et quatre Collecteurs, qui volent
+tout droit au gisement et à l'Écrin, par-dessus les bâtiments.
 
 Tous les ordres (déplacer, récolter, poser, produire, rallier, annuler)
 passent par une file appliquée au pas de simulation suivant : c'est la base
@@ -177,6 +201,7 @@ Deux niveaux de qualité (`GraphicsQuality`) :
 | `OPENRTS_ZOOM=12` | Distance de départ de la caméra (10 à 70 m) |
 | `OPENRTS_DEMO=buildings` | Garde : scène de démonstration des bâtiments (les cinq bâtiments, un chantier en cours, un fantôme vert et un rouge, un groupe qui contourne la Caserne au bout de 11 s) |
 | `OPENRTS_FACTION=sylves OPENRTS_DEMO=buildings` | Sylves : les cinq bâtiments, un Calice et la ligne de Cristal récoltés par des Pousses, une Ronceraie en pleine croissance, un fantôme vert et un rouge, une Pousse sélectionnée qui part s'enraciner au bout de 10,5 s (emplacement promis en vert) |
+| `OPENRTS_FACTION=collectif OPENRTS_DEMO=buildings` | Collectif : les cinq bâtiments, les champs de résonance au sol, un Creuset et la ligne de Cristal récoltés par des Collecteurs, une Orfèvrerie en cours d'assemblage sous sa gemme, un fantôme vert dans un champ et un rouge hors champ, un Collecteur sélectionné qui part sertir un Aiguillon au bout de 10 s puis repart récolter |
 | `OPENRTS_FOCUS=x,z` | La caméra vise ce point du sol au démarrage |
 | `OPENRTS_DEMO=economy` | Garde : l'économie en marche (douze Techniciens sur la ligne de Cristal, trois à un Extracteur, Quartier général sélectionné avec trois Techniciens en file et son point de ralliement, compteurs) |
 | `OPENRTS_DEMO=battle` | Deux armées de la même faction (joueur 1 orange au sud, joueur 2 bleu au nord), chacune devant deux défenses fixes (Tourelles, Épineux ; le Collectif n'a pas encore de bâtiments), qui partent à l'attaque-déplacement au bout de 8 s et se rencontrent au milieu. `OPENRTS_FACTION` choisit la faction, `OPENRTS_STRESS=1` donne 300 contre 300 |
@@ -186,6 +211,7 @@ Deux niveaux de qualité (`GraphicsQuality`) :
 Exemples : `OPENRTS_WINDOWED=1 OPENRTS_STRESS=1 OPENRTS_SCREENSHOT=/tmp/charge.png cargo run --release`,
 `OPENRTS_WINDOWED=1 OPENRTS_DEMO=buildings OPENRTS_ZOOM=36 OPENRTS_SCREENSHOT=/tmp/batiments.png cargo run --release`,
 `OPENRTS_FACTION=sylves OPENRTS_WINDOWED=1 OPENRTS_DEMO=buildings OPENRTS_ZOOM=40 OPENRTS_FOCUS=0,-5 OPENRTS_SCREENSHOT=/tmp/sylves.png cargo run --release`,
+`OPENRTS_FACTION=collectif OPENRTS_WINDOWED=1 OPENRTS_DEMO=buildings OPENRTS_ZOOM=40 OPENRTS_FOCUS=0,-6 OPENRTS_SCREENSHOT=/tmp/collectif.png cargo run --release`,
 `OPENRTS_WINDOWED=1 OPENRTS_DEMO=economy OPENRTS_ZOOM=34 OPENRTS_FOCUS=1,-11 OPENRTS_SCREENSHOT=/tmp/economie.png cargo run --release`,
 `OPENRTS_WINDOWED=1 OPENRTS_DEMO=battle OPENRTS_ZOOM=18 OPENRTS_FOCUS=0,1 OPENRTS_SCREENSHOT=/tmp/bataille.png cargo run --release`,
 `OPENRTS_WINDOWED=1 OPENRTS_DEMO=battle OPENRTS_STRESS=1 OPENRTS_ZOOM=70 OPENRTS_SCREENSHOT=/tmp/charge.png cargo run --release`.

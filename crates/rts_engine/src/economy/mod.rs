@@ -249,6 +249,9 @@ pub enum NoticeKind {
     /// Aucun ouvrier libre parmi la sélection (style « ouvrier consommé » :
     /// chacun ne fait qu'un bâtiment).
     NoWorker,
+    /// Le bâtiment doit être posé dans un champ de construction du joueur
+    /// (voir `buildings::field`).
+    OutsideField,
 }
 
 impl NoticeKind {
@@ -262,6 +265,7 @@ impl NoticeKind {
             NoticeKind::MissingRequirement => "Prérequis manquant",
             NoticeKind::Blocked => "Emplacement occupé",
             NoticeKind::NoWorker => "Aucun ouvrier libre",
+            NoticeKind::OutsideField => "Hors champ : à poser près d'un relais ou du cœur de base",
         }
     }
 }

@@ -547,6 +547,27 @@ mod tests {
         assert_eq!(left + collected + carried, 1000);
     }
 
+    /// Un ouvrier volant (le Collecteur du Collectif) : pas de grille ni de
+    /// chemin au sol, il va tout droit, par-dessus le dépôt lui-même.
+    #[test]
+    fn a_flying_worker_harvests_over_obstacles() {
+        let mut app = app();
+        // Gisement au-dessus (en z) du dépôt, ouvrier de l'autre côté.
+        let patch = node(&mut app, ResourceKind::Primary, IVec2::new(49, 56), UVec2::new(2, 1), 1000);
+        let w = worker(&mut app, Vec2::new(0.0, -5.0));
+        app.world_mut().get_mut::<Collider>(w).unwrap().layer = crate::collision::CollisionLayer::Air;
+        order(&mut app, vec![w], patch);
+        run(&mut app, 1.0);
+        // Il survole le dépôt sans chercher de chemin au sol.
+        assert!(app.world().get::<NavPath>(w).is_none(), "pas de chemin au sol pour un volant");
+        run(&mut app, 19.0);
+        let collected = stock(&app).primary;
+        assert!(collected >= 15 && collected.is_multiple_of(5), "récolté : {collected}");
+        let carried = app.world().get::<Harvesting>(w).unwrap().carrying.map_or(0, |c| c.1);
+        let left = app.world().get::<ResourceNode>(patch).unwrap().amount;
+        assert_eq!(left + collected + carried, 1000);
+    }
+
     #[test]
     fn a_depleted_node_vanishes_and_workers_move_to_the_next() {
         let mut app = app();

@@ -90,6 +90,26 @@ Construction des Sylves : **la Pousse devient le bâtiment** (`ConstructionStyle
 | Essaimeur | Vaisseau porte-drones, lent | Bracelet ouvert qui vole à plat : jonc d'or serti de sept cabochons, émeraudes aux bouts et en pendants, orbe d'émeraude qui tourne dans l'ouverture, escorte de six anneaux en orbite |
 | Titan | Géant de siège, très lent | Colosse serti : buste hexagonal d'or ceint d'émeraude, cœur d'émeraude qui tourne, canon hexagonal, épaules en prismes hexagonaux, couronne de cinq lames d'or |
 
+Bâtiments et économie du Collectif (**propositions**, étape 4, à valider et ajuster en test). Palier 1 aux mêmes rôles que ceux de la Garde et des Sylves, dans la direction artistique actuelle : des machines aux lignes de joaillerie (socles hexagonaux d'émail vert, griffes de chaton, arches d'or, rangs de perles, émeraudes taillées), pas des bijoux posés au sol ; l'émail d'équipe sur les surfaces vues de dessus.
+
+| Bâtiment | Rôle | Empreinte | PV | Temps | Coût | Prérequis | Touche (après B) | Champ | Silhouette |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| Écrin | Cœur de base : dépôt, produit les Collecteurs, 15 de population | 7 × 7 m | 1 500 | 75 s | 400 P | — | E | Émet 8 m | Socle hexagonal d'émail, plateau d'équipe cerclé de perles, six griffes d'or tenant une grosse émeraude qui tourne, arche d'or du dépôt en façade |
+| Résonateur | Relais : population (+8), étend le champ | 2 × 2 m | 300 | 25 s | 100 P | — | R | Émet 6,5 m | Colonne d'or sur pied d'équipe, trois griffes tenant une émeraude qui pulse, anneau d'or ouvert qui tourne |
+| Creuset | Ressource rare : posé sur une source, il distille l'Éther | 4 × 4 m | 450 | 25 s | 75 P | — (sur une source libre) | C | — | Coupe d'or sur trois jambes plongées dans la faille, nappe émeraude, bord d'équipe, anse d'or et pierre pendue |
+| Orfèvrerie | Infanterie : Automates (Perceur grisé) | 5 × 5 m | 1 000 | 50 s | 150 P | Écrin ; dans un champ | O | — | Dalle d'émail, deux arches d'or en croix, quatre losanges d'équipe, piliers coiffés d'émeraudes |
+| Aiguillon | Défense fixe | 2 × 2 m | 300 | 25 s | 100 P | Orfèvrerie ; dans un champ | A | — | Tour d'or sur pied d'équipe, tête qui balaie : cabochon d'équipe, longue aiguille d'or, émeraude, lames de couronne |
+
+Construction du Collectif : **le sertissage à distance** (`ConstructionStyle::RemoteAnchor` dans le moteur). À la pose, le coût est payé et l'emplacement promis au Collecteur libre le plus proche ; il vole jusque-là, pose une « gemme d'ancrage » (le chantier apparaît, la gemme tourne au-dessus) et repart aussitôt à sa récolte ; le bâtiment s'assemble seul pendant son temps de construction. C'est la troisième asymétrie : la Garde immobilise son ouvrier, les Sylves le perdent, le Collectif ne perd que quelques secondes de vol, mais ne bâtit l'essentiel que dans ses **champs de résonance**. Règles proposées :
+
+- Champ de résonance : un cercle centré sur l'Écrin (8 m) ou sur un Résonateur (6,5 m), actif seulement une fois le bâtiment terminé. L'Orfèvrerie et l'Aiguillon ne se posent que si le centre de leur empreinte est dans un champ du joueur (fantôme rouge et message « Hors champ » sinon) ; l'Écrin, le Résonateur et le Creuset se posent partout. Les champs sont dessinés au sol pendant la pose.
+- Un Collecteur n'a qu'un emplacement promis à la fois (« Aucun ouvrier libre » si toute la sélection est déjà en route). Un autre ordre donné avant l'arrivée annule la promesse, remboursée en entier ; l'emplacement est revérifié à l'arrivée (champ compris).
+- Annuler un chantier qui s'assemble rend **75 %** de son coût (le Collecteur, lui, n'a rien perdu).
+- Plus tard, avec le combat : un bâtiment qui n'est plus dans aucun champ (Résonateur détruit) sera désactivé. La requête existe déjà dans le moteur (`buildings::field::in_active_field`), elle n'est pas encore appliquée.
+- Économie : les Collecteurs récoltent le Cristal et l'Éther (au bord d'un Creuset terminé) avec les mêmes cadences que les autres (5 Cristal en 2,8 s, 4 Éther en 2 s) ; ils volent tout droit, par-dessus les bâtiments, sans chemin au sol. Coûts, temps et population : Collecteur 50 P, 12 s, 1 ; Automate 100 P, 24 s, 2 ; Perceur 125 P + 50 R, 30 s, 3 ; Essaim 75 P + 50 R, 25 s, 2 ; Essaimeur 300 P + 200 R, 60 s, 6 ; Titan 350 P + 250 R, 70 s, 8. Le Perceur attend le « Lapidaire » (palier 2, à concevoir) ; Essaim, Essaimeur et Titan n'ont pas encore de bâtiment.
+
+- [ ] Palier 2 du Collectif (Lapidaire, bâtiment aérien…)
+- [ ] Désactivation des bâtiments hors champ, avec le combat
 - [ ] Essaimeur : vraie mécanique de lancement de drones (fabrication, lancement, retour, perte), à concevoir avec le combat (étape 5). Pour l'instant, son escorte et les Essaims sont purement visuels.
 - [x] Unités volantes : couche de collision séparée. Elles ignorent la grille de navigation et les obstacles au sol, ne se bousculent qu'entre elles, et passent au-dessus des unités au sol.
 
@@ -299,7 +319,8 @@ On avance par étapes courtes, chacune jouable et testée avant de passer à la 
    - coûts débités à la pose, chantiers annulables et remboursés ; files de production de 5 décrites en données, annulation remboursée, point de ralliement (sur un gisement : récolte directe) ; population par joueur avec plafond global réglable ;
    - interface : compteurs en haut à droite, panneau de production (boutons et raccourcis par la même `GameAction`, file et progression), panneau de chantier, messages courts.
    - *Fait pour les Sylves (propositions) :* style de construction « la Pousse devient le bâtiment » (générique dans le moteur), cinq bâtiments du palier 1, économie de base, partie de départ (`OPENRTS_FACTION=sylves`) et démonstration (`OPENRTS_DEMO=buildings`).
-   *Reste : économie du Collectif, récolte propre aux Sylves, contrôle de territoire à étudier.*
+   - *Fait pour le Collectif (propositions) :* style de construction « sertissage à distance » et champs de construction (génériques dans le moteur), cinq bâtiments du palier 1, économie de base avec un ouvrier volant, partie de départ (`OPENRTS_FACTION=collectif`) et démonstration (`OPENRTS_DEMO=buildings`).
+   *Reste : récolte propre aux Sylves et au Collectif, contrôle de territoire à étudier.*
 5. **Combat** : portée, dégâts, armure, ciblage automatique, attaque-déplacement, mort des unités. *Fait (valeurs proposées, voir « Unités, combat et lisibilité ») :*
    - un joueur adverse (sans IA) avec sa couleur d'équipe (bleu froid) : seuls les matériaux de couleur d'équipe sont recréés par joueur ; le rectangle ne sélectionne que ses propres entités, un clic sur un ennemi le montre (anneau rouge) sans pouvoir lui donner d'ordre ;
    - fiches de combat en données (PV, armure, catégories, armes, bonus, zone) pour les trois factions, défenses fixes armées ; ciblage automatique dans une grille spatiale, riposte, laisse ; ordres attaquer, attaque-déplacement, stop, tenir la position par la file des ordres, barre d'ordres (A, M, S, H) et mode visée jouables au doigt ;

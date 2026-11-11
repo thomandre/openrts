@@ -10,6 +10,7 @@
 
 use bevy::prelude::*;
 
+use super::field::{ConstructionFields, FieldBuildings};
 use super::{completed_types, Building, BuildingCatalog, Footprint, GhostPiece, PlacementGhost, UnderConstruction};
 use crate::camera::{screen_to_ground, RtsCamera};
 use crate::cursor::Pointer;
@@ -53,6 +54,7 @@ pub(crate) fn handle_build_actions(
     local: Res<LocalPlayer>,
     selected: Query<(Entity, &Unit, &Owner), With<Selected>>,
     buildings: Query<(&Building, &Owner, Has<UnderConstruction>)>,
+    field_buildings: FieldBuildings,
     nodes: Query<(Entity, &ResourceNode, &Footprint)>,
     mut placement: ResMut<Placement>,
     mut orders: ResMut<CommandQueue>,
@@ -84,9 +86,10 @@ pub(crate) fn handle_build_actions(
                 let (Some(type_index), Some(grid)) = (placement.active, grid.as_deref()) else { continue };
                 let Some(ground) = screen_to_ground(camera, camera_transform, screen_pos) else { continue };
                 let min_cell = catalog.snap_min_cell(type_index, ground.xz(), grid.frame(), nodes.iter());
+                let fields = ConstructionFields::of_player(&catalog, grid.frame(), local.0, field_buildings.iter());
                 // Emplacement interdit : on le dit, et on reste en mode pose
                 // (le fantôme est rouge). La simulation revérifiera de toute façon.
-                if let Err(kind) = catalog.check_placement(type_index, min_cell, grid, &completed, nodes.iter()) {
+                if let Err(kind) = catalog.check_placement(type_index, min_cell, grid, &completed, &fields, nodes.iter()) {
                     notices.write(Notice { player: local.0, kind });
                     continue;
                 }
@@ -158,23 +161,26 @@ pub(crate) fn update_pointer_ghost(
 
 /// Place les fantômes sur leurs cases et les colore : vert si l'emplacement
 /// est libre (dans la carte, sans bâtiment ni obstacle ; ou, pour un bâtiment
-/// d'extraction, pile sur une source libre) et les prérequis remplis, rouge sinon.
+/// d'extraction, pile sur une source libre), dans un champ de construction
+/// s'il en faut un, et les prérequis remplis ; rouge sinon.
 pub(crate) fn refresh_ghosts(
     catalog: Option<Res<BuildingCatalog>>,
     grid: Option<Res<NavGrid>>,
     local: Res<LocalPlayer>,
     buildings: Query<(&Building, &Owner, Has<UnderConstruction>)>,
+    field_buildings: FieldBuildings,
     nodes: Query<(Entity, &ResourceNode, &Footprint)>,
     mut ghosts: Query<(&mut PlacementGhost, &mut Transform, &Children)>,
     mut pieces: Query<&mut MeshMaterial3d<StandardMaterial>, With<GhostPiece>>,
 ) {
     let (Some(catalog), Some(grid)) = (catalog, grid) else { return };
     let completed = completed_types(&catalog, local.0, buildings.iter());
+    let fields = ConstructionFields::of_player(&catalog, grid.frame(), local.0, field_buildings.iter());
     for (mut ghost, mut transform, children) in &mut ghosts {
         let size = catalog.types[ghost.type_index].footprint;
         let center = grid.frame().rect(ghost.min_cell, size).center();
         transform.translation = Vec3::new(center.x, 0.0, center.y);
-        let valid = catalog.check_placement(ghost.type_index, ghost.min_cell, &grid, &completed, nodes.iter()).is_ok();
+        let valid = catalog.check_placement(ghost.type_index, ghost.min_cell, &grid, &completed, &fields, nodes.iter()).is_ok();
         if ghost.valid == valid && !ghost.is_added() {
             continue;
         }
