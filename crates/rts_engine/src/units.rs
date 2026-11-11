@@ -330,6 +330,12 @@ impl ModelBuilder {
         self.add(slot, PartShape::Tube { points: points.to_vec(), radius, radius_end: radius }, Transform::IDENTITY)
     }
 
+    /// Tore (anneau) couché à plat d'axe y, tourné par `rotation` ; `arc` en
+    /// radians (2π pour un anneau fermé, voir [`PartShape::Torus`]).
+    pub fn torus(&mut self, slot: MaterialSlot, major: f32, minor: f32, arc: f32, at: Vec3, rotation: Vec3) -> &mut Self {
+        self.add(slot, PartShape::Torus { major, minor, arc }, placed(at, rotation))
+    }
+
     /// Ajoute des pièces dans un sous-groupe placé par `transform`.
     ///
     /// `impl FnOnce(&mut Self)` : n'importe quelle fonction (souvent une

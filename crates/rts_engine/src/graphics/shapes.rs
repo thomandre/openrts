@@ -6,7 +6,7 @@
 //! utiles pour des engins blindés : la plaque biseautée et le prisme.
 
 use bevy::asset::RenderAssetUsages;
-use bevy::mesh::{Indices, PrimitiveTopology, VertexAttributeValues};
+use bevy::mesh::{Indices, PrimitiveTopology, TorusMeshBuilder, VertexAttributeValues};
 use bevy::prelude::*;
 
 /// Forme d'une pièce, en mètres, centrée sur son origine.
@@ -53,6 +53,12 @@ pub enum PartShape {
     /// [(0, −r), (r, 0), (0, r)] donnent un octaèdre ; `sides` = 6 et un
     /// profil rectangulaire, un prisme hexagonal.
     Faceted { profile: Vec<Vec2>, sides: u32 },
+    /// Tore (un anneau, comme une bague ou un jonc) couché à plat, d'axe y :
+    /// un petit cercle de rayon `minor` tourne autour de l'axe à `major`
+    /// mètres du centre. `arc` (en radians, 2π pour un anneau fermé) n'en
+    /// garde qu'une partie, en partant de +x et en tournant vers +z : un
+    /// bracelet ouvert, une pince en croissant. Les bouts d'un arc restent ouverts.
+    Torus { major: f32, minor: f32, arc: f32 },
 }
 
 impl PartShape {
@@ -79,9 +85,23 @@ impl PartShape {
             PartShape::Foliage { radius, count, leaf_size, seed } => foliage(*radius, *count, *leaf_size, *seed),
             PartShape::BeveledPrism { profile, width, bevel } => beveled_prism(profile, *width, *bevel),
             PartShape::Faceted { profile, sides } => faceted(profile, *sides),
+            PartShape::Torus { major, minor, arc } => torus(*major, *minor, *arc),
         };
         with_box_uvs(mesh)
     }
+}
+
+/// Tore de Bevy (rayons intérieur et extérieur) limité à l'arc demandé. Le
+/// nombre de pas le long de l'anneau suit la longueur de l'arc : un quart
+/// d'anneau coûte quatre fois moins de sommets qu'un anneau complet.
+fn torus(major: f32, minor: f32, arc: f32) -> Mesh {
+    let arc = arc.clamp(0.01, std::f32::consts::TAU);
+    let steps = ((28.0 * arc / std::f32::consts::TAU).ceil() as usize).max(4);
+    TorusMeshBuilder::new(major - minor, major + minor)
+        .minor_resolution(8)
+        .major_resolution(steps)
+        .angle_range(0.0..=arc)
+        .build()
 }
 
 /// Fusionne plusieurs pièces (forme + placement) en un seul maillage.

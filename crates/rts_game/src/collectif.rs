@@ -1,43 +1,46 @@
 //! Le Collectif : palette, ambiance et unités (faction en exploration visuelle).
 //!
-//! Direction artistique : « obsidienne polie, or rose et améthystes taillées ;
-//! une joaillerie mécanique à silhouette vivante ». Les unités sont des
-//! **bijoux modernes** plutôt que des robots en plaques : surfaces lisses et
-//! poli miroir, courbes continues (joncs, anneaux, fuseaux effilés, perles),
-//! pierres taillées serties en griffes, lignes de pavé le long des membres,
-//! membres en anneaux enchaînés. La couleur du joueur est un émail laqué
-//! (perles, cabochons, élytres) et non une peinture sur des blocs.
+//! Direction artistique : « or jaune, émail vert et émeraudes. Des
+//! machines-bijoux : automates couronnés, colosse serti, scorpions-colliers et
+//! vaisseau-bracelet. » Les unités restent des **machines et des créatures**
+//! (des jambes, des bras, des pinces, des ailes) : la joaillerie est dans
+//! leurs lignes et leurs ornements, pas dans un bijou posé tel quel. Le corps
+//! est en plaques d'or poli et d'émail vert ; dessus viennent les gestes du
+//! joaillier : sertis et cabochons, rangs de perles, couronnes de lames,
+//! émeraudes taillées, anneaux et bracelet ouvert.
 //!
 //! Là où la Coalition tient le terrain avec des fantassins tireurs et des
 //! blindés, et où les Sylves avancent lentement au contact, le Collectif mise
 //! sur l'air et sur le nombre de petites machines : ses ouvriers volent
 //! (Collecteurs), un vaisseau porte-drones (Essaimeur) et des nuées de
 //! guêpes (Essaims) harcèlent, des scorpions (Perceurs) percent les blindés,
-//! des Automates élancés tirent au rayon et un Titan sert de forteresse
+//! des Automates couronnés tirent au rayon et un Titan sert de forteresse
 //! ambulante. Sa faiblesse : peu d'unités au sol, chères et lentes à remplacer.
 //!
-//! Les unités reprennent les silhouettes et les cotes de la page de direction
+//! Les unités reprennent pièce par pièce les cotes de la page de direction
 //! artistique (`buildCollectif`), dans le **repère de la page** (avant vers
-//! +z) : chaque modèle est dessiné dans un groupe tourné d'un demi-tour et
-//! mis à l'échelle ([`page`]), pour que l'avant passe vers −z.
+//! +z, formes de three.js) : chaque modèle est dessiné dans un groupe tourné
+//! d'un demi-tour et mis à l'échelle ([`page`]), pour que l'avant passe vers
+//! −z. Les petites fonctions de la section « Formes de la page » traduisent
+//! chacune une forme de three.js (`plate`, `hexc`, `octa`, `brill`, `cab`,
+//! `arc`…) en pièces du moteur.
 //!
 //! Les emplacements de matériau du moteur reçoivent ici des rôles de joaillier :
 //!
 //! | Emplacement | Collectif |
 //! | --- | --- |
-//! | `Paint` | or rose poli miroir |
-//! | `Dark` | onyx / obsidienne polie (perles, cabochons, coques) |
-//! | `Steel` | platine poli (le contraste froid de l'or rose) |
-//! | `Bare` | couleur des diamants (utilisée par `Brilliant`) |
-//! | `Rubber` | or rose satiné, la seule finition brossée (joncs, pattes) |
+//! | `Paint` | or jaune poli |
+//! | `Dark` | émail vert profond (le « noir » de la faction) |
+//! | `Steel` | or vieilli, plus sombre et satiné (articulations, montures) |
 //! | `Team` | émail laqué aux couleurs du joueur |
-//! | `Glow` | améthyste lumineuse (yeux) ; `Jewel` en dérive pour les pierres taillées |
-//! | `Engine` | lueur violette (réacteurs) ; `Flame` en dérive pour les ailes translucides |
-//! | `Brilliant` | diamants incolores (pavé, pointes, griffes de cœur) |
+//! | `Glow` | émeraude lumineuse (yeux, filets) ; `Jewel` en dérive pour les pierres taillées |
+//! | `Engine` | halo vert d'eau ; `Flame` en dérive pour les ailes translucides |
+//! | `Bare`, `Rubber` | inutilisés (or clair, or vieilli) |
 
 use std::f32::consts::{FRAC_PI_2, PI, TAU};
 
 use bevy::prelude::*;
+use rts_engine::graphics::shapes::catmull_rom;
 use rts_engine::graphics::{
     Ambiance, EnvironmentSettings, FogSettings, ParticleSettings, ReflectionPanel, ReflectionPanels, SceneLight,
 };
@@ -47,82 +50,88 @@ use rts_engine::units::{
 
 use crate::map::{GroundPattern, GroundStyle};
 
-// Noms des rôles des emplacements, pour que les modèles se lisent bien.
+// Noms des rôles des emplacements, pour que les modèles se lisent comme la page.
+/// L'or poli (`gold` / `cer` de la page).
 const GOLD: MaterialSlot = MaterialSlot::Paint;
-const ONYX: MaterialSlot = MaterialSlot::Dark;
-const PLATINUM: MaterialSlot = MaterialSlot::Steel;
-const SATIN: MaterialSlot = MaterialSlot::Rubber;
-const ENAMEL: MaterialSlot = MaterialSlot::Team;
+/// L'émail vert (`enam` / `black` de la page).
+const ENAMEL: MaterialSlot = MaterialSlot::Dark;
+/// L'or vieilli (`old` / `tit` de la page).
+const OLD_GOLD: MaterialSlot = MaterialSlot::Steel;
+/// L'émail aux couleurs du joueur (absent de la page, voir [`unit_types`]).
+const TEAM: MaterialSlot = MaterialSlot::Team;
+/// Les filets et les yeux lumineux (`en` de la page).
 const GLOW: MaterialSlot = MaterialSlot::Glow;
-const AMETHYST_STONE: MaterialSlot = MaterialSlot::Jewel;
-const DIAMOND: MaterialSlot = MaterialSlot::Brilliant;
-const ENGINE: MaterialSlot = MaterialSlot::Engine;
+/// Les émeraudes taillées (`gem` de la page).
+const EMERALD_STONE: MaterialSlot = MaterialSlot::Jewel;
+/// Les ailes translucides (`wingM` de la page).
 const WING: MaterialSlot = MaterialSlot::Flame;
 
-/// Les grosses pierres (cœur du Titan, pierre du Perceur, marquise de
-/// l'Essaimeur) respirent lentement. Une seule pulsation pour toute la
-/// faction : trois matériaux en tout (un par décalage, voir `PULSE_PHASES`).
-const GEM_PULSE: Pulse = Pulse { min: 0.5, max: 1.8, frequency: 0.35 };
+/// Les trois grosses pierres (cœur du Titan, dard du Perceur, orbe de
+/// l'Essaimeur) respirent lentement. Sur la page, toutes les émeraudes
+/// pulsent ensemble ; ici, seules ces trois-là, car chaque matériau qui pulse
+/// coûte cher (trois matériaux en tout, un par décalage).
+const GEM_PULSE: Pulse = Pulse { min: 0.6, max: 1.7, frequency: 0.35 };
 
 /// Couleurs de la page de direction artistique.
 const fn hex(r: u8, g: u8, b: u8) -> Color {
     Color::srgb(r as f32 / 255.0, g as f32 / 255.0, b as f32 / 255.0)
 }
-pub const OBSIDIAN_COLOR: Color = hex(0x0B, 0x0B, 0x12);
-pub const ROSE_GOLD: Color = hex(0xE6, 0xA4, 0x8E);
-pub const BRUSHED_GOLD: Color = hex(0xC9, 0x8A, 0x78);
-pub const AMETHYST: Color = hex(0x8B, 0x5C, 0xF6);
-pub const HALO_COLOR: Color = hex(0xC4, 0xB5, 0xFD);
-const PEACH: Color = hex(0xFF, 0xBF, 0xA6);
-const PLATINUM_COLOR: Color = hex(0xD8, 0xDB, 0xE2);
-/// Diamant : blanc froid, légèrement bleuté.
-const DIAMOND_COLOR: Color = hex(0xEE, 0xF3, 0xFF);
-/// Lueur des ailes et des réacteurs : le halo #C4B5FD assombri (les ailes,
-/// additives, saturent en blanc si elle est plus claire).
-const WING_GLOW: Color = hex(0x6A, 0x58, 0xB8);
+pub const ENAMEL_GREEN: Color = hex(0x0F, 0x3D, 0x2E);
+pub const GOLD_COLOR: Color = hex(0xE2, 0xB5, 0x52);
+pub const OLD_GOLD_COLOR: Color = hex(0xB9, 0x8A, 0x2F);
+pub const EMERALD: Color = hex(0x10, 0xB9, 0x81);
+pub const HALO_COLOR: Color = hex(0x6E, 0xE7, 0xB7);
+/// Le vert clair de l'éclairage d'ambiance de la page (`makeEnv(0x34d399, …)`).
+const MINT: Color = hex(0x34, 0xD3, 0x99);
+/// Le contre-jour chaud de la page.
+const WARM_GOLD: Color = hex(0xFF, 0xD2, 0x7A);
+/// Lueur des ailes : le halo #6EE7B7 assombri (les ailes, additives,
+/// saturent en blanc si elle est plus claire).
+const WING_GLOW: Color = hex(0x2C, 0x80, 0x64);
 
 /// Matériaux du Collectif. `team_color` est la couleur du joueur.
 ///
-/// Aucune texture de détail (`Smooth` partout) : un bijou est lisse, ce
-/// sont ses formes et ses reflets qui le dessinent. Les métaux reflètent
-/// surtout l'éclairage d'ambiance, d'où les panneaux de reflet de
-/// [`reflection_panels`].
+/// Aucune texture de détail (`Smooth` partout) : un bijou est lisse, ce sont
+/// ses formes et ses reflets qui le dessinent. Les ors reflètent surtout
+/// l'éclairage d'ambiance, d'où les panneaux de reflet de [`reflection_panels`].
 pub fn palette(team_color: Color) -> Palette {
     Palette {
-        paint: SurfaceStyle::new(ROSE_GOLD, 1.0, 0.1, SurfaceDetail::Smooth),
-        // L'onyx est une pierre (pas un métal) : noire, avec des reflets nets et discrets.
-        dark: SurfaceStyle::new(OBSIDIAN_COLOR, 0.15, 0.06, SurfaceDetail::Smooth),
-        steel: SurfaceStyle::new(PLATINUM_COLOR, 1.0, 0.1, SurfaceDetail::Smooth),
-        bare: SurfaceStyle::new(DIAMOND_COLOR, 1.0, 0.05, SurfaceDetail::Smooth),
-        rubber: SurfaceStyle::new(BRUSHED_GOLD, 1.0, 0.42, SurfaceDetail::Smooth),
+        paint: SurfaceStyle::new(GOLD_COLOR, 1.0, 0.18, SurfaceDetail::Smooth),
+        // L'émail est un verre coloré : peu métallique, brillant.
+        dark: SurfaceStyle::new(ENAMEL_GREEN, 0.3, 0.22, SurfaceDetail::Smooth),
+        steel: SurfaceStyle::new(OLD_GOLD_COLOR, 1.0, 0.32, SurfaceDetail::Smooth),
+        bare: SurfaceStyle::new(hex(0xF3, 0xD5, 0x8A), 1.0, 0.1, SurfaceDetail::Smooth),
+        rubber: SurfaceStyle::new(OLD_GOLD_COLOR, 1.0, 0.45, SurfaceDetail::Smooth),
         // Émail laqué : non métallique (la couleur reste franche à côté de
-        // l'or rose, qui prend la teinte de ses reflets) et brillant.
-        team: SurfaceStyle::new(team_color, 0.0, 0.12, SurfaceDetail::Smooth),
-        glow: SurfaceStyle::glowing(AMETHYST, 3.0),
+        // l'or, qui prend la teinte de ses reflets) et brillant.
+        team: SurfaceStyle::new(team_color, 0.0, 0.14, SurfaceDetail::Smooth),
+        glow: SurfaceStyle::glowing(EMERALD, 3.2),
         engine: SurfaceStyle::glowing(WING_GLOW, 1.0),
-        // Anneau de sélection lavande, couleur du halo.
-        selection: LinearRgba::rgb(1.3, 1.0, 2.6),
+        // Anneau de sélection émeraude.
+        selection: LinearRgba::rgb(0.5, 2.6, 1.5),
     }
 }
 
-/// Ambiance des cartes du Collectif : une vitrine de nuit. Fond violet très
-/// sombre, lumière principale blanc chaud, contre-jours améthyste et pêche,
-/// ciel d'ambiance assez sombre (pour le contraste) et poussière d'améthyste.
+/// Ambiance des cartes du Collectif, d'après le `look` de la page : une
+/// vitrine de nuit. Fond bleu-vert très sombre, lumière principale blanc
+/// chaud, contre-jours émeraude et or chaud, ciel d'ambiance vert et or
+/// assez sombre (pour le contraste) et poussière vert d'eau qui monte.
 pub fn ambiance() -> Ambiance {
-    let background = Color::srgb(0.03, 0.025, 0.055);
+    // `BG` de la page (#0A1018).
+    let background = hex(0x0A, 0x10, 0x18);
     Ambiance {
         background,
         exposure: 9.7,
-        sun: SceneLight { color: hex(0xFF, 0xF0, 0xE2), illuminance: 4300.0, from: Vec3::new(-0.5, 1.0, 0.55) },
+        sun: SceneLight { color: hex(0xFF, 0xF3, 0xDC), illuminance: 4300.0, from: Vec3::new(-0.5, 1.0, 0.55) },
         fill_lights: vec![
-            // Contre-jours : améthyste à droite, pêche à gauche, comme sur la page de référence.
-            SceneLight { color: AMETHYST, illuminance: 3000.0, from: Vec3::new(0.9, 0.35, -0.5) },
-            SceneLight { color: PEACH, illuminance: 2000.0, from: Vec3::new(-0.8, 0.45, -0.7) },
+            // Contre-jours : émeraude (le plus fort) à droite, or chaud à gauche.
+            SceneLight { color: EMERALD, illuminance: 3000.0, from: Vec3::new(0.9, 0.35, -0.5) },
+            SceneLight { color: WARM_GOLD, illuminance: 1800.0, from: Vec3::new(-0.8, 0.45, -0.7) },
         ],
         environment: EnvironmentSettings {
-            sky: Color::srgb(0.4, 0.34, 0.58),
-            ground: Color::srgb(0.16, 0.1, 0.12),
-            background: Color::srgb(0.015, 0.012, 0.03),
+            sky: Color::srgb(0.32, 0.46, 0.36),
+            ground: Color::srgb(0.15, 0.12, 0.07),
+            background: Color::srgb(0.012, 0.02, 0.025),
             light_reflections: 1.0,
             intensity: 850.0,
         },
@@ -132,36 +141,39 @@ pub fn ambiance() -> Ambiance {
     }
 }
 
-/// Les boîtes à lumière du bijoutier : quatre panneaux qu'on ne voit que dans
-/// les reflets. Petits et intenses, sur un environnement sombre, ils dessinent
-/// sur l'or et le platine des reflets nets et contrastés (des lignes de
-/// lumière franches plutôt qu'un brillant diffus).
+/// Les boîtes à lumière du bijoutier : les panneaux du `makeEnv` de la page,
+/// qu'on ne voit que dans les reflets. Petits et intenses, sur un
+/// environnement sombre, ils dessinent sur l'or des reflets nets et
+/// contrastés (des lignes de lumière franches plutôt qu'un brillant diffus).
 pub fn reflection_panels() -> ReflectionPanels {
     ReflectionPanels(vec![
-        // Grand panneau blanc au-dessus de la caméra : le reflet principal vu de dessus.
-        ReflectionPanel { color: Color::WHITE, intensity: 2.0, from: Vec3::new(-0.2, 1.0, 0.35), sharpness: 18.0 },
-        // Petit spot blanc froid, très net : l'étincelle des pierres.
-        ReflectionPanel { color: DIAMOND_COLOR, intensity: 4.0, from: Vec3::new(0.45, 0.9, 0.6), sharpness: 90.0 },
-        // Bandes colorées rasantes, de chaque côté.
-        ReflectionPanel { color: AMETHYST, intensity: 2.0, from: Vec3::new(1.0, 0.25, -0.2), sharpness: 25.0 },
-        ReflectionPanel { color: PEACH, intensity: 1.6, from: Vec3::new(-1.0, 0.3, -0.3), sharpness: 25.0 },
+        // Grand panneau blanc au-dessus de la caméra : le reflet principal vu
+        // de dessus (modéré : plus fort, les faces planes d'or du Titan,
+        // tournées vers le ciel, saturaient en blanc en test de charge).
+        ReflectionPanel { color: Color::WHITE, intensity: 1.4, from: Vec3::new(-0.2, 1.0, 0.35), sharpness: 18.0 },
+        // Petit spot blanc chaud, très net : l'étincelle des pierres.
+        ReflectionPanel { color: hex(0xFF, 0xF6, 0xE0), intensity: 3.5, from: Vec3::new(0.45, 0.9, 0.6), sharpness: 90.0 },
+        // Bandes colorées rasantes, de chaque côté : vert clair et or pâle.
+        ReflectionPanel { color: MINT, intensity: 2.0, from: Vec3::new(-1.0, 0.3, 0.4), sharpness: 25.0 },
+        ReflectionPanel { color: hex(0xFF, 0xE4, 0xA8), intensity: 1.8, from: Vec3::new(1.0, 0.25, -0.4), sharpness: 25.0 },
     ])
 }
 
-/// Sol du Collectif : velours d'écrin, prune très sombre et mat, liseré améthyste.
+/// Sol du Collectif : les dalles hexagonales sombres de la page (#121821),
+/// légèrement teintées de vert, liseré émeraude.
 pub fn ground() -> GroundStyle {
     GroundStyle {
-        base: Color::srgb(0.06, 0.035, 0.075),
-        dust: Color::srgb(0.12, 0.07, 0.14),
+        base: hex(0x10, 0x17, 0x1D),
+        dust: hex(0x15, 0x22, 0x22),
         grid_lines: false,
-        roughness: 0.97,
-        border: AMETHYST.to_linear() * 1.2,
+        roughness: 0.55,
+        border: EMERALD.to_linear() * 1.2,
     }
 }
 
-/// Motif du sol : le velours.
+/// Motif du sol : les dalles hexagonales.
 pub fn ground_pattern() -> GroundPattern {
-    GroundPattern::Velvet
+    GroundPattern::Hexagons
 }
 
 /// Indices des types dans [`unit_types`], pour s'y référer par leur nom.
@@ -175,6 +187,13 @@ pub mod kind {
 }
 
 /// Les six unités du Collectif (stats provisoires, voir GAME_DESIGN.md).
+///
+/// La page n'a pas de couleur d'équipe : l'émail du joueur ([`TEAM`]) prend
+/// la place de l'or ou de l'émeraude sur les pièces les plus visibles de
+/// dessus — le joug des épaules et la crête du Titan, le plastron des
+/// Automates, le cabochon du dos et les perles serties de la queue des
+/// Perceurs, les élytres des Collecteurs, l'abdomen des guêpes et les
+/// cabochons du bracelet de l'Essaimeur.
 pub fn unit_types() -> Vec<UnitType> {
     vec![
         UnitType {
@@ -201,7 +220,7 @@ fn unit(name: &str, model: ModelBuilder, footprint_radius: f32, mass: f32, speed
 }
 
 // ---------------------------------------------------------------------------
-// Raccourcis d'écriture : les pièces d'un joaillier.
+// Formes de la page : chaque fonction reprend une forme de three.js.
 // ---------------------------------------------------------------------------
 
 /// Raccourci pour écrire les positions.
@@ -215,99 +234,134 @@ fn page(scale: f32) -> Transform {
     Transform::from_rotation(Quat::from_rotation_y(PI)).with_scale(Vec3::splat(scale))
 }
 
-/// Placement complet : position, rotation (x, y, z en radians), échelle par axe.
-fn placed(at: Vec3, rotation: Vec3, scale: Vec3) -> Transform {
-    Transform::from_translation(at)
-        .with_rotation(Quat::from_euler(EulerRot::XYZ, rotation.x, rotation.y, rotation.z))
-        .with_scale(scale)
+/// Rotation de three.js (`rotation.set(x, y, z)`, ordre XYZ, le même que
+/// `EulerRot::XYZ` de Bevy).
+fn euler(r: Vec3) -> Quat {
+    Quat::from_euler(EulerRot::XYZ, r.x, r.y, r.z)
 }
 
-/// Rotation qui couche une pièce d'axe y le long de +z (aiguilles, canons).
+/// Placement complet : position, rotation (x, y, z en radians), échelle par axe.
+fn placed(at: Vec3, rotation: Vec3, scale: Vec3) -> Transform {
+    Transform::from_translation(at).with_rotation(euler(rotation)).with_scale(scale)
+}
+
+const NO_TURN: Vec3 = Vec3::ZERO;
+const ONE: Vec3 = Vec3::ONE;
+/// Quart de tour autour de x : couche une pièce d'axe y le long de +z.
 const ALONG_Z: Vec3 = Vec3::new(FRAC_PI_2, 0.0, 0.0);
-/// Rotation qui couche une pièce d'axe y le long de x.
+/// Quart de tour autour de z : couche une pièce d'axe y le long de x.
 const ALONG_X: Vec3 = Vec3::new(0.0, 0.0, FRAC_PI_2);
 
-/// Perle : sphère polie, étirée par `scale` (cabochons, têtes, coques).
-fn pearl(b: &mut ModelBuilder, slot: MaterialSlot, radius: f32, at: Vec3, scale: Vec3) {
+/// `plate(w, h, d, b)` : plaque biseautée. Comme sur la page, le biseau ne
+/// dépasse pas 22 % de la plus petite cote.
+fn plate(b: &mut ModelBuilder, slot: MaterialSlot, size: [f32; 3], bevel: f32, at: Vec3, rotation: Vec3) {
+    let size = Vec3::from_array(size);
+    let bevel = bevel.min(size.min_element() * 0.22);
+    b.add(slot, PartShape::Plate { size, bevel }, placed(at, rotation, ONE));
+}
+
+/// `box(w, h, d)` : petite barre à arêtes vives (les filets lumineux).
+fn bar(b: &mut ModelBuilder, slot: MaterialSlot, size: [f32; 3], at: Vec3) {
+    let size = Vec3::from_array(size);
+    b.add(slot, PartShape::Plate { size, bevel: size.min_element() * 0.1 }, Transform::from_translation(at));
+}
+
+/// `hexc(a, b, h)` : prisme hexagonal d'axe y, rayon `top` en haut et
+/// `bottom` en bas, une face tournée vers +z (comme sur la page).
+fn hexc(b: &mut ModelBuilder, slot: MaterialSlot, top: f32, bottom: f32, height: f32, at: Vec3, rotation: Vec3) {
+    let h = height / 2.0;
+    // Profil (rayon, hauteur) du bas vers le haut : fond, flanc, couvercle.
+    let profile = [Vec2::new(0.0, -h), Vec2::new(bottom, -h), Vec2::new(top, h), Vec2::new(0.0, h)];
+    b.faceted(slot, &profile, 6, at, rotation);
+}
+
+/// `cyl(a, b, h)` : cylindre (ou cône tronqué) d'axe y, rayon `top` en haut.
+fn cyl(b: &mut ModelBuilder, slot: MaterialSlot, top: f32, bottom: f32, height: f32, at: Vec3, rotation: Vec3) {
+    b.cone(slot, bottom, top, height, at, rotation);
+}
+
+/// `sph(r)` étirée par `scale` : têtes, carapaces, perles.
+fn ball(b: &mut ModelBuilder, slot: MaterialSlot, radius: f32, at: Vec3, scale: Vec3) {
     b.add(slot, PartShape::Sphere { radius }, Transform::from_translation(at).with_scale(scale));
 }
 
-/// Fuseau : forme de révolution effilée aux deux bouts, de `length` mètres le
-/// long de son axe (y avant rotation) et de rayon `radius` en son milieu.
-/// Aplati par `scale` (x petit), il devient une lame « knife-edge ».
-fn spindle(b: &mut ModelBuilder, slot: MaterialSlot, length: f32, radius: f32, at: Vec3, rotation: Vec3, scale: Vec3) {
-    let (h, r) = (length / 2.0, radius);
-    let profile = vec![
-        Vec2::new(0.0, -h),
-        Vec2::new(r * 0.45, -h * 0.72),
-        Vec2::new(r * 0.85, -h * 0.35),
-        Vec2::new(r, 0.0),
-        Vec2::new(r * 0.85, h * 0.35),
-        Vec2::new(r * 0.45, h * 0.72),
-        Vec2::new(0.0, h),
-    ];
-    b.add(slot, PartShape::Lathe { profile, segments: 12 }, placed(at, rotation, scale));
+/// `octa(r)` : octaèdre (pierre à huit faces), étiré par `scale`.
+fn octa(b: &mut ModelBuilder, slot: MaterialSlot, radius: f32, at: Vec3, scale: Vec3) {
+    let profile = [Vec2::new(0.0, -radius), Vec2::new(radius, 0.0), Vec2::new(0.0, radius)];
+    b.add(slot, PartShape::Faceted { profile: profile.to_vec(), sides: 4 }, Transform::from_translation(at).with_scale(scale));
 }
 
-/// Anneau (tore) : un petit cercle de rayon `thickness` tourne autour de
-/// l'axe y à `radius` mètres du centre. Couché à plat sans rotation.
-fn ring(b: &mut ModelBuilder, slot: MaterialSlot, radius: f32, thickness: f32, at: Vec3, rotation: Vec3, scale: Vec3) {
-    // Le profil fait le tour du petit cercle en partant du bas, dans le sens
-    // qui garde l'extérieur à droite (comme le demande `Lathe`).
-    let profile: Vec<Vec2> = (0..=8)
-        .map(|k| {
-            let a = -FRAC_PI_2 + TAU * k as f32 / 8.0;
-            Vec2::new(radius + thickness * a.cos(), thickness * a.sin())
-        })
-        .collect();
-    b.add(slot, PartShape::Lathe { profile, segments: 18 }, placed(at, rotation, scale));
-}
-
-/// Taille brillant à 8 côtés : pavillon pointu (la colette en bas),
-/// rondiste, couronne et table plate en haut (+y). `scale` l'étire en
-/// marquise ou en poire.
-fn brilliant(b: &mut ModelBuilder, slot: MaterialSlot, radius: f32, at: Vec3, rotation: Vec3, scale: Vec3) {
+/// `IcosahedronGeometry(r, 0)` : à défaut d'icosaèdre, une pierre ronde à
+/// vingt facettes (deux pointes et une ceinture de dix faces) qui en a
+/// l'allure. Centrée sur l'origine du groupe en cours.
+fn ico(b: &mut ModelBuilder, slot: MaterialSlot, radius: f32) {
     let r = radius;
-    let profile = vec![
-        Vec2::new(0.0, -0.85 * r),
-        Vec2::new(r, -0.05 * r),
-        Vec2::new(r, 0.05 * r),
-        Vec2::new(0.58 * r, 0.38 * r),
-        Vec2::new(0.0, 0.38 * r),
-    ];
-    b.add(slot, PartShape::Faceted { profile, sides: 8 }, placed(at, rotation, scale));
+    let profile = vec![Vec2::new(0.0, -r), Vec2::new(0.89 * r, -0.45 * r), Vec2::new(0.89 * r, 0.45 * r), Vec2::new(0.0, r)];
+    b.add(slot, PartShape::Faceted { profile, sides: 5 }, Transform::IDENTITY);
 }
 
-/// Petite pierre de pavé : 6 facettes seulement (une quarantaine de sommets).
-fn chip(b: &mut ModelBuilder, slot: MaterialSlot, radius: f32, at: Vec3) {
+/// `brill(r)` : la taille brillant de la page, à huit côtés : une pointe
+/// (le pavillon) vers −y, le rondiste, puis la couronne et la table plate
+/// vers +y. Facettes vives : la page l'éclaire en `flatShading`.
+fn brill(b: &mut ModelBuilder, slot: MaterialSlot, radius: f32, at: Vec3, rotation: Vec3) {
     let r = radius;
-    let profile = vec![Vec2::new(0.0, -0.7 * r), Vec2::new(r, 0.0), Vec2::new(0.55 * r, 0.35 * r), Vec2::new(0.0, 0.35 * r)];
-    b.add(slot, PartShape::Faceted { profile, sides: 6 }, Transform::from_translation(at));
+    let profile = vec![Vec2::new(0.0, -1.1 * r), Vec2::new(r, 0.0), Vec2::new(0.72 * r, 0.38 * r), Vec2::new(0.0, 0.42 * r)];
+    b.faceted(slot, &profile, 8, at, rotation);
 }
 
-/// Ligne de pavé : `count` petites pierres régulièrement espacées de `from` à `to`.
-fn pave(b: &mut ModelBuilder, slot: MaterialSlot, from: Vec3, to: Vec3, count: u32, radius: f32) {
-    for k in 0..count {
-        let t = if count > 1 { k as f32 / (count - 1) as f32 } else { 0.5 };
-        chip(b, slot, radius, from.lerp(to, t));
-    }
+/// `prism(pts, depth, b)` : contour (x, y) de la page extrudé sur `depth` le
+/// long de z, arêtes biseautées. Le prisme du moteur, lui, est dessiné en
+/// (z, y) et extrudé le long de x : on y range le contour en (−x, y), puis un
+/// quart de tour autour de y (−π/2) ramène le −x du dessin en +x et
+/// l'extrusion le long de z. Le contour doit être convexe.
+fn prism(b: &mut ModelBuilder, slot: MaterialSlot, outline: &[[f32; 2]], depth: f32, bevel: f32, placement: Transform) {
+    let profile: Vec<Vec2> = outline.iter().map(|p| Vec2::new(-p[0], p[1])).collect();
+    let shape = if bevel > 0.0 {
+        PartShape::BeveledPrism { profile, width: depth, bevel }
+    } else {
+        PartShape::Prism { profile, width: depth }
+    };
+    b.add(slot, shape, placement * Transform::from_rotation(Quat::from_rotation_y(-FRAC_PI_2)));
 }
 
-/// Pierre sertie : une taille brillant (table vers +y dans le repère du
-/// serti) tenue par `prongs` griffes de métal qui remontent sur sa couronne.
-/// `setting` place le serti (tourner pour orienter la table) ; `cut` étire la
-/// pierre (marquise, poire).
-fn set_stone(b: &mut ModelBuilder, stone: MaterialSlot, metal: MaterialSlot, radius: f32, prongs: u32, setting: Transform, cut: Vec3) {
-    b.group(setting, |b| {
-        brilliant(b, stone, radius, Vec3::ZERO, Vec3::ZERO, cut);
-        for k in 0..prongs {
-            let a = TAU * (k as f32 + 0.5) / prongs as f32;
-            let (sin, cos) = a.sin_cos();
-            // Griffe : petit cône du rondiste vers le haut, penché vers la pierre.
-            let at = v(sin * radius * cut.x, 0.12 * radius, cos * radius * cut.z);
-            let tilt = v(-cos * 0.45, 0.0, sin * 0.45);
-            b.cone(metal, 0.12 * radius, 0.0, 0.6 * radius, at, tilt);
-        }
+/// `bladeG` : la lame des couronnes, un éclat d'or effilé de 1,7 m (cote de
+/// la page) qui penche vers −x en montant.
+const BLADE: [[f32; 2]; 4] = [[0.0, 0.0], [0.26, 0.0], [0.12, 1.7], [-0.2, 1.25]];
+
+/// Une lame de couronne, posée en `at`, tournée de `rotation` et réduite de `scale`.
+fn blade(b: &mut ModelBuilder, slot: MaterialSlot, at: Vec3, rotation: Vec3, scale: f32) {
+    prism(b, slot, &BLADE, 0.06, 0.02, placed(at, rotation, Vec3::splat(scale)));
+}
+
+/// `TorusGeometry(major, minor, …, arc)` de la page : un anneau dans le plan
+/// (x, y), d'axe z, dont l'arc part de +x et tourne vers +y. Le tore du
+/// moteur est couché à plat (axe y, arc de +x vers +z) : un quart de tour
+/// autour de x (−π/2) le redresse dans le plan (x, y).
+fn torus(b: &mut ModelBuilder, slot: MaterialSlot, major: f32, minor: f32, arc: f32, placement: Transform) {
+    let upright = Transform::from_rotation(Quat::from_rotation_x(-FRAC_PI_2));
+    b.add(slot, PartShape::Torus { major, minor, arc }, placement * upright);
+}
+
+/// `ring(p, R, r, …)` : un anneau fermé de la page.
+fn ring(b: &mut ModelBuilder, slot: MaterialSlot, major: f32, minor: f32, at: Vec3, rotation: Vec3) {
+    torus(b, slot, major, minor, TAU, placed(at, rotation, ONE));
+}
+
+/// `arc(p, R, r, ang, …, spin)` : un anneau ouvert (pince en croissant),
+/// placé et tourné en (x, y) par `rotation`, l'ouverture orientée par `spin`
+/// (rotation autour de son axe).
+fn arc(b: &mut ModelBuilder, slot: MaterialSlot, major: f32, minor: f32, angle: f32, at: Vec3, rotation: Vec3, spin: f32) {
+    let placement = placed(at, rotation, ONE) * Transform::from_rotation(Quat::from_rotation_z(spin));
+    torus(b, slot, major, minor, angle, placement);
+}
+
+/// `cab(p, r, …)` : cabochon serti. Une pierre ronde et bombée (sphère
+/// aplatie) dans un jonc d'or, dans le plan (x, y) de son groupe, bombée
+/// vers +z. `stone` est l'émail ou la pierre.
+fn cab(b: &mut ModelBuilder, stone: MaterialSlot, radius: f32, at: Vec3, rotation: Vec3) {
+    b.group(placed(at, rotation, ONE), |b| {
+        ring(b, GOLD, radius * 1.05, radius * 0.2, Vec3::ZERO, NO_TURN);
+        ball(b, stone, radius, v(0.0, 0.0, radius * 0.12), v(1.0, 1.0, 0.55));
     });
 }
 
@@ -317,188 +371,142 @@ fn tube(b: &mut ModelBuilder, slot: MaterialSlot, points: &[[f32; 3]], radius: f
     b.tube(slot, &points, radius);
 }
 
-/// Chaîne de `count` maillons (anneaux enchaînés) de `from` à `to`, chaque
-/// maillon tourné d'un quart de tour par rapport au précédent.
-fn chain(b: &mut ModelBuilder, slot: MaterialSlot, from: Vec3, to: Vec3, count: u32, link: f32, wire: f32) {
-    let axis = (to - from).normalize_or(Vec3::Y);
-    // Rotation qui amène l'axe y du maillon le long de la chaîne.
-    let along = Quat::from_rotation_arc(Vec3::Y, axis);
-    for k in 0..count {
-        let t = (k as f32 + 0.5) / count as f32;
-        // Maillon dressé : un anneau couché tourné d'un quart de tour autour de x,
-        // puis d'un quart de tour autour de l'axe de la chaîne un maillon sur deux.
-        let twist = Quat::from_rotation_y(if k % 2 == 0 { 0.0 } else { FRAC_PI_2 });
-        let rotation = along * twist * Quat::from_rotation_x(FRAC_PI_2);
-        let transform = Transform::from_translation(from.lerp(to, t))
-            .with_rotation(rotation)
-            .with_scale(v(0.75, 1.0, 1.0));
-        b.group(transform, |b| ring(b, slot, link, wire, Vec3::ZERO, Vec3::ZERO, Vec3::ONE));
-    }
+/// Point d'une courbe de Catmull-Rom passant par `points`, à `t` ∈ [0, 1]
+/// (comme `CatmullRomCurve3.getPoint` de three.js : chaque tronçon entre
+/// deux points reçoit la même part de `t`). Aux deux bouts, il manque un
+/// voisin : three.js le prolonge en ligne droite, on fait de même.
+fn curve_point(points: &[Vec3], t: f32) -> Vec3 {
+    let last = points.len() - 1;
+    let x = t.clamp(0.0, 1.0) * last as f32;
+    let i = (x.floor() as usize).min(last - 1);
+    let at = |k: isize| -> Vec3 {
+        if k < 0 {
+            2.0 * points[0] - points[1]
+        } else if k as usize > last {
+            2.0 * points[last] - points[last - 1]
+        } else {
+            points[k as usize]
+        }
+    };
+    let i = i as isize;
+    catmull_rom(at(i - 1), at(i), at(i + 1), at(i + 2), x - i as f32)
 }
 
-/// Plaque plate et horizontale découpée selon un contour convexe (le
-/// `tprism` de la page) : ailes, ailerons. `outline` est le contour vu de
-/// dessus, en (x, z) ; `thickness` son épaisseur verticale. Un biseau
-/// marqué lui donne une arête vive (« knife-edge ») qui attrape la lumière.
-///
-/// Le prisme du moteur est dessiné dans le plan (z, y) et extrudé le long
-/// de x : on y range le contour en (z, x), puis un quart de tour autour de z
-/// fait passer son « y » en x et l'extrusion à la verticale.
-fn flat_prism(b: &mut ModelBuilder, slot: MaterialSlot, outline: &[[f32; 2]], thickness: f32, bevel: f32, at: Vec3) {
-    let profile: Vec<Vec2> = outline.iter().map(|p| Vec2::new(p[1], p[0])).collect();
-    let transform = Transform::from_translation(at).with_rotation(Quat::from_rotation_z(-FRAC_PI_2));
-    if bevel > 0.0 {
-        b.add(slot, PartShape::BeveledPrism { profile, width: thickness, bevel }, transform);
-    } else {
-        b.add(slot, PartShape::Prism { profile, width: thickness }, transform);
-    }
-}
-
-/// Aile translucide, à plat, vers +x (`side` = 1) ou −x (−1).
+/// Aile translucide, à plat, vers +x (`side` = 1) ou −x (−1). `outline` est
+/// le contour vu de dessus, en (x, z) : c'est le contour de la page, que
+/// celle-ci couche à plat d'un quart de tour.
 fn wing(b: &mut ModelBuilder, outline: &[[f32; 2]], at: Vec3, side: f32) {
-    let mirrored: Vec<[f32; 2]> = outline.iter().map(|p| [p[0] * side, p[1]]).collect();
-    flat_prism(b, WING, &mirrored, 0.012, 0.0, at);
+    // Le prisme du moteur est dessiné dans le plan (z, y) et extrudé le long
+    // de x : on y range le contour en (z, x), puis un quart de tour autour de
+    // z fait passer son « y » en x et l'extrusion à la verticale.
+    let profile: Vec<Vec2> = outline.iter().map(|p| Vec2::new(p[1], p[0] * side)).collect();
+    let transform = Transform::from_translation(at).with_rotation(Quat::from_rotation_z(-FRAC_PI_2));
+    b.add(WING, PartShape::Prism { profile, width: 0.012 }, transform);
 }
 
 // ---------------------------------------------------------------------------
 // Les unités.
 // ---------------------------------------------------------------------------
 
-/// Automate : l'infanterie, une figurine de joaillerie. Jambes en fuseaux de
-/// platine et d'or rose, genoux en perles d'onyx, bassin en jonc, buste en
-/// goutte d'or rose où est sertie une améthyste taille poire, bras en
-/// anneaux enchaînés. Ses épaules sont deux perles d'émail serties d'un jonc
-/// d'or (de dessus : deux points de couleur qui encadrent la tête). Son arme
-/// est une longue aiguille de platine pavée d'améthystes. 1,95 m.
+/// Automate : l'infanterie, une figurine mécanique couronnée. Jambes en
+/// plaques d'or et d'émail vert, genoux et coudes en perles d'or vieilli,
+/// buste en écu d'émail aux couleurs du joueur où est sertie une émeraude,
+/// tête d'or au visage d'émail, et derrière elle une couronne de trois lames
+/// d'or. Son arme est une longue baguette d'émail parcourue d'un filet
+/// émeraude. 1,95 m.
 fn automate() -> ModelBuilder {
     let mut b = ModelBuilder::new();
     b.group(page(0.67), |b| {
-        let one = Vec3::ONE;
         b.mirrored(|b, s| {
-            spindle(b, GOLD, 0.55, 0.11, v(s * 0.22, 0.08, 0.08), ALONG_Z, v(1.1, 1.0, 0.6)); // pied effilé
-            spindle(b, PLATINUM, 0.8, 0.085, v(s * 0.22, 0.52, 0.0), Vec3::ZERO, one); // tibia
-            pearl(b, ONYX, 0.1, v(s * 0.22, 0.92, 0.0), one); // genou
-            spindle(b, GOLD, 0.7, 0.11, v(s * 0.2, 1.27, 0.0), Vec3::ZERO, one); // cuisse
-            pave(b, DIAMOND, v(s * 0.2, 1.1, 0.1), v(s * 0.2, 1.42, 0.1), 3, 0.035); // pavé de cuisse
-            // Épaule : perle d'émail sertie d'un jonc d'or à l'équateur.
-            pearl(b, ENAMEL, 0.22, v(s * 0.52, 2.46, 0.0), one);
-            ring(b, GOLD, 0.225, 0.025, v(s * 0.52, 2.46, 0.0), Vec3::ZERO, one);
-            chain(b, GOLD, v(s * 0.55, 2.27, 0.0), v(s * 0.56, 1.88, 0.0), 2, 0.08, 0.02); // bras
-            pearl(b, DIAMOND, 0.05, v(s * 0.56, 1.84, 0.0), one); // coude
-            spindle(b, PLATINUM, 0.55, 0.075, v(s * 0.56, 1.62, 0.14), v(-0.5, 0.0, 0.0), one); // avant-bras
-            pearl(b, ONYX, 0.07, v(s * 0.56, 1.38, 0.3), one); // main
-            pearl(b, GLOW, 0.032, v(s * 0.07, 2.86, 0.215), one); // œil
+            plate(b, ENAMEL, [0.26, 0.14, 0.5], 0.03, v(s * 0.22, 0.07, 0.06), NO_TURN); // pied
+            plate(b, GOLD, [0.2, 0.7, 0.24], 0.04, v(s * 0.22, 0.52, 0.0), NO_TURN); // tibia
+            bar(b, GLOW, [0.03, 0.4, 0.02], v(s * 0.22, 0.52, 0.125));
+            ball(b, OLD_GOLD, 0.11, v(s * 0.22, 0.92, 0.0), ONE); // genou
+            plate(b, ENAMEL, [0.22, 0.6, 0.26], 0.04, v(s * 0.2, 1.25, 0.0), NO_TURN); // cuisse
+            plate(b, GOLD, [0.18, 0.4, 0.06], 0.02, v(s * 0.2, 1.27, 0.14), NO_TURN);
+            ball(b, GOLD, 0.15, v(s * 0.52, 2.46, 0.0), ONE); // épaule
+            plate(b, ENAMEL, [0.15, 0.5, 0.17], 0.03, v(s * 0.56, 2.12, 0.0), NO_TURN); // bras
+            ball(b, OLD_GOLD, 0.08, v(s * 0.56, 1.84, 0.0), ONE); // coude
+            plate(b, GOLD, [0.17, 0.5, 0.2], 0.03, v(s * 0.56, 1.62, 0.14), v(-0.5, 0.0, 0.0)); // avant-bras
+            plate(b, ENAMEL, [0.12, 0.16, 0.14], 0.02, v(s * 0.56, 1.38, 0.3), NO_TURN); // main
+            ball(b, GLOW, 0.035, v(s * 0.07, 2.86, 0.215), ONE); // œil
+            // Lames latérales de la couronne.
+            blade(b, GOLD, v(s * 0.55, 2.6, 0.0), v(0.0, 0.0, -s * 0.7), 0.3);
         });
-        ring(b, GOLD, 0.22, 0.06, v(0.0, 1.6, 0.0), Vec3::ZERO, v(1.2, 1.0, 0.8)); // bassin en jonc
-        spindle(b, SATIN, 0.45, 0.1, v(0.0, 1.8, 0.0), Vec3::ZERO, one); // taille
-        // Buste : une goutte d'or rose qui s'évase vers les épaules, aplatie d'avant en arrière.
-        let chest = [[0.0, 0.0], [0.18, 0.03], [0.36, 0.3], [0.42, 0.5], [0.3, 0.64], [0.0, 0.68]];
-        let chest: Vec<Vec2> = chest.iter().map(|p| Vec2::new(p[0], p[1])).collect();
-        b.add(GOLD, PartShape::Lathe { profile: chest, segments: 16 }, placed(v(0.0, 1.9, 0.0), Vec3::ZERO, v(1.0, 1.0, 0.6)));
-        // Améthyste taille poire au sternum, sertie de quatre griffes de platine.
-        let sternum = placed(v(0.0, 2.26, 0.25), ALONG_Z, Vec3::ONE);
-        set_stone(b, AMETHYST_STONE, PLATINUM, 0.11, 4, sternum, v(0.8, 1.0, 1.3));
-        spindle(b, PLATINUM, 0.5, 0.1, v(0.0, 2.3, -0.24), Vec3::ZERO, v(0.3, 1.0, 1.0)); // arête dorsale
-        spindle(b, PLATINUM, 0.2, 0.07, v(0.0, 2.62, 0.0), Vec3::ZERO, one); // cou
-        pearl(b, GOLD, 0.2, v(0.0, 2.84, 0.0), v(0.9, 1.1, 1.0)); // tête
-        pearl(b, ONYX, 0.17, v(0.0, 2.83, 0.07), v(0.85, 1.0, 0.9)); // visage
-        chip(b, DIAMOND, 0.06, v(0.0, 3.07, 0.0)); // diamant du front
-        // L'arme : aiguille de platine le long de l'avant-bras droit, pavée
-        // d'améthystes, tenue par un jonc d'or, pointe en diamant.
-        spindle(b, PLATINUM, 1.4, 0.05, v(0.56, 1.42, 0.72), ALONG_Z, one);
-        ring(b, GOLD, 0.07, 0.02, v(0.56, 1.42, 0.3), ALONG_Z, one);
-        pave(b, AMETHYST_STONE, v(0.56, 1.47, 0.45), v(0.56, 1.47, 1.05), 5, 0.03);
-        chip(b, DIAMOND, 0.05, v(0.56, 1.42, 1.42));
+        plate(b, ENAMEL, [0.56, 0.22, 0.3], 0.05, v(0.0, 1.62, 0.0), NO_TURN); // bassin
+        cyl(b, OLD_GOLD, 0.14, 0.18, 0.3, v(0.0, 1.82, 0.0), NO_TURN); // taille
+        // Buste : un écu évasé vers les épaules, en émail du joueur.
+        let chest = [[-0.28, 0.0], [0.28, 0.0], [0.46, 0.5], [0.36, 0.62], [-0.36, 0.62], [-0.46, 0.5]];
+        prism(b, TEAM, &chest, 0.34, 0.05, Transform::from_xyz(0.0, 1.94, 0.0));
+        octa(b, EMERALD_STONE, 0.12, v(0.0, 2.28, 0.2), ONE); // émeraude du plastron
+        plate(b, OLD_GOLD, [0.08, 0.4, 0.2], 0.02, v(0.0, 2.3, -0.26), NO_TURN); // arête dorsale
+        cyl(b, ENAMEL, 0.07, 0.08, 0.14, v(0.0, 2.62, 0.0), NO_TURN); // cou
+        ball(b, GOLD, 0.2, v(0.0, 2.84, 0.0), v(0.9, 1.1, 1.0)); // tête
+        ball(b, ENAMEL, 0.17, v(0.0, 2.83, 0.07), v(0.85, 1.0, 0.9)); // visage
+        // L'arme, le long de l'avant-bras droit.
+        plate(b, ENAMEL, [0.08, 0.12, 1.1], 0.02, v(0.56, 1.4, 0.7), NO_TURN);
+        bar(b, GLOW, [0.02, 0.03, 0.7], v(0.56, 1.47, 0.75));
+        ball(b, GLOW, 0.05, v(0.56, 1.4, 1.28), ONE);
+        // Lame centrale de la couronne, penchée en arrière.
+        blade(b, GOLD, v(0.0, 2.98, -0.1), v(-0.45, 0.0, 0.0), 0.4);
     });
     b
 }
 
-/// Perceur : scorpion d'assaut anti-blindé, broche « Serpenti ». Carapace
-/// d'or rose lisse rehaussée d'une ligne de pavé de diamants, ventre et tête
-/// en cabochons d'onyx, six pattes en joncs d'or satiné. La queue enfile cinq
-/// perles d'émail (de dessus : une virgule colorée au-dessus du dos), chacune
-/// tenue par un anneau d'or, et se termine par une améthyste taille poire
-/// sertie qui pulse, et un dard de platine.
+/// Perceur : scorpion d'assaut anti-blindé, monté comme un collier. Carapace
+/// d'or bombée sur un ventre d'émail vert, un grand cabochon d'émail du
+/// joueur serti sur le dos ; la queue est un rang de neuf perles d'or qui
+/// diminuent, une sur trois sertie à la couleur du joueur, et se termine par
+/// une émeraude taille brillant qui pulse (le dard). Bras en joncs d'or
+/// vieilli, pinces en anneaux ouverts, six pattes fines aux pointes d'or.
 fn perceur() -> ModelBuilder {
     let mut b = ModelBuilder::new();
     b.group(page(0.62), |b| {
-        let one = Vec3::ONE;
-        pearl(b, GOLD, 0.6, v(0.0, 0.95, 0.2), v(1.1, 0.55, 1.5)); // carapace
-        pearl(b, ONYX, 0.55, v(0.0, 0.8, 0.2), v(1.0, 0.5, 1.4)); // ventre
-        // Pavé le long de l'arête du dos, posé sur la courbe de la carapace.
-        for k in 0..7 {
-            let z = -0.55 + k as f32 * 0.22;
-            let t = ((z - 0.2) / 0.9).clamp(-1.0, 1.0);
-            chip(b, DIAMOND, 0.055, v(0.0, 0.95 + 0.33 * (1.0 - t * t).sqrt() + 0.01, z));
+        ball(b, GOLD, 0.6, v(0.0, 0.95, 0.2), v(1.1, 0.5, 1.5)); // carapace
+        ball(b, ENAMEL, 0.55, v(0.0, 0.82, 0.2), v(1.0, 0.4, 1.4)); // ventre
+        cab(b, TEAM, 0.3, v(0.0, 1.24, 0.2), v(-FRAC_PI_2, 0.0, 0.0)); // cabochon du dos
+        ball(b, GOLD, 0.3, v(0.0, 0.95, 1.2), v(1.2, 0.6, 1.0)); // tête
+        // La queue : neuf perles réparties le long d'une courbe.
+        let tail = [v(0.0, 1.05, -1.0), v(0.0, 1.8, -1.7), v(0.0, 2.7, -1.6), v(0.0, 3.3, -1.0), v(0.0, 3.4, -0.3)];
+        for i in 0..9 {
+            let slot = if i % 3 == 2 { TEAM } else { GOLD };
+            ball(b, slot, 0.27 - i as f32 * 0.017, curve_point(&tail, i as f32 / 8.0), ONE);
         }
-        pearl(b, ONYX, 0.3, v(0.0, 0.95, 1.15), v(1.0, 0.6, 0.8)); // tête en cabochon
-        ring(b, PLATINUM, 0.38, 0.08, v(0.0, 1.0, -0.75), ALONG_Z, one); // anneau de croupe
-        // La queue : un jonc d'or satiné qui enfile cinq perles d'émail.
-        let tail = [[0.0, 1.05, -1.1], [0.0, 1.8, -1.7], [0.0, 2.7, -1.6], [0.0, 3.3, -1.0], [0.0, 3.4, -0.2]];
-        tube(b, SATIN, &tail, 0.1);
-        for (i, p) in tail.iter().enumerate() {
-            let at = Vec3::from_array(*p);
-            let r = 0.27 - i as f32 * 0.025;
-            pearl(b, ENAMEL, r, at, v(1.0, 0.85, 1.0));
-            // Anneau d'or perpendiculaire à la queue, autour de la perle.
-            let next = Vec3::from_array(tail[(i + 1).min(tail.len() - 1)]);
-            let prev = Vec3::from_array(tail[i.saturating_sub(1)]);
-            let along = Quat::from_rotation_arc(Vec3::Y, (next - prev).normalize_or(Vec3::Y));
-            b.group(Transform::from_translation(at).with_rotation(along), |b| {
-                ring(b, GOLD, r * 0.95, 0.03, Vec3::ZERO, Vec3::ZERO, one);
-            });
-        }
-        b.pulsing(GEM_PULSE, |b| {
-            let tip = placed(v(0.0, 3.42, -0.1), v(-0.6, 0.0, 0.0), Vec3::ONE);
-            set_stone(b, AMETHYST_STONE, GOLD, 0.24, 4, tip, v(0.8, 1.0, 1.3));
-        });
-        spindle(b, PLATINUM, 1.3, 0.11, v(0.0, 3.1, 0.5), v(2.07, 0.0, 0.0), one); // dard
+        b.pulsing(GEM_PULSE, |b| brill(b, EMERALD_STONE, 0.3, v(0.0, 3.3, 0.1), v(2.2, 0.0, 0.0))); // dard
         b.mirrored(|b, s| {
-            pearl(b, GLOW, 0.05, v(s * 0.14, 1.06, 1.38), one); // œil
-            tube(b, SATIN, &[[s * 0.5, 0.9, 1.0], [s * 1.1, 1.0, 1.5], [s * 1.0, 1.0, 2.1]], 0.07); // bras
-            pearl(b, ONYX, 0.13, v(s * 1.0, 1.0, 2.1), one); // poignet
-            // Pinces : deux lames de platine.
-            spindle(b, PLATINUM, 0.8, 0.12, v(s * 1.1, 1.06, 2.45), ALONG_Z, v(0.5, 1.0, 1.0));
-            spindle(b, PLATINUM, 0.65, 0.1, v(s * 0.88, 0.94, 2.4), ALONG_Z, v(0.5, 1.0, 1.0));
+            octa(b, EMERALD_STONE, 0.06, v(s * 0.14, 1.0, 1.45), ONE); // œil
+            tube(b, OLD_GOLD, &[[s * 0.5, 0.9, 1.0], [s * 1.1, 1.0, 1.5], [s * 1.0, 1.0, 1.95]], 0.07); // bras
+            // Pince : un anneau d'or ouvert, couché à plat (comme sur la
+            // page, l'ouverture est tournée du même côté pour les deux pinces).
+            arc(b, GOLD, 0.35, 0.08, PI * 1.3, v(s * 1.0, 1.0, 2.25), v(-FRAC_PI_2, 0.0, 0.0), -PI * 0.15);
             for (z, dz) in [(0.6, 0.2), (0.1, 0.0), (-0.4, -0.25)] {
-                // Patte en arc : de la hanche au genou (un diamant), puis au sol.
-                tube(b, SATIN, &[[s * 0.5, 0.85, z], [s * 1.3, 1.5, z + dz], [s * 1.75, 0.06, z + dz * 2.0]], 0.05);
-                chip(b, DIAMOND, 0.08, v(s * 1.3, 1.53, z + dz));
-                b.cone(GOLD, 0.07, 0.0, 0.24, v(s * 1.75, 0.12, z + dz * 2.0), Vec3::ZERO);
+                // Patte en arc, de la hanche au sol, et sa pointe d'or.
+                tube(b, OLD_GOLD, &[[s * 0.5, 0.85, z], [s * 1.3, 1.5, z + dz], [s * 1.75, 0.06, z + dz * 2.0]], 0.045);
+                cyl(b, GOLD, 0.0, 0.07, 0.22, v(s * 1.75, 0.12, z + dz * 2.0), NO_TURN);
             }
         });
     });
     b
 }
 
-/// Collecteur : l'ouvrier, un scarabée-broche volant. Corps en cabochon
-/// d'onyx, tête d'or rose, élytres en émail serties d'un fil d'or, antennes
-/// de platine aux pointes de diamant, deux ailes translucides qui battent.
-/// Sous le ventre, l'améthyste qu'il rapporte, tenue par quatre griffes.
+/// Collecteur : l'ouvrier, un scarabée volant. Corps d'émail vert, tête d'or,
+/// élytres en émail aux couleurs du joueur, antennes fines, deux ailes
+/// translucides qui battent. Sous le ventre, l'émeraude qu'il rapporte.
 /// Il vole à 1,3 m du sol.
 fn collecteur() -> ModelBuilder {
     let mut b = ModelBuilder::new();
     b.group(Transform::from_xyz(0.0, 1.3, 0.0) * page(1.0), |b| {
-        let one = Vec3::ONE;
-        pearl(b, ONYX, 0.4, Vec3::ZERO, v(1.0, 0.6, 1.3)); // corps
-        pearl(b, GOLD, 0.2, v(0.0, 0.02, 0.52), v(1.1, 0.75, 1.0)); // tête
-        // Cargaison : une améthyste table en bas, sertie sous le ventre.
-        let cargo = placed(v(0.0, -0.3, 0.05), v(PI, 0.0, 0.0), Vec3::ONE);
-        set_stone(b, AMETHYST_STONE, GOLD, 0.17, 4, cargo, Vec3::ONE);
-        spindle(b, PLATINUM, 0.9, 0.05, v(0.0, 0.33, -0.12), ALONG_Z, v(1.0, 1.0, 0.6)); // couture des élytres
+        ball(b, ENAMEL, 0.4, Vec3::ZERO, v(1.0, 0.6, 1.3)); // corps
+        ball(b, GOLD, 0.2, v(0.0, 0.02, 0.52), v(1.1, 0.75, 1.0)); // tête
+        octa(b, EMERALD_STONE, 0.16, v(0.0, -0.3, 0.05), ONE); // cargaison
         b.mirrored(|b, s| {
-            // Élytre en émail, et le fil d'or qui la borde (un anneau étiré comme elle).
-            let elytron = placed(v(s * 0.3, 0.28, -0.1), v(0.0, 0.0, s * 0.5), Vec3::ONE);
-            b.group(elytron, |b| {
-                pearl(b, ENAMEL, 0.42, Vec3::ZERO, v(0.5, 0.3, 1.2));
-                ring(b, GOLD, 0.42, 0.035, Vec3::ZERO, Vec3::ZERO, v(0.52, 0.5, 1.22));
-            });
-            pearl(b, GLOW, 0.045, v(s * 0.1, 0.06, 0.68), one); // œil
-            tube(b, PLATINUM, &[[s * 0.06, 0.12, 0.66], [s * 0.16, 0.3, 0.85], [s * 0.24, 0.28, 1.02]], 0.018); // antenne
-            chip(b, DIAMOND, 0.04, v(s * 0.24, 0.28, 1.04));
+            // Élytre : une demi-coque aplatie, inclinée vers l'extérieur.
+            b.add(TEAM, PartShape::Sphere { radius: 0.42 }, placed(v(s * 0.3, 0.28, -0.1), v(0.0, 0.0, s * 0.5), v(0.5, 0.3, 1.2)));
+            ball(b, GLOW, 0.05, v(s * 0.1, 0.06, 0.68), ONE); // œil
+            tube(b, ENAMEL, &[[s * 0.06, 0.12, 0.66], [s * 0.16, 0.3, 0.85], [s * 0.24, 0.28, 1.02]], 0.015); // antenne
             for k in 0..3 {
-                // Pattes repliées sous le ventre, en or satiné.
-                b.cylinder(SATIN, 0.02, 0.36, v(s * 0.3, -0.3, 0.3 - k as f32 * 0.28), v(0.0, 0.0, s * 0.5));
+                // Pattes repliées sous le ventre.
+                cyl(b, ENAMEL, 0.015, 0.02, 0.36, v(s * 0.3, -0.3, 0.3 - k as f32 * 0.28), v(0.0, 0.0, s * 0.5));
             }
         });
         // Les ailes : un seul groupe animé, qui s'étire et se rétracte vite
@@ -512,16 +520,17 @@ fn collecteur() -> ModelBuilder {
     b
 }
 
-/// Une guêpe-drone, petite épingle sertie, dans son propre repère (avant
-/// vers +z) : thorax en fuseau d'or rose, abdomen en fuseau d'émail aux
-/// couleurs du joueur, tête en diamant, dard de platine, deux petites ailes.
+/// Une guêpe-drone, dans son propre repère (avant vers +z) : thorax en
+/// losange d'or, abdomen en cône d'émail aux couleurs du joueur (pointe vers
+/// l'arrière), tête d'émail vert, yeux et dard émeraude, deux petites ailes.
 fn wasp(b: &mut ModelBuilder) {
-    spindle(b, GOLD, 0.36, 0.09, Vec3::ZERO, ALONG_Z, v(1.0, 1.0, 0.65)); // thorax
-    spindle(b, ENAMEL, 0.46, 0.11, v(0.0, -0.02, -0.34), ALONG_Z, v(1.0, 1.0, 0.8)); // abdomen
-    chip(b, DIAMOND, 0.075, v(0.0, 0.02, 0.24)); // tête
-    spindle(b, PLATINUM, 0.22, 0.02, v(0.0, -0.03, -0.64), ALONG_Z, Vec3::ONE); // dard
+    octa(b, GOLD, 0.16, Vec3::ZERO, v(1.0, 0.5, 1.4)); // thorax
+    cyl(b, TEAM, 0.0, 0.08, 0.36, v(0.0, -0.02, -0.36), v(-FRAC_PI_2, 0.0, 0.0)); // abdomen
+    ball(b, ENAMEL, 0.08, v(0.0, 0.02, 0.26), ONE); // tête
+    b.mirrored(|b, s| ball(b, GLOW, 0.03, v(s * 0.04, 0.04, 0.32), ONE)); // yeux
+    ball(b, GLOW, 0.03, v(0.0, -0.02, -0.56), ONE); // pointe du dard
     // Ailes réduites de 35 % par rapport à la page : en test de charge, des
-    // dizaines d'Essaims aux grandes ailes lumineuses formaient un tapis violet.
+    // dizaines d'Essaims aux grandes ailes lumineuses formaient un tapis coloré.
     let outline = [[0.0, 0.0], [0.32, -0.09], [0.39, 0.01], [0.08, 0.08]];
     b.mirrored(|b, s| wing(b, &outline, v(s * 0.06, 0.08, 0.0), s));
 }
@@ -538,9 +547,11 @@ fn orbiting_wasp(b: &mut ModelBuilder, angle: f32, radius: f32, y: f32, directio
     b.group(Transform::from_translation(at).with_rotation(heading).with_scale(Vec3::splat(scale)), wasp);
 }
 
-/// Essaim : une nuée de sept guêpes-épingles en orbite autour d'un centre
-/// vide, sur deux anneaux qui tournent en sens contraires. De dessus : un
-/// cercle de petits points d'or et de couleur d'équipe qui tourbillonne.
+/// Essaim : une nuée de sept guêpes en orbite autour d'un centre vide, sur
+/// deux anneaux qui tournent en sens contraires (la page en montre 28 qui
+/// tournent chacune à sa vitesse : trop d'animations pour une unité qu'on
+/// produit en masse). De dessus : un cercle de petits points d'or et de
+/// couleur d'équipe qui tourbillonne.
 fn essaim() -> ModelBuilder {
     let mut b = ModelBuilder::new();
     let outer = Motion::Spin { axis: Vec3::Y, speed: 1.6 };
@@ -560,161 +571,163 @@ fn essaim() -> ModelBuilder {
     b
 }
 
-/// Essaimeur : grand vaisseau porte-drones en forme de broche-fuseau. Coque
-/// en fuseau d'onyx, coquille d'or rose par-dessus, grosse améthyste taille
-/// marquise sertie au centre, deux cabochons d'émail aux couleurs du joueur,
-/// grandes ailes d'or à arête vive bordées de pavé, et en poupe une
-/// pendeloque (une pierre poire au bout d'un fil de platine). Une escorte de
-/// quatre guêpes tourne autour de lui : ce sont les drones qu'il lancera au
-/// combat. Il vole à 3,2 m du sol.
+/// Essaimeur : le grand vaisseau porte-drones, un bracelet ouvert qui vole à
+/// plat. Un jonc d'or épais sur un lit d'émail vert, bordé de deux filets
+/// d'or vieilli, serti de sept cabochons d'émail aux couleurs du joueur ; à
+/// chaque bout, une boule d'or coiffée d'une émeraude, et dans l'ouverture,
+/// à l'avant, l'orbe : une grosse émeraude qui tourne sur elle-même en
+/// pulsant. Trois émeraudes pendent sous le jonc. Six anneaux d'or, chacun
+/// autour d'un éclat d'émeraude, l'escortent en orbite : ce sont les drones
+/// qu'il lancera au combat. Il vole à 3,2 m du sol.
 ///
-/// Sur la page, il vole vers +x : le groupe le tourne d'un quart de tour
-/// pour qu'il avance vers −z.
+/// Ce modèle-là est dessiné directement dans notre repère (sans [`page`]) :
+/// le tore du moteur est déjà couché à plat, et l'ouverture du bracelet est
+/// placée à l'avant (−z). Un point d'angle θ du jonc est en (R cos θ, ·, R sin θ).
 fn essaimeur() -> ModelBuilder {
+    // Cotes de la page : rayon du jonc, longueur de l'arc (1,62 π sur 2 π).
+    const R: f32 = 3.0;
+    const SPAN: f32 = PI * 1.62;
+    // L'ouverture est centrée sur −z (θ = 3π/2) : l'arc commence juste après.
+    let start = 1.5 * PI + (TAU - SPAN) / 2.0;
+    let on_ring = |angle: f32, radius: f32, y: f32| v(radius * angle.cos(), y, radius * angle.sin());
+    // Tourner un tore de α autour de y retranche α à ses angles : pour que
+    // l'arc commence en `start`, on le tourne de −start.
+    let band = |b: &mut ModelBuilder, slot: MaterialSlot, radius: f32, thickness: f32, y: f32, squash: f32| {
+        let placement = Transform::from_xyz(0.0, y, 0.0)
+            .with_rotation(Quat::from_rotation_y(-start))
+            .with_scale(v(1.0, squash, 1.0));
+        b.add(slot, PartShape::Torus { major: radius, minor: thickness, arc: SPAN }, placement);
+    };
+
     let mut b = ModelBuilder::new();
-    let ship = Transform::from_xyz(0.0, 3.2, 0.0)
-        .with_rotation(Quat::from_rotation_y(FRAC_PI_2))
-        .with_scale(Vec3::splat(0.5));
-    b.group(ship, |b| {
-        // Le fuseau : profil (rayon, position le long du vaisseau) de la poupe
-        // à la proue, couché le long de x et aplati verticalement.
-        let hull: Vec<Vec2> = [[0.0, -3.6], [0.55, -3.2], [1.0, -2.0], [1.22, 0.3], [0.95, 2.4], [0.4, 3.4], [0.0, 3.8]]
-            .iter()
-            .map(|p| Vec2::new(p[0], p[1]))
-            .collect();
-        // Quart de tour autour de z : l'axe du fuseau (y) passe le long de +x,
-        // et son x local devient la verticale, qu'on écrase.
-        let lying = |at: Vec3, scale: Vec3| placed(at, v(0.0, 0.0, -FRAC_PI_2), scale);
-        b.add(ONYX, PartShape::Lathe { profile: hull.clone(), segments: 16 }, lying(Vec3::ZERO, v(0.32, 1.0, 1.0))); // coque
-        b.add(GOLD, PartShape::Lathe { profile: hull, segments: 16 }, lying(v(0.1, 0.18, 0.0), v(0.3, 0.84, 0.78))); // coquille
-        // La marquise centrale, sertie de six griffes de platine et cerclée d'or.
-        b.pulsing(GEM_PULSE, |b| {
-            let setting = Transform::from_xyz(0.9, 0.52, 0.0);
-            set_stone(b, AMETHYST_STONE, PLATINUM, 0.48, 6, setting, v(1.7, 1.0, 0.75));
-        });
-        ring(b, GOLD, 0.5, 0.06, v(0.9, 0.46, 0.0), Vec3::ZERO, v(1.7, 1.0, 0.8));
-        // Deux cabochons d'émail en arrière de la pierre.
-        b.mirrored(|b, s| {
-            pearl(b, ENAMEL, 0.45, v(-1.2, 0.42, s * 0.42), v(2.0, 0.45, 0.75));
-            ring(b, GOLD, 0.45, 0.04, v(-1.2, 0.42, s * 0.42), Vec3::ZERO, v(2.02, 1.0, 0.77));
-        });
-        // Pendeloque de poupe.
-        tube(b, PLATINUM, &[[-3.6, 0.0, 0.0], [-5.0, 0.25, 0.0], [-6.2, 0.9, 0.0]], 0.06);
-        brilliant(b, AMETHYST_STONE, 0.24, v(-6.2, 0.75, 0.0), v(PI, 0.0, 0.0), v(0.8, 1.6, 0.8));
-        chip(b, DIAMOND, 0.14, v(3.85, 0.05, 0.0)); // diamant de proue
-        b.mirrored(|b, s| {
-            // Pavé d'améthystes le long des flancs.
-            pave(b, AMETHYST_STONE, v(-2.2, 0.12, s * 1.02), v(1.6, 0.12, s * 1.06), 7, 0.09);
-            // Réacteur : forme de révolution de platine couchée vers l'arrière (−x).
-            let pod = [Vec2::new(0.0, 0.0), Vec2::new(0.22, 0.0), Vec2::new(0.3, 0.35), Vec2::new(0.24, 0.7), Vec2::new(0.0, 0.7)];
-            b.lathe(PLATINUM, &pod, 14, v(-3.3, 0.0, s * 0.45), ALONG_X);
-            b.cylinder(ENGINE, 0.2, 0.03, v(-4.01, 0.0, s * 0.45), ALONG_X); // tuyère
-            // Grande aile d'or à arête vive, bordée de pavé de diamants, dans un
-            // groupe animé qui ondule autour de l'axe du vaisseau.
-            let flap = Motion::Swing { axis: Vec3::X * s, amplitude: 0.12, frequency: 0.14 };
-            b.animated(Transform::IDENTITY, flap, |b| {
-                let fin = [[-1.6, 1.1], [1.4, 1.1], [0.1, 3.3], [-1.3, 2.7]];
-                let fin: Vec<[f32; 2]> = fin.iter().map(|p| [p[0], p[1] * s]).collect();
-                flat_prism(b, GOLD, &fin, 0.1, 0.045, Vec3::ZERO);
-                pave(b, DIAMOND, v(1.2, 0.07, s * 1.42), v(0.2, 0.07, s * 3.05), 5, 0.08);
-            });
-        });
-    });
-    // L'escorte, à l'échelle des guêpes de l'Essaim, sous le vaisseau.
-    let escort = Motion::Spin { axis: Vec3::Y, speed: 0.7 };
-    b.animated(Transform::from_xyz(0.0, 2.6, 0.0), escort, |b| {
-        for i in 0..4 {
-            let a = i as f32 * TAU / 4.0 + 0.3;
-            orbiting_wasp(b, a, 2.3 + (i % 2) as f32 * 0.3, (i % 2) as f32 * 0.3, 1.0, 1.2);
+    b.group(Transform::from_xyz(0.0, 3.2, 0.0).with_scale(Vec3::splat(0.55)), |b| {
+        band(b, GOLD, R, 0.46, 0.0, 1.0); // le jonc
+        band(b, OLD_GOLD, R - 0.62, 0.09, 0.1, 1.0); // filet intérieur
+        band(b, OLD_GOLD, R + 0.6, 0.07, -0.05, 1.0); // filet extérieur
+        band(b, ENAMEL, R, 0.48, -0.12, 0.6); // lit d'émail, aplati, qui déborde dessous
+        // Les sept cabochons sur le dessus, petits et grands en alternance.
+        for k in 1..8 {
+            let at = on_ring(start + SPAN * k as f32 / 8.0, R, 0.4);
+            let radius = if k % 2 == 1 { 0.24 } else { 0.32 };
+            // `cab` est dessiné dans le plan (x, y) : un quart de tour le couche à plat.
+            cab(b, TEAM, radius, at, v(-FRAC_PI_2, 0.0, 0.0));
         }
+        // Les deux bouts : une boule d'or coiffée d'une émeraude, table vers le haut.
+        for angle in [start, start + SPAN] {
+            let end = on_ring(angle, R, 0.0);
+            ball(b, GOLD, 0.62, end, ONE);
+            brill(b, EMERALD_STONE, 0.36, end + v(0.0, 0.62, 0.0), NO_TURN);
+        }
+        // Trois émeraudes pendues sous le jonc, pointe en haut.
+        for t in [0.3, 0.5, 0.7] {
+            brill(b, EMERALD_STONE, 0.22, on_ring(start + SPAN * t, R, -0.95), v(PI, 0.0, 0.0));
+        }
+        // L'orbe, dans l'ouverture : elle tourne sur un axe penché en pulsant.
+        let spin = Motion::Spin { axis: v(0.5, 0.8, 0.0).normalize(), speed: 0.95 };
+        b.animated(Transform::from_translation(on_ring(1.5 * PI, R, 0.0)), spin, |b| {
+            b.pulsing(GEM_PULSE, |b| ico(b, EMERALD_STONE, 0.75));
+        });
+        // L'escorte : six anneaux d'or dressés, chacun autour d'un éclat
+        // d'émeraude, qui tournent autour du bracelet un peu plus bas, chacun
+        // tourné dans le sens de sa course (on regarde à travers l'anneau).
+        // Agrandis de 80 % par rapport à la page : à leur taille d'origine
+        // (22 cm), on ne les voyait pas de la caméra.
+        let escort = Motion::Spin { axis: Vec3::Y, speed: 0.6 };
+        b.animated(Transform::from_xyz(0.0, -0.6, 0.0), escort, |b| {
+            for j in 0..6 {
+                let angle = j as f32 * TAU / 6.0;
+                let radius = 4.4 + (j % 3) as f32 * 0.45;
+                let lift = (j % 2) as f32 * 0.5 - 0.25;
+                // La tangente au cercle en θ est (−sin θ, 0, cos θ) : on y amène
+                // l'axe de l'anneau (y → z par un quart de tour, puis z → tangente).
+                let facing = Quat::from_rotation_y(-angle) * Quat::from_rotation_x(FRAC_PI_2);
+                let at = Transform::from_translation(on_ring(angle, radius, lift)).with_rotation(facing).with_scale(Vec3::splat(1.8));
+                b.group(at, |b| {
+                    b.torus(GOLD, 0.22, 0.05, TAU, Vec3::ZERO, NO_TURN);
+                    octa(b, EMERALD_STONE, 0.1, Vec3::ZERO, v(1.0, 1.0, 1.6));
+                });
+            }
+        });
     });
     b
 }
 
-/// Titan : le géant, une grande bague qui marche. Jambes en fuseaux de
-/// platine cerclés de joncs d'or, genoux en perles d'onyx serties d'un
-/// diamant, buste en coupe d'or rose couronnée de pavé, et au milieu le
-/// cœur : une grosse améthyste taille brillant qui tourne et pulse, tenue
-/// par six griffes de platine. Un bras-canon autour duquel s'enroule un
-/// serpent d'or satiné, un poing d'onyx à trois griffes. Les épaules sont
-/// deux grandes perles d'émail serties d'or, la crête une lame d'émail : de
-/// dessus, deux grandes taches de couleur reliées par un joug de platine.
+/// Titan : le colosse serti. Jambes et bras en plaques d'or et d'émail vert,
+/// genoux et taille en prismes hexagonaux d'or vieilli ; un buste hexagonal
+/// d'or ceint d'un filet émeraude, et au milieu le cœur, une grosse émeraude
+/// cerclée d'or qui tourne et pulse. Le bras droit est un canon hexagonal à
+/// bouche émeraude, le gauche un poing à trois griffes. Les épaules sont de
+/// grands prismes hexagonaux d'or ourlés d'émeraude, terminés par une
+/// émeraude taillée. Derrière la tête se dresse une couronne de cinq lames
+/// d'or, et deux lames d'or vieilli sur les épaules. Le joug des épaules et
+/// la crête sont en émail du joueur : de dessus, une barre de couleur sous
+/// la couronne. 4,5 m.
 fn titan() -> ModelBuilder {
     let mut b = ModelBuilder::new();
     b.group(page(0.62), |b| {
-        let one = Vec3::ONE;
         b.mirrored(|b, s| {
-            pearl(b, GOLD, 0.6, v(s * 1.05, 0.22, 0.25), v(0.85, 0.35, 1.5)); // pied
-            spindle(b, PLATINUM, 1.8, 0.44, v(s * 1.05, 1.3, 0.0), Vec3::ZERO, one); // tibia
-            for y in [0.85, 1.75] {
-                ring(b, GOLD, 0.37, 0.07, v(s * 1.05, y, 0.0), Vec3::ZERO, one); // joncs du tibia
-            }
-            pearl(b, ONYX, 0.42, v(s * 1.05, 2.2, 0.05), one); // genou
-            let kneecap = placed(v(s * 1.05, 2.25, 0.45), ALONG_Z, Vec3::ONE);
-            set_stone(b, DIAMOND, PLATINUM, 0.15, 4, kneecap, Vec3::ONE);
-            spindle(b, GOLD, 1.4, 0.44, v(s * 0.95, 2.95, -0.05), Vec3::ZERO, one); // cuisse
-            // Épaule : grande perle d'émail sertie d'un jonc d'or, une pierre au bout.
-            pearl(b, ENAMEL, 0.92, v(s * 2.45, 5.7, 0.0), v(1.0, 0.8, 1.0));
-            ring(b, GOLD, 0.93, 0.09, v(s * 2.45, 5.7, 0.0), Vec3::ZERO, one);
-            brilliant(b, AMETHYST_STONE, 0.3, v(s * 3.35, 5.7, 0.0), v(0.0, 0.0, -s * FRAC_PI_2), one);
-            chain(b, GOLD, v(s * 2.5, 5.05, 0.0), v(s * 2.5, 4.0, 0.0), 3, 0.28, 0.07); // bras en maillons
-            // Aileron dorsal : une lame de fuseau aplatie.
-            spindle(b, GOLD, 1.4, 0.5, v(s * 0.7, 6.1, -1.15), v(0.5, 0.0, -s * 0.25), v(0.22, 1.0, 1.0));
-            pearl(b, GLOW, 0.07, v(s * 0.16, 6.74, 0.72), one); // œil
+            // Jambes.
+            plate(b, ENAMEL, [1.0, 0.4, 1.7], 0.1, v(s * 1.05, 0.2, 0.2), NO_TURN); // pied
+            plate(b, GOLD, [0.9, 0.32, 0.55], 0.08, v(s * 1.05, 0.26, 0.95), NO_TURN); // orteils
+            plate(b, GOLD, [0.7, 0.5, 0.4], 0.08, v(s * 1.05, 0.45, -0.55), NO_TURN); // talon
+            plate(b, GOLD, [0.85, 1.5, 0.95], 0.12, v(s * 1.05, 1.3, 0.0), NO_TURN); // tibia
+            bar(b, GLOW, [0.1, 1.0, 0.04], v(s * 1.05, 1.3, 0.49));
+            plate(b, ENAMEL, [0.6, 1.2, 0.3], 0.06, v(s * 1.05, 1.3, -0.55), NO_TURN); // mollet
+            hexc(b, OLD_GOLD, 0.52, 0.52, 1.0, v(s * 1.05, 2.2, 0.05), ALONG_X); // genou
+            plate(b, GOLD, [0.66, 0.56, 0.22], 0.08, v(s * 1.05, 2.25, 0.58), NO_TURN); // rotule
+            plate(b, ENAMEL, [0.72, 1.1, 0.85], 0.1, v(s * 0.95, 2.95, -0.05), NO_TURN); // cuisse
+            plate(b, GOLD, [0.5, 0.8, 0.14], 0.05, v(s * 0.95, 2.95, 0.44), NO_TURN);
+            // Épaule : grand prisme hexagonal couché, filet émeraude, disque
+            // d'émail du joueur et émeraude au bout.
+            hexc(b, GOLD, 0.9, 0.9, 1.15, v(s * 2.45, 5.7, 0.0), ALONG_X);
+            hexc(b, GLOW, 0.93, 0.93, 0.1, v(s * 2.2, 5.7, 0.0), ALONG_X);
+            hexc(b, TEAM, 0.6, 0.6, 0.08, v(s * 3.05, 5.7, 0.0), ALONG_X);
+            octa(b, EMERALD_STONE, 0.3, v(s * 3.12, 5.7, 0.0), ONE);
+            plate(b, ENAMEL, [0.62, 1.3, 0.72], 0.08, v(s * 2.5, 4.55, 0.0), NO_TURN); // bras
+            // Aileron dorsal et lame d'épaule.
+            plate(b, GOLD, [0.16, 1.2, 0.9], 0.05, v(s * 0.7, 6.1, -1.15), v(0.5, 0.0, -s * 0.25));
+            blade(b, OLD_GOLD, v(s * 2.45, 6.55, -0.2), v(0.0, 0.0, -s * 0.5), 0.8);
+            ball(b, GLOW, 0.07, v(s * 0.16, 6.74, 0.72), ONE); // œil
         });
-        // Bras droit : le canon, un fût d'or effilé vers l'avant, et un
-        // serpent d'or satiné enroulé autour.
-        let barrel = [Vec2::new(0.0, 0.0), Vec2::new(0.62, 0.0), Vec2::new(0.62, 0.3), Vec2::new(0.48, 1.9), Vec2::new(0.0, 1.9)];
-        b.lathe(GOLD, &barrel, 18, v(2.5, 3.75, -0.3), ALONG_Z);
-        let coil: Vec<[f32; 3]> = (0..=12)
-            .map(|k| {
-                let t = k as f32 / 12.0;
-                let a = t * 3.0 * TAU;
-                let r = 0.66 - 0.14 * t;
-                [2.5 + r * a.cos(), 3.75 + r * a.sin(), -0.15 + 1.7 * t]
-            })
-            .collect();
-        tube(b, SATIN, &coil, 0.07);
-        ring(b, PLATINUM, 0.6, 0.08, v(2.5, 3.75, -0.25), ALONG_Z, one); // bague arrière
-        brilliant(b, AMETHYST_STONE, 0.4, v(2.5, 3.75, 1.62), ALONG_Z, one); // bouche du canon
-        // Bras gauche : avant-bras de platine, poing d'onyx, trois griffes d'or.
-        spindle(b, PLATINUM, 1.7, 0.38, v(-2.5, 3.5, 0.25), v(-0.25, 0.0, 0.0), one);
-        pearl(b, ONYX, 0.42, v(-2.5, 2.62, 0.5), one);
+        // Bras droit : le canon hexagonal, bague d'émail et bouche émeraude.
+        hexc(b, GOLD, 0.5, 0.62, 1.9, v(2.5, 3.75, 0.65), ALONG_Z);
+        hexc(b, ENAMEL, 0.64, 0.64, 0.12, v(2.5, 3.75, 0.1), ALONG_Z);
+        hexc(b, GLOW, 0.38, 0.38, 0.06, v(2.5, 3.75, 1.62), ALONG_Z);
+        bar(b, GLOW, [0.06, 0.06, 1.2], v(2.5, 4.3, 0.7));
+        // Bras gauche : avant-bras d'or, poing d'émail, trois griffes d'or.
+        plate(b, GOLD, [0.62, 1.5, 0.72], 0.08, v(-2.5, 3.5, 0.25), v(-0.25, 0.0, 0.0));
+        plate(b, ENAMEL, [0.64, 0.55, 0.66], 0.1, v(-2.5, 2.62, 0.5), NO_TURN);
         for k in 0..3 {
-            spindle(b, GOLD, 0.55, 0.11, v(-2.5 + (k as f32 - 1.0) * 0.22, 2.25, 0.72), v(0.4, 0.0, 0.0), v(0.6, 1.0, 1.0));
+            plate(b, GOLD, [0.17, 0.32, 0.22], 0.03, v(-2.5 + (k as f32 - 1.0) * 0.21, 2.25, 0.68), NO_TURN);
         }
+        bar(b, GLOW, [0.5, 0.05, 0.03], v(-2.5, 2.72, 0.84));
         // Le corps.
-        ring(b, PLATINUM, 1.0, 0.24, v(0.0, 3.55, 0.0), Vec3::ZERO, v(1.3, 1.0, 0.6)); // bassin en jonc
-        spindle(b, SATIN, 1.0, 0.75, v(0.0, 4.05, 0.0), Vec3::ZERO, one); // taille
-        // Buste : une coupe d'or rose qui s'évase vers les épaules.
-        let cup = [[0.0, -0.95], [1.2, -0.9], [1.5, -0.3], [1.72, 0.5], [1.62, 0.85], [0.0, 0.95]];
-        let cup: Vec<Vec2> = cup.iter().map(|p| Vec2::new(p[0], p[1])).collect();
-        b.add(GOLD, PartShape::Lathe { profile: cup, segments: 20 }, placed(v(0.0, 5.15, 0.0), Vec3::ZERO, v(1.0, 1.0, 0.8)));
-        // Couronne de pavé autour du bord, diamants et améthystes en alternance.
-        for k in 0..14 {
-            let a = TAU * k as f32 / 14.0;
-            let slot = if k % 2 == 0 { DIAMOND } else { AMETHYST_STONE };
-            chip(b, slot, 0.13, v(1.5 * a.sin(), 6.04, 1.5 * 0.8 * a.cos()));
-        }
-        // Le cœur : un serti de six griffes et un anneau de platine (fixes),
-        // et la pierre qui tourne lentement sur elle-même en pulsant.
-        ring(b, PLATINUM, 0.6, 0.07, v(0.0, 5.15, 1.36), ALONG_Z, one);
-        for k in 0..6 {
-            let a = TAU * (k as f32 + 0.5) / 6.0;
-            b.cone(PLATINUM, 0.06, 0.0, 0.3, v(0.55 * a.sin(), 5.15 + 0.55 * a.cos(), 1.55), v(FRAC_PI_2 - 0.5 * a.cos(), 0.0, 0.5 * a.sin()));
-        }
-        b.animated(Transform::from_xyz(0.0, 5.15, 1.5), Motion::Spin { axis: Vec3::Z, speed: 0.6 }, |b| {
-            b.pulsing(GEM_PULSE, |b| brilliant(b, AMETHYST_STONE, 0.5, Vec3::ZERO, ALONG_Z, Vec3::ONE));
+        plate(b, ENAMEL, [2.7, 0.62, 1.15], 0.1, v(0.0, 3.55, 0.0), NO_TURN); // bassin
+        plate(b, GOLD, [0.7, 0.5, 0.3], 0.08, v(0.0, 3.5, 0.55), NO_TURN);
+        hexc(b, OLD_GOLD, 0.72, 0.85, 0.55, v(0.0, 4.05, 0.0), NO_TURN); // taille
+        hexc(b, GOLD, 1.75, 1.35, 1.85, v(0.0, 5.15, 0.0), NO_TURN); // buste
+        hexc(b, GLOW, 1.73, 1.73, 0.08, v(0.0, 5.86, 0.0), NO_TURN); // filet du buste
+        plate(b, ENAMEL, [1.3, 0.95, 0.2], 0.06, v(0.0, 5.15, 1.32), NO_TURN); // plastron
+        bar(b, GLOW, [0.9, 0.05, 0.04], v(0.0, 4.5, 1.24));
+        // Le cœur : un jonc d'or vieilli (fixe), et l'émeraude qui tourne
+        // lentement sur elle-même en pulsant.
+        ring(b, OLD_GOLD, 0.5, 0.07, v(0.0, 5.15, 1.42), NO_TURN);
+        b.animated(Transform::from_xyz(0.0, 5.15, 1.42), Motion::Spin { axis: Vec3::Y, speed: 0.4 }, |b| {
+            b.pulsing(GEM_PULSE, |b| ico(b, EMERALD_STONE, 0.42));
         });
-        // Joug des épaules : un fuseau de platine couché en travers.
-        spindle(b, PLATINUM, 4.0, 0.32, v(0.0, 6.2, 0.0), ALONG_X, v(1.0, 1.0, 0.8));
-        pearl(b, GOLD, 0.5, v(0.0, 6.74, 0.22), v(0.95, 1.0, 1.05)); // tête
-        pearl(b, ONYX, 0.42, v(0.0, 6.68, 0.4), v(0.85, 0.9, 0.8)); // visage
-        chip(b, DIAMOND, 0.1, v(0.0, 7.05, 0.55)); // diamant du front
-        spindle(b, ENAMEL, 1.1, 0.28, v(0.0, 7.2, 0.05), ALONG_Z, v(0.35, 1.0, 1.0)); // crête d'émail
-        // Réacteur dorsal : anneau de platine autour d'une améthyste.
-        ring(b, PLATINUM, 0.42, 0.1, v(0.0, 5.4, -1.45), ALONG_Z, one);
-        brilliant(b, AMETHYST_STONE, 0.3, v(0.0, 5.4, -1.5), v(-FRAC_PI_2, 0.0, 0.0), one);
+        plate(b, TEAM, [3.7, 0.5, 1.25], 0.1, v(0.0, 6.2, 0.0), NO_TURN); // joug des épaules
+        ball(b, GOLD, 0.5, v(0.0, 6.74, 0.22), v(0.95, 1.0, 1.05)); // tête
+        ball(b, ENAMEL, 0.42, v(0.0, 6.68, 0.4), v(0.85, 0.9, 0.8)); // visage
+        bar(b, GLOW, [0.3, 0.03, 0.02], v(0.0, 6.5, 0.7));
+        plate(b, TEAM, [0.12, 0.5, 0.9], 0.03, v(0.0, 7.2, 0.1), NO_TURN); // crête
+        // Réacteur dorsal.
+        hexc(b, OLD_GOLD, 0.5, 0.5, 0.8, v(0.0, 5.4, -1.5), ALONG_Z);
+        hexc(b, GLOW, 0.36, 0.36, 0.06, v(0.0, 5.4, -1.92), ALONG_Z);
+        // La couronne : cinq lames d'or en éventail derrière la tête.
+        for k in -2..=2 {
+            let k = k as f32;
+            blade(b, GOLD, v(k * 0.42, 6.45, -0.75), v(-0.35, 0.0, -k * 0.32), 1.0);
+        }
     });
     b
 }
@@ -731,5 +744,14 @@ mod tests {
             println!("{} : {} sommets, {} pièces", unit.name, vertices, unit.parts.len());
             assert!(vertices < 14_000, "{} est trop lourd : {vertices} sommets", unit.name);
         }
+    }
+
+    /// La courbe de la queue passe bien par ses deux bouts.
+    #[test]
+    fn curve_reaches_its_ends() {
+        let points = [Vec3::ZERO, Vec3::X, Vec3::new(2.0, 1.0, 0.0)];
+        assert!(curve_point(&points, 0.0).distance(points[0]) < 1e-5);
+        assert!(curve_point(&points, 1.0).distance(points[2]) < 1e-5);
+        assert!(curve_point(&points, 0.5).distance(points[1]) < 1e-5);
     }
 }

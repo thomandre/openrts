@@ -3,12 +3,12 @@
 //!
 //! L'aspect du sol dépend de la faction affichée ([`GroundStyle`] et
 //! [`GroundPattern`]) : roche sombre pour la Coalition, terre forestière pour
-//! les Sylves, velours sombre d'écrin pour le Collectif.
+//! les Sylves, dalles hexagonales sombres pour le Collectif.
 
 use bevy::light::NotShadowCaster;
 use bevy::math::Affine2;
 use bevy::prelude::*;
-use rts_engine::graphics::textures::{terrain_images, velvet_images};
+use rts_engine::graphics::textures::{hex_floor_images, terrain_images, velvet_images};
 
 /// Une répétition de la texture du sol mesure 8 m (la grille tombe tous les 4 m).
 const TERRAIN_TILE: f32 = 8.0;
@@ -51,6 +51,10 @@ pub enum GroundPattern {
     /// Velours d'écrin : grandes moirures douces entre les deux teintes du
     /// [`GroundStyle`], sans cailloux ni grille (`grid_lines` est ignoré).
     Velvet,
+    /// Dalles hexagonales sombres, d'une teinte tirée entre les deux du
+    /// [`GroundStyle`] (le sol de la page de direction artistique, retenu
+    /// pour le Collectif) ; `grid_lines` est ignoré, les joints en tiennent lieu.
+    Hexagons,
 }
 
 pub fn spawn_ground(
@@ -65,6 +69,7 @@ pub fn spawn_ground(
     let terrain = match pattern {
         GroundPattern::Natural => terrain_images(style.base, style.dust, style.grid_lines),
         GroundPattern::Velvet => velvet_images(style.base, style.dust),
+        GroundPattern::Hexagons => hex_floor_images(style.base, style.dust),
     };
     let albedo = images.add(terrain.albedo);
     let normal = images.add(terrain.normal);

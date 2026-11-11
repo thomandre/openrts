@@ -173,6 +173,66 @@ pub fn velvet_images(base: Color, dust: Color) -> DetailImages {
     }
 }
 
+/// Textures d'un sol de dalles hexagonales (le `floorMat` de la page de
+/// direction artistique) : 7 colonnes et 8 rangées d'hexagones par image,
+/// séparés par des joints sombres en creux. Chaque dalle reçoit une teinte
+/// tirée entre `base` et `dust`, et un grain fin : le sol reste sombre et
+/// calme, mais on y lit les distances.
+pub fn hex_floor_images(base: Color, dust: Color) -> DetailImages {
+    const SIZE: usize = 512;
+    const COLUMNS: i32 = 7;
+    const ROWS: i32 = 8;
+    let n = SIZE as f32;
+    let mut rng = Rng::new(11);
+    let fine = value_noise(SIZE, 96, &mut rng);
+    let mut height = Canvas::new(SIZE, 0.55);
+    // Teinte de chaque pixel (0 : `base`, 1 : `dust`), puis les joints (0 : joint).
+    let mut tint = Canvas::new(SIZE, 0.0);
+    let mut joints = Canvas::new(SIZE, 1.0);
+    let width = n / COLUMNS as f32;
+    let row_height = n / ROWS as f32;
+    // Rayon d'un hexagone « pointe en haut » qui remplit exactement la rangée
+    // (à 1 % près : 8 rangées pour 7 colonnes, c'est presque un pavage régulier).
+    let side = width / 3f32.sqrt();
+    let squash = row_height / (1.5 * side);
+    let corner = |cx: f32, cy: f32, i: usize| {
+        let a = std::f32::consts::FRAC_PI_3 * i as f32 + std::f32::consts::FRAC_PI_6;
+        Vec2::new(cx + a.cos() * side, cy + a.sin() * side * squash)
+    };
+    for row in -1..=ROWS {
+        for col in -1..=COLUMNS {
+            let cx = (col as f32 + if row.rem_euclid(2) == 1 { 0.5 } else { 0.0 }) * width;
+            let cy = row as f32 * row_height;
+            // Teinte de la dalle : un disque un peu plus petit que l'hexagone
+            // (les joints recouvrent le reste). Les dalles hors de l'image
+            // bouclent sur leurs copies : même tirage pour une même dalle.
+            let key = (row.rem_euclid(ROWS) * COLUMNS + col.rem_euclid(COLUMNS)) as u64;
+            // (Deux tirages : le premier, pour des graines voisines, donne des valeurs voisines.)
+            let mut dice = Rng::new(1 + key * 104_729);
+            dice.next();
+            let t = dice.next() * 0.6;
+            tint.fill_circle(cx, cy, side * 0.95, t);
+            for i in 0..6 {
+                let (a, b) = (corner(cx, cy, i), corner(cx, cy, (i + 1) % 6));
+                height.line(a.x, a.y, b.x, b.y, 5.0, 0.2);
+                joints.line(a.x, a.y, b.x, b.y, 3.0, 0.0);
+            }
+        }
+    }
+    let (base, dust) = (base.to_linear().to_vec3(), dust.to_linear().to_vec3());
+    let mut color = vec![0u8; SIZE * SIZE * 4];
+    for i in 0..SIZE * SIZE {
+        height.data[i] += 0.04 * fine[i];
+        let shade = (0.92 + 0.14 * fine[i]) * (0.35 + 0.65 * joints.data[i]);
+        let c = LinearRgba::from_vec3(base.lerp(dust, tint.data[i]) * shade);
+        color[i * 4..i * 4 + 4].copy_from_slice(&Srgba::from(c).to_u8_array());
+    }
+    DetailImages {
+        albedo: rgba_image(SIZE, color, TextureFormat::Rgba8UnormSrgb, false),
+        normal: height.to_normal_image(3.0),
+    }
+}
+
 /// Panneaux de blindage : joints, panneaux en relief, rivets, grilles d'aération.
 /// Inspiré de la page de direction artistique (`panelTex`).
 fn panels(worn: bool) -> (Canvas, Canvas) {
