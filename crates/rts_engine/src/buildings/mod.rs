@@ -455,7 +455,7 @@ impl BuildingCatalog {
                 // Un bâtiment qui pousse ou s'assemble seul n'a pas
                 // d'échafaudage : juste un anneau au sol qui marque l'empreinte
                 // pendant la construction. En sertissage à distance, la gemme
-                // d'ancrage flotte au-dessus du toit à venir (enfant du cadre :
+                // d'ancrage flotte à mi-hauteur du bâtiment à venir (enfant du cadre :
                 // elle disparaît avec lui, à la fin de la construction).
                 let top = visual.top;
                 parent
@@ -469,7 +469,7 @@ impl BuildingCatalog {
                     .with_children(|frame| {
                         if let (ConstructionStyle::RemoteAnchor { .. }, Some(anchor)) = (self.style, &self.anchor_visual) {
                             frame
-                                .spawn((Name::new("Gemme d'ancrage"), Transform::from_xyz(0.0, top + 0.3, 0.0), Visibility::default()))
+                                .spawn((Name::new("Gemme d'ancrage"), Transform::from_xyz(0.0, top * 0.55, 0.0), Visibility::default()))
                                 .with_children(|gem| spawn_model(gem, anchor, jitter, &self.materials));
                         }
                     });

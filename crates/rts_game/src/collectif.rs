@@ -1,4 +1,4 @@
-//! Le Collectif : palette, ambiance et unités (faction en exploration visuelle).
+//! Le Collectif : palette, ambiance, unités et bâtiments (faction en exploration visuelle).
 //!
 //! Direction artistique : « or jaune, émail vert et émeraudes. Des
 //! machines-bijoux : automates couronnés, colosse serti, scorpions-colliers et
@@ -36,16 +36,27 @@
 //! | `Glow` | émeraude lumineuse (yeux, filets) ; `Jewel` en dérive pour les pierres taillées |
 //! | `Engine` | halo vert d'eau ; `Flame` en dérive pour les ailes translucides |
 //! | `Bare`, `Rubber` | inutilisés (or clair, or vieilli) |
+//!
+//! Les bâtiments du palier 1 (section « Les bâtiments ») suivent la même
+//! direction artistique : des machines aux lignes de joaillerie (socles
+//! hexagonaux d'émail, griffes de chaton, arches d'or, rangs de perles,
+//! émeraudes taillées), pas des bijoux posés au sol. Ils se construisent
+//! par **sertissage à distance** (voir [`CONSTRUCTION`]) et, pour certains,
+//! seulement dans un **champ de résonance** émis par l'Écrin ou un
+//! Résonateur (voir `rts_engine::buildings::field`).
 
 use std::f32::consts::{FRAC_PI_2, PI, TAU};
 
 use bevy::prelude::*;
+use rts_engine::buildings::{BuildingType, ConstructionStyle, Cost, PlacementRule};
+use rts_engine::economy::production::{ProductionOption, Requirement, UnitEconomy};
+use rts_engine::economy::{EconomyRules, ResourceInfo, ResourceKind};
 use rts_engine::graphics::shapes::catmull_rom;
 use rts_engine::graphics::{
     Ambiance, EnvironmentSettings, FogSettings, ParticleSettings, ReflectionPanel, ReflectionPanels, SceneLight,
 };
 use rts_engine::units::{
-    HoverMotion, MaterialSlot, ModelBuilder, Motion, Palette, PartShape, Pulse, SurfaceDetail, SurfaceStyle, UnitType,
+    HoverMotion, MaterialSlot, ModelBuilder, Motion, Palette, Part, PartShape, Pulse, SurfaceDetail, SurfaceStyle, UnitType,
 };
 
 use crate::map::{GroundPattern, GroundStyle};
@@ -732,6 +743,331 @@ fn titan() -> ModelBuilder {
     b
 }
 
+// ---------------------------------------------------------------------------
+// Les bâtiments (palier 1, propositions : voir GAME_DESIGN.md).
+// ---------------------------------------------------------------------------
+
+/// Façon de construire du Collectif : le **sertissage à distance**. Le
+/// Collecteur vole jusqu'à l'emplacement, y pose une gemme d'ancrage et
+/// repart aussitôt récolter ; le bâtiment s'assemble seul. Annulé, un
+/// chantier rend 75 % de son coût.
+pub const CONSTRUCTION: ConstructionStyle = ConstructionStyle::RemoteAnchor { refund_percent: 75 };
+
+/// Couleur du champ de résonance dessiné au sol pendant la pose : le halo vert d'eau.
+pub const FIELD_COLOR: Color = HALO_COLOR;
+
+/// Rayons des champs de résonance (mètres, depuis le centre du bâtiment) :
+/// l'Écrin couvre ses abords (4,5 m au-delà de son bord), le Résonateur un
+/// cercle où tiennent deux ou trois bâtiments.
+pub const CORE_FIELD_RADIUS: f32 = 8.0;
+pub const RELAY_FIELD_RADIUS: f32 = 6.5;
+
+/// Indices des bâtiments dans [`building_types`].
+pub mod building {
+    pub const ECRIN: usize = 0;
+    pub const RESONATEUR: usize = 1;
+    pub const CREUSET: usize = 2;
+    pub const ORFEVRERIE: usize = 3;
+    pub const AIGUILLON: usize = 4;
+}
+
+/// Les bâtiments du palier 1, mêmes rôles que ceux de la Garde et des Sylves :
+///
+/// - **Écrin** (7 × 7 m) : le cœur de la base, dépôt des récoltes, produit
+///   les Collecteurs, 15 de population, émet un champ de résonance ;
+/// - **Résonateur** (2 × 2 m) : le relais, 8 de population, émet le champ
+///   de résonance où se posent les autres bâtiments ;
+/// - **Creuset** (4 × 4 m) : posé sur une source d'Éther, il la distille ;
+///   les Collecteurs le récoltent à son bord ;
+/// - **Orfèvrerie** (5 × 5 m) : l'atelier des Automates ;
+/// - **Aiguillon** (2 × 2 m) : défense fixe, débloquée par l'Orfèvrerie.
+///
+/// Orfèvrerie et Aiguillon ne se posent que **dans un champ de résonance**
+/// (celui de l'Écrin ou d'un Résonateur terminé) ; l'Écrin, le Résonateur
+/// et le Creuset se posent partout (le Résonateur, pour étendre le champ ;
+/// l'Écrin, pour s'étendre vers d'autres gisements).
+///
+/// Chiffres proposés, à ajuster en test : mêmes prix en Cristal que la
+/// Garde à peu près (le Collecteur ne perd pas son temps sur le chantier,
+/// mais le champ contraint la pose), temps de construction un peu plus longs.
+pub fn building_types() -> Vec<BuildingType> {
+    use building::*;
+    vec![
+        BuildingType {
+            dropoff: true,
+            supply: 15,
+            field_radius: CORE_FIELD_RADIUS,
+            production: vec![option(kind::COLLECTEUR, 'c', &[])],
+            ..building_type("Écrin", (7, 7), 1500.0, 75.0, (400, 0), &[], 'e', ecrin())
+        },
+        BuildingType {
+            supply: 8,
+            field_radius: RELAY_FIELD_RADIUS,
+            ..building_type("Résonateur", (2, 2), 300.0, 25.0, (100, 0), &[], 'r', resonateur())
+        },
+        BuildingType {
+            placement: PlacementRule::OnResource(ResourceKind::Rare),
+            ..building_type("Creuset", (4, 4), 450.0, 25.0, (75, 0), &[], 'c', creuset())
+        },
+        // L'Orfèvrerie assemble les Automates ; le Perceur attend un
+        // bâtiment du palier 2 pas encore dans le jeu.
+        BuildingType {
+            needs_field: true,
+            production: vec![option(kind::AUTOMATE, 'a', &[]), option(kind::PERCEUR, 'p', &["Lapidaire"])],
+            ..building_type("Orfèvrerie", (5, 5), 1000.0, 50.0, (150, 0), &[ECRIN], 'o', orfevrerie())
+        },
+        BuildingType {
+            needs_field: true,
+            ..building_type("Aiguillon", (2, 2), 300.0, 25.0, (100, 0), &[ORFEVRERIE], 'a', aiguillon())
+        },
+    ]
+}
+
+/// Règles économiques du Collectif : les Collecteurs récoltent avec les
+/// mêmes cadences que les Techniciens (5 de Cristal en 2,8 s, 4 d'Éther en
+/// 2 s, au bord du Creuset) ; ils volent un peu plus vite qu'eux. Coûts,
+/// temps de production (en secondes) et population proposés : des unités
+/// chères et solides, peu nombreuses.
+pub fn economy_rules(resources: [ResourceInfo; 2]) -> EconomyRules {
+    // Dans l'ordre de `unit_types` : (Cristal, Éther), temps, population.
+    let units = [
+        ((50, 0), 12.0, 1), // Collecteur
+        ((100, 0), 24.0, 2), // Automate
+        ((125, 50), 30.0, 3), // Perceur
+        ((75, 50), 25.0, 2), // Essaim
+        ((300, 200), 60.0, 6), // Essaimeur
+        ((350, 250), 70.0, 8), // Titan
+    ];
+    EconomyRules {
+        resources,
+        harvesters: vec![kind::COLLECTEUR],
+        carry: [5, 4],
+        gather_time: [2.8, 2.0],
+        units: units
+            .iter()
+            .map(|&((primary, rare), train_time, population)| UnitEconomy { cost: Cost::new(primary, rare), train_time, population })
+            .collect(),
+    }
+}
+
+/// Une unité produite par un bâtiment ; `requires` : noms de bâtiments qui
+/// n'existent pas encore dans le jeu (l'option reste grisée).
+fn option(unit_type: usize, hotkey: char, requires: &[&str]) -> ProductionOption {
+    ProductionOption {
+        unit_type,
+        hotkey,
+        requires: requires.iter().map(|name| Requirement::NotYetAvailable((*name).into())).collect(),
+    }
+}
+
+/// `cost` : (Cristal, Éther).
+fn building_type(
+    name: &str,
+    footprint: (u32, u32),
+    max_health: f32,
+    build_time: f32,
+    cost: (u32, u32),
+    requires: &[usize],
+    hotkey: char,
+    model: ModelBuilder,
+) -> BuildingType {
+    BuildingType {
+        name: name.into(),
+        footprint: UVec2::new(footprint.0, footprint.1),
+        max_health,
+        build_time,
+        cost: Cost::new(cost.0, cost.1),
+        requires: requires.to_vec(),
+        hotkey,
+        parts: model.build(),
+        ..Default::default()
+    }
+}
+
+/// La gemme d'ancrage que pose le Collecteur : une émeraude taille brillant,
+/// table vers le haut, tenue dans un jonc d'or à quatre griffes, qui tourne
+/// lentement au-dessus du chantier pendant qu'il s'assemble.
+pub fn anchor_gem() -> Vec<Part> {
+    let mut b = ModelBuilder::new();
+    b.animated(Transform::from_xyz(0.0, 0.5, 0.0), Motion::Spin { axis: Vec3::Y, speed: 1.1 }, |b| {
+        brill(b, EMERALD_STONE, 0.42, Vec3::ZERO, NO_TURN);
+        b.torus(GOLD, 0.44, 0.06, TAU, v(0.0, 0.02, 0.0), NO_TURN);
+        for i in 0..4 {
+            let a = i as f32 * TAU / 4.0 + 0.4;
+            let (sin, cos) = a.sin_cos();
+            tube(b, GOLD, &[[cos * 0.44, 0.0, sin * 0.44], [cos * 0.4, 0.2, sin * 0.4], [cos * 0.26, 0.26, sin * 0.26]], 0.035);
+        }
+    });
+    b.build()
+}
+
+/// Une griffe de chaton : tube d'or de `from` à `to`, bombé vers l'extérieur
+/// en son milieu (`bulge`), terminé par une perle d'or.
+fn prong(b: &mut ModelBuilder, from: Vec3, to: Vec3, bulge: f32, radius: f32) {
+    let mid = (from + to) / 2.0;
+    let out = mid.with_y(0.0).normalize_or_zero() * bulge;
+    b.tube(GOLD, &[from, mid + out, to], radius);
+    ball(b, GOLD, radius * 1.5, to, ONE);
+}
+
+/// Écrin : le cœur de la base, 5 m de haut. Un socle hexagonal d'émail vert
+/// sur une semelle d'or vieilli, ourlé d'or ; dessus, un plateau laqué aux
+/// couleurs du joueur cerclé d'un rang de perles d'or, et un tambour d'or
+/// d'où montent six griffes (le chaton de la machine) qui tiennent une
+/// grosse émeraude taille brillant, table vers le ciel ; elle tourne
+/// lentement en pulsant. Au bout de chaque griffe, une lame d'or de
+/// couronne. En façade (−z), le dépôt : une arche d'or dressée autour d'un
+/// disque émeraude, où les Collecteurs versent leur récolte. Vu de dessus :
+/// un hexagone vert, un anneau d'équipe et une étoile d'or autour d'une
+/// émeraude.
+fn ecrin() -> ModelBuilder {
+    let mut b = ModelBuilder::new();
+    hexc(&mut b, OLD_GOLD, 3.4, 3.45, 0.3, v(0.0, 0.15, 0.0), NO_TURN); // semelle
+    hexc(&mut b, ENAMEL, 3.0, 3.25, 0.6, v(0.0, 0.6, 0.0), NO_TURN); // socle
+    hexc(&mut b, GOLD, 3.08, 3.08, 0.1, v(0.0, 0.93, 0.0), NO_TURN); // ourlet
+    hexc(&mut b, TEAM, 2.35, 2.55, 0.2, v(0.0, 1.06, 0.0), NO_TURN); // plateau d'équipe
+    for i in 0..12 {
+        let a = i as f32 * TAU / 12.0;
+        ball(&mut b, GOLD, 0.13, v(a.cos() * 2.62, 1.0, a.sin() * 2.62), ONE); // rang de perles
+    }
+    hexc(&mut b, GOLD, 1.2, 1.4, 0.7, v(0.0, 1.5, 0.0), NO_TURN); // tambour
+    hexc(&mut b, GLOW, 1.22, 1.22, 0.06, v(0.0, 1.62, 0.0), NO_TURN); // filet émeraude
+    for i in 0..6 {
+        let a = i as f32 * TAU / 6.0 + PI / 6.0;
+        let (sin, cos) = a.sin_cos();
+        let at = |r: f32, y: f32| v(cos * r, y, sin * r);
+        prong(&mut b, at(1.25, 1.8), at(1.0, 4.1), 0.75, 0.11);
+        // Lame de couronne au bout de la griffe, penchée vers l'extérieur.
+        let turn = Quat::from_rotation_y(-a) * Quat::from_rotation_z(-0.45);
+        prism(&mut b, GOLD, &BLADE, 0.06, 0.02, Transform::from_translation(at(1.02, 4.05)).with_rotation(turn).with_scale(Vec3::splat(0.55)));
+    }
+    // La pierre, tenue entre les griffes.
+    b.animated(Transform::from_xyz(0.0, 3.35, 0.0), Motion::Spin { axis: Vec3::Y, speed: 0.25 }, |b| {
+        b.pulsing(GEM_PULSE, |b| brill(b, EMERALD_STONE, 1.2, Vec3::ZERO, NO_TURN));
+    });
+    // Le dépôt, en façade.
+    torus(&mut b, GOLD, 0.9, 0.13, TAU, Transform::from_xyz(0.0, 1.75, -2.95));
+    b.cylinder(EMERALD_STONE, 0.74, 0.04, v(0.0, 1.75, -2.95), ALONG_Z);
+    // Deux cabochons d'équipe l'encadrent, bombés vers l'avant.
+    b.mirrored(|b, s| cab(b, TEAM, 0.22, v(s * 1.35, 1.25, -2.98), v(0.0, PI, 0.0)));
+    b
+}
+
+/// Résonateur : le relais, 3,8 m. Un pied hexagonal d'émail, ourlé d'or,
+/// coiffé d'un disque laqué aux couleurs du joueur ; une colonne d'or
+/// effilée baguée d'or vieilli ; au sommet, trois griffes tiennent une
+/// émeraude en losange qui pulse (c'est elle qui émet le champ), et un
+/// anneau d'or ouvert tourne autour d'elle. Vu de dessus : un petit
+/// hexagone d'équipe, une pierre et un croissant d'or.
+fn resonateur() -> ModelBuilder {
+    let mut b = ModelBuilder::new();
+    hexc(&mut b, ENAMEL, 0.9, 0.98, 0.36, v(0.0, 0.18, 0.0), NO_TURN); // pied
+    hexc(&mut b, GOLD, 0.93, 0.93, 0.07, v(0.0, 0.39, 0.0), NO_TURN);
+    hexc(&mut b, TEAM, 0.72, 0.8, 0.12, v(0.0, 0.48, 0.0), NO_TURN); // disque d'équipe
+    hexc(&mut b, GOLD, 0.16, 0.3, 2.1, v(0.0, 1.55, 0.0), NO_TURN); // colonne
+    for y in [0.95, 1.9] {
+        hexc(&mut b, OLD_GOLD, 0.27, 0.27, 0.09, v(0.0, y, 0.0), NO_TURN); // bagues
+    }
+    for i in 0..3 {
+        let a = i as f32 * TAU / 3.0;
+        let (sin, cos) = a.sin_cos();
+        prong(&mut b, v(cos * 0.14, 2.55, sin * 0.14), v(cos * 0.24, 3.55, sin * 0.24), 0.32, 0.06);
+    }
+    b.pulsing(GEM_PULSE, |b| octa(b, EMERALD_STONE, 0.4, v(0.0, 3.1, 0.0), v(1.0, 1.4, 1.0)));
+    // L'anneau de résonance : ouvert, incliné, il tourne autour de la pierre.
+    b.animated(Transform::from_xyz(0.0, 3.1, 0.0), Motion::Spin { axis: Vec3::Y, speed: 0.7 }, |b| {
+        b.torus(GOLD, 0.78, 0.05, PI * 1.45, Vec3::ZERO, v(0.45, 0.0, 0.0));
+    });
+    b
+}
+
+/// Creuset : posé sur une source d'Éther, il la distille. Trois jambes d'or
+/// vieilli plongent dans la faille et portent une coupe d'or pleine d'une
+/// nappe émeraude, ceinte d'un jonc d'émail vert et bordée d'un anneau
+/// laqué aux couleurs du joueur ; une anse d'or l'enjambe, d'où pend une
+/// émeraude pointe en bas. Vu de dessus : un disque émeraude dans un anneau
+/// d'équipe, barré d'or.
+fn creuset() -> ModelBuilder {
+    let mut b = ModelBuilder::new();
+    for i in 0..3 {
+        let a = i as f32 * TAU / 3.0 + PI / 6.0;
+        let (sin, cos) = a.sin_cos();
+        let at = |r: f32, y: f32| [cos * r, y, sin * r];
+        tube(&mut b, OLD_GOLD, &[at(1.85, -0.05), at(1.75, 0.8), at(1.25, 1.45)], 0.13);
+    }
+    // La coupe : le profil monte jusqu'au bord, puis redescend à l'intérieur.
+    let bowl = [[0.0, 1.15], [0.6, 1.2], [1.2, 1.5], [1.55, 2.0], [1.62, 2.4], [1.45, 2.42], [1.1, 2.15], [0.0, 2.05]];
+    let profile: Vec<Vec2> = bowl.iter().map(|p| Vec2::from_array(*p)).collect();
+    b.lathe(GOLD, &profile, 24, Vec3::ZERO, NO_TURN);
+    b.cylinder(EMERALD_STONE, 1.28, 0.04, v(0.0, 2.25, 0.0), NO_TURN); // la nappe
+    b.torus(ENAMEL, 1.42, 0.13, TAU, v(0.0, 1.75, 0.0), NO_TURN); // jonc d'émail
+    b.torus(TEAM, 1.56, 0.11, TAU, v(0.0, 2.42, 0.0), NO_TURN); // bord d'équipe
+    // L'anse, et la pierre pendue dessous, pointe en bas, à une bélière.
+    torus(&mut b, GOLD, 1.45, 0.08, PI, Transform::from_xyz(0.0, 2.4, 0.0));
+    tube(&mut b, OLD_GOLD, &[[0.0, 3.8, 0.0], [0.0, 3.6, 0.0], [0.0, 3.4, 0.0]], 0.03);
+    brill(&mut b, EMERALD_STONE, 0.24, v(0.0, 3.32, 0.0), NO_TURN);
+    b
+}
+
+/// Orfèvrerie : l'atelier des Automates, 3,5 m. Une dalle d'émail vert sur
+/// une semelle d'or ; à ses quatre coins, des piliers hexagonaux d'or
+/// coiffés d'une émeraude ; deux grandes arches d'or s'y croisent en
+/// voûte, une émeraude pendue à leur croisée, au-dessus d'une enclume
+/// hexagonale d'or vieilli au plateau laqué. Entre les arches, quatre
+/// losanges laqués aux couleurs du joueur. Vu de dessus : une croix d'or
+/// sur un carré vert, quatre losanges d'équipe.
+fn orfevrerie() -> ModelBuilder {
+    let mut b = ModelBuilder::new();
+    plate(&mut b, GOLD, [4.8, 0.14, 4.8], 0.05, v(0.0, 0.07, 0.0), NO_TURN); // semelle
+    plate(&mut b, ENAMEL, [4.5, 0.42, 4.5], 0.14, v(0.0, 0.35, 0.0), NO_TURN); // dalle
+    for (x, z) in [(1.2, 1.2), (-1.2, 1.2), (1.2, -1.2), (-1.2, -1.2)] {
+        // Losange d'équipe : un carré tourné d'un huitième de tour.
+        plate(&mut b, TEAM, [1.05, 0.08, 1.05], 0.03, v(x, 0.58, z), v(0.0, PI / 4.0, 0.0));
+    }
+    b.mirrored(|b, s| {
+        for z in [-1.0, 1.0] {
+            hexc(b, GOLD, 0.3, 0.38, 2.0, v(s * 1.95, 1.55, z * 1.95), NO_TURN); // pilier
+            octa(b, EMERALD_STONE, 0.22, v(s * 1.95, 2.8, z * 1.95), ONE);
+        }
+        bar(b, GLOW, [0.05, 0.04, 3.2], v(s * 2.26, 0.4, 0.0)); // filets émeraude
+    });
+    // Les deux arches, dressées en croix (le tore de la page est dans le plan (x, y)).
+    torus(&mut b, GOLD, 2.05, 0.15, PI, Transform::from_xyz(0.0, 0.55, 0.0));
+    torus(&mut b, GOLD, 2.05, 0.15, PI, Transform::from_xyz(0.0, 0.55, 0.0).with_rotation(Quat::from_rotation_y(FRAC_PI_2)));
+    tube(&mut b, OLD_GOLD, &[[0.0, 2.55, 0.0], [0.0, 2.45, 0.0], [0.0, 2.35, 0.0]], 0.04); // bélière
+    brill(&mut b, EMERALD_STONE, 0.3, v(0.0, 2.24, 0.0), NO_TURN);
+    hexc(&mut b, OLD_GOLD, 0.75, 0.95, 0.6, v(0.0, 0.85, 0.0), NO_TURN); // enclume
+    hexc(&mut b, TEAM, 0.7, 0.7, 0.1, v(0.0, 1.2, 0.0), NO_TURN);
+    b
+}
+
+/// Aiguillon : défense fixe, 2,6 m. Un pied hexagonal d'émail ourlé d'or et
+/// cerclé d'un disque d'équipe, une tour d'or effilée, et une tête qui
+/// balaie lentement l'horizon : coque d'or, cabochon d'équipe sur le
+/// dessus, longue aiguille d'or pointée vers l'avant avec une émeraude
+/// taillée à sa base, et trois lames de couronne derrière.
+fn aiguillon() -> ModelBuilder {
+    let mut b = ModelBuilder::new();
+    hexc(&mut b, ENAMEL, 0.88, 0.96, 0.4, v(0.0, 0.2, 0.0), NO_TURN); // pied
+    hexc(&mut b, GOLD, 0.92, 0.92, 0.07, v(0.0, 0.43, 0.0), NO_TURN);
+    hexc(&mut b, TEAM, 0.78, 0.84, 0.1, v(0.0, 0.51, 0.0), NO_TURN); // disque d'équipe
+    hexc(&mut b, GOLD, 0.3, 0.52, 1.3, v(0.0, 1.2, 0.0), NO_TURN); // tour
+    hexc(&mut b, GLOW, 0.36, 0.36, 0.05, v(0.0, 1.5, 0.0), NO_TURN);
+    let sweep = Motion::Swing { axis: Vec3::Y, amplitude: 0.7, frequency: 0.09 };
+    b.animated(Transform::from_xyz(0.0, 1.95, 0.0), sweep, |b| {
+        ball(b, GOLD, 0.42, Vec3::ZERO, v(1.0, 0.7, 1.25)); // coque
+        cab(b, TEAM, 0.26, v(0.0, 0.26, 0.05), v(-FRAC_PI_2, 0.0, 0.0)); // cabochon d'équipe
+        // L'aiguille : un cône couché vers l'avant (−z).
+        b.cone(GOLD, 0.11, 0.0, 1.5, v(0.0, 0.0, -1.2), v(-FRAC_PI_2, 0.0, 0.0));
+        brill(b, EMERALD_STONE, 0.17, v(0.0, 0.0, -0.5), v(-FRAC_PI_2, 0.0, 0.0));
+        for k in -1..=1 {
+            let k = k as f32;
+            blade(b, GOLD, v(k * 0.2, 0.15, 0.4), v(0.45, 0.0, -k * 0.35), 0.4);
+        }
+    });
+    b
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -744,6 +1080,47 @@ mod tests {
             println!("{} : {} sommets, {} pièces", unit.name, vertices, unit.parts.len());
             assert!(vertices < 14_000, "{} est trop lourd : {vertices} sommets", unit.name);
         }
+    }
+
+    /// Même garde-fou pour les bâtiments (et la gemme d'ancrage).
+    #[test]
+    fn buildings_stay_light() {
+        let anchor: usize = anchor_gem().iter().map(|p| p.shape.mesh().count_vertices()).sum();
+        println!("Gemme d'ancrage : {anchor} sommets");
+        assert!(anchor < 2_000);
+        for building in building_types() {
+            let vertices: usize = building.parts.iter().map(|p| p.shape.mesh().count_vertices()).sum();
+            println!("{} : {} sommets, {} pièces", building.name, vertices, building.parts.len());
+            assert!(vertices < 14_000, "{} est trop lourd : {vertices} sommets", building.name);
+        }
+    }
+
+    /// Le palier 1 a les mêmes rôles que ceux des autres factions, et le
+    /// champ de résonance est émis par le cœur et le relais.
+    #[test]
+    fn tier_one_roles() {
+        use building::*;
+        let types = building_types();
+        assert!(types[ECRIN].dropoff && types[ECRIN].supply > 0);
+        assert_eq!(types[ECRIN].production[0].unit_type, kind::COLLECTEUR);
+        assert!(types[RESONATEUR].supply > 0);
+        assert_eq!(types[CREUSET].placement, PlacementRule::OnResource(ResourceKind::Rare));
+        assert_eq!(types[ORFEVRERIE].production[0].unit_type, kind::AUTOMATE);
+        assert_eq!(types[AIGUILLON].requires, vec![ORFEVRERIE]);
+        // Qui émet le champ, qui en a besoin.
+        let emitters: Vec<usize> = (0..types.len()).filter(|&i| types[i].field_radius > 0.0).collect();
+        assert_eq!(emitters, vec![ECRIN, RESONATEUR]);
+        let needy: Vec<usize> = (0..types.len()).filter(|&i| types[i].needs_field).collect();
+        assert_eq!(needy, vec![ORFEVRERIE, AIGUILLON]);
+        assert!(CONSTRUCTION.builds_alone() && !CONSTRUCTION.consumes_worker());
+        // Raccourcis distincts après « B », et aucun ne vaut « B » lui-même.
+        let mut keys: Vec<char> = types.iter().map(|t| t.hotkey).collect();
+        keys.sort_unstable();
+        keys.dedup();
+        assert_eq!(keys.len(), types.len());
+        assert!(!keys.contains(&'b'));
+        // Une ligne de coûts par type d'unité.
+        assert_eq!(economy_rules(crate::gisements::resource_infos()).units.len(), unit_types().len());
     }
 
     /// La courbe de la queue passe bien par ses deux bouts.

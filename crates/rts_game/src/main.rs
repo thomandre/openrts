@@ -13,11 +13,13 @@
 //!   quelques secondes, affiche les FPS moyens, puis quitte ;
 //! - `OPENRTS_ZOOM=12` : distance de départ de la caméra, de 10 à 70 m ;
 //! - `OPENRTS_DEMO=buildings` : scène de démonstration des bâtiments
-//!   (Garde, ou Sylves avec `OPENRTS_FACTION=sylves`) ;
+//!   (Garde, Sylves avec `OPENRTS_FACTION=sylves`, Collectif avec
+//!   `OPENRTS_FACTION=collectif`) ;
 //! - `OPENRTS_DEMO=economy` : l'économie en marche (récolte, production) ;
 //! - `OPENRTS_POP_MAX=100` : plafond global de population.
 
 mod base;
+mod base_collectif;
 mod base_sylves;
 mod garde;
 mod collectif;
@@ -262,6 +264,9 @@ fn main() {
         (Faction::Sylves, Some(base::Demo::Buildings)) => {
             app.add_plugins(base_sylves::DemoPlugin);
         }
+        (Faction::Collectif, Some(base::Demo::Buildings)) => {
+            app.add_plugins(base_collectif::DemoPlugin);
+        }
         _ => {}
     }
     app.run();
@@ -304,8 +309,30 @@ fn spawn_units(
     let palette = faction.palette(garde::SIGNAL_ORANGE);
     let catalog = UnitCatalog::new(faction.unit_types(), &palette, &mut meshes, &mut materials, &mut images);
 
-    // Bâtiments et économie : la Garde et les Sylves pour l'instant (base
+    // Bâtiments et économie : la Garde, les Sylves et le Collectif (base
     // de départ, ou scènes de démonstration avec `OPENRTS_DEMO`).
+    if *faction == Faction::Collectif {
+        let buildings = base_collectif::building_catalog(&catalog, &mut meshes, &mut materials);
+        let frame = GridFrame::new(bounds.0, &nav);
+        let demo = base::demo_requested() == Some(base::Demo::Buildings);
+        let deposits = gisements::DepositVisuals::new(&mut meshes, &mut materials);
+        // 50 de Cristal au départ, comme les autres ; la démonstration a de
+        // quoi payer l'Aiguillon que son Collecteur part sertir.
+        let mut players = Players::default();
+        players.get_mut(PlayerId(0)).stock = Cost::new(if demo { 300 } else { 50 }, 0);
+        if demo {
+            base_collectif::spawn_demo(&mut commands, &buildings, &catalog, &deposits, frame);
+        } else {
+            base_collectif::spawn_start(&mut commands, &buildings, &catalog, &deposits, frame);
+        }
+        commands.insert_resource(buildings);
+        commands.insert_resource(collectif::economy_rules(gisements::resource_infos()));
+        commands.insert_resource(players);
+        if demo {
+            commands.insert_resource(catalog);
+            return;
+        }
+    }
     if *faction == Faction::Sylves {
         let buildings = base_sylves::building_catalog(&catalog, &mut meshes, &mut materials);
         let frame = GridFrame::new(bounds.0, &nav);

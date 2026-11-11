@@ -186,6 +186,6 @@ impl FieldVisuals {
             fog_enabled: false,
             ..default()
         };
-        Self { meshes, disc_material: materials.add(flat(0.07, 0.0)), ring_material: materials.add(flat(0.55, 0.8)) }
+        Self { meshes, disc_material: materials.add(flat(0.035, 0.0)), ring_material: materials.add(flat(0.55, 0.8)) }
     }
 }
