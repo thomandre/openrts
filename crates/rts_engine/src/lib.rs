@@ -1,9 +1,10 @@
 //! Moteur RTS générique, construit sur Bevy.
 //!
 //! Cette crate ne connaît aucune faction ni aucune unité précise : elle fournit
-//! la caméra, la couche d'entrées par actions, la sélection, les ordres de
-//! déplacement, la navigation (grille, A*), les bâtiments (pose, chantiers) et
-//! le rendu (module `graphics`). Le contenu (unités, bâtiments, cartes…) vit
+//! la caméra, la couche d'entrées par actions, la sélection, la file des
+//! ordres des joueurs (`orders`), les joueurs (`players`), la navigation
+//! (grille, A*), les bâtiments (pose, chantiers), l'économie et le rendu
+//! (module `graphics`). Le contenu (unités, bâtiments, cartes…) vit
 //! dans la crate `rts_game`.
 
 pub mod buildings;
@@ -11,9 +12,12 @@ pub mod camera;
 pub mod collision;
 pub mod cursor;
 pub mod devtools;
+pub mod economy;
 pub mod graphics;
 pub mod input;
 pub mod navigation;
+pub mod orders;
+pub mod players;
 pub mod selection;
 pub mod simulation;
 pub mod units;
@@ -45,6 +49,8 @@ impl Plugin for RtsEnginePlugin {
                 camera::RtsCameraPlugin,
                 selection::SelectionPlugin,
                 simulation::SimulationPlugin,
+                players::PlayersPlugin,
+                orders::OrdersPlugin,
                 buildings::BuildingsPlugin,
                 graphics::GraphicsPlugin,
                 devtools::DevToolsPlugin,

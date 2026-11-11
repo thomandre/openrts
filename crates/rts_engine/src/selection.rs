@@ -1,14 +1,17 @@
-//! Sélection des unités et ordres de déplacement.
+//! Sélection des unités et ordres contextuels.
 //!
 //! Consomme les actions `SelectAt`, `SelectBox` et `CommandAt` produites par
-//! la couche d'entrées, quel que soit le périphérique d'origine.
+//! la couche d'entrées, quel que soit le périphérique d'origine. Les ordres
+//! ne sont pas appliqués ici : ils partent dans la file des ordres
+//! ([`CommandQueue`]), appliquée au prochain pas de simulation.
 
 use bevy::prelude::*;
 
 use crate::camera::{ray_at_height, screen_ray, screen_to_ground};
 use crate::input::{GameAction, SelectionDrag};
-use crate::navigation::MoveGroupCounter;
-use crate::simulation::{MoveSpeed, MoveTarget};
+use crate::orders::{CommandQueue, PlayerCommand};
+use crate::players::{LocalPlayer, Owner};
+use crate::simulation::MoveSpeed;
 use crate::units::UnitCatalog;
 use crate::RtsSystems;
 
@@ -69,7 +72,9 @@ fn handle_actions(
     selected: Query<Entity, With<Selected>>,
     // Seules les entités qui peuvent bouger (pas les bâtiments) reçoivent les ordres de déplacement.
     mobile: Query<(), With<MoveSpeed>>,
-    mut groups: ResMut<MoveGroupCounter>,
+    owners: Query<&Owner>,
+    local: Res<LocalPlayer>,
+    mut orders: ResMut<CommandQueue>,
     catalog: Option<Res<UnitCatalog>>,
 ) {
     // `Single` garantit qu'il y a exactement une caméra ; `into_inner` donne ses composants.
@@ -134,21 +139,15 @@ fn handle_actions(
 
             GameAction::CommandAt { screen_pos } => {
                 let Some(target) = screen_to_ground(camera, camera_transform, screen_pos) else { continue };
-                let mut movers: Vec<(Entity, f32)> = units
-                    .iter_many(&selected)
-                    // Chaque élément est un `Result` : `flatten` ne garde que les succès.
-                    .flatten()
-                    .filter(|(entity, ..)| mobile.contains(*entity))
-                    .map(|(entity, _, selectable)| (entity, selectable.radius))
+                // Les unités sélectionnées qui peuvent bouger et que l'on commande.
+                let mut movers: Vec<Entity> = selected
+                    .iter()
+                    .filter(|&e| mobile.contains(e) && owners.get(e).is_ok_and(|o| o.0 == local.0))
                     .collect();
                 // Ordre fixe (la sélection est parcourue dans un ordre quelconque).
-                movers.sort_unstable_by_key(|m| m.0);
-                let radii: Vec<f32> = movers.iter().map(|m| m.1).collect();
-                // Un numéro de groupe commun : les unités de l'ordre partagent
-                // leur recherche de chemin (voir `navigation`).
-                let group = groups.next_group();
-                for (&(entity, _), slot) in movers.iter().zip(formation(&radii, target.xz())) {
-                    commands.entity(entity).insert((MoveTarget(slot), group));
+                movers.sort_unstable();
+                if !movers.is_empty() {
+                    orders.push(local.0, PlayerCommand::Move { units: movers, target: target.xz() });
                 }
             }
 

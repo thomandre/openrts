@@ -41,7 +41,11 @@ pub struct MoveTarget(pub Vec2);
 /// modules du moteur y rangent leurs systèmes de `FixedUpdate`.
 #[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
 pub enum SimSet {
-    /// Application des ordres des joueurs (pose de bâtiments…).
+    /// Début du pas : les ordres donnés depuis le pas précédent sont figés
+    /// (voir le module [`crate::orders`]).
+    CollectOrders,
+    /// Application des ordres des joueurs (déplacements, pose de bâtiments…)
+    /// et décisions des unités (aller au chantier…).
     Orders,
     /// Grille de navigation et calcul des chemins.
     Navigation,
@@ -64,7 +68,7 @@ impl Plugin for SimulationPlugin {
             .init_resource::<MoveGroupCounter>()
             .configure_sets(
                 FixedUpdate,
-                (SimSet::Orders, SimSet::Navigation, SimSet::Movement, SimSet::Construction).chain(),
+                (SimSet::CollectOrders, SimSet::Orders, SimSet::Navigation, SimSet::Movement, SimSet::Construction).chain(),
             )
             .add_systems(
                 FixedUpdate,

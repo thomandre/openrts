@@ -12,6 +12,7 @@ use super::{completed_types, Building, BuildingBody, BuildingCatalog, SiteFrame,
 use super::placement::Placement;
 use crate::camera::RtsCamera;
 use crate::input::{ActionButton, BlocksPointer, GameAction, Hotkey, InputContext};
+use crate::players::{LocalPlayer, Owner};
 use crate::selection::Selected;
 use crate::units::Unit;
 
@@ -59,8 +60,9 @@ pub(crate) fn update_command_bar(
     catalog: Option<Res<BuildingCatalog>>,
     context: Res<InputContext>,
     placement: Res<Placement>,
-    selected: Query<&Unit, With<Selected>>,
-    buildings: Query<(&Building, Has<UnderConstruction>)>,
+    local: Res<LocalPlayer>,
+    selected: Query<(&Unit, &Owner), With<Selected>>,
+    buildings: Query<(&Building, &Owner, Has<UnderConstruction>)>,
     mut bar: Query<&mut Visibility, With<CommandBar>>,
     mut title: Query<&mut Text, With<CommandBarTitle>>,
     mut buttons: Query<(&BuildButton, &mut ActionButton, &mut BackgroundColor, &mut BorderColor, &Children)>,
@@ -71,7 +73,7 @@ pub(crate) fn update_command_bar(
         spawn_command_bar(&mut commands, &catalog);
         return;
     };
-    let has_builder = selected.iter().any(|unit| catalog.builders.contains(&unit.type_index));
+    let has_builder = selected.iter().any(|(unit, owner)| catalog.builders.contains(&unit.type_index) && owner.0 == local.0);
     visibility.set_if_neq(if has_builder { Visibility::Inherited } else { Visibility::Hidden });
     if !has_builder {
         return;
@@ -87,7 +89,7 @@ pub(crate) fn update_command_bar(
             title.0 = wanted;
         }
     }
-    let completed = completed_types(&catalog, buildings.iter().map(|(b, c)| (b.type_index, c)));
+    let completed = completed_types(&catalog, local.0, buildings.iter());
     for (button, mut action, mut background, mut border, children) in &mut buttons {
         let enabled = catalog.requirements_met(button.type_index, &completed);
         action.enabled = enabled;

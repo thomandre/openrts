@@ -12,9 +12,10 @@
 use bevy::prelude::*;
 use rts_engine::camera::RtsCamera;
 use rts_engine::buildings::{BuildingCatalog, ConstructionStyle, ConstructionTask, PlacementGhost};
-use rts_engine::navigation::{GridFrame, MoveGroupCounter};
+use rts_engine::navigation::GridFrame;
+use rts_engine::orders::{CommandQueue, PlayerCommand};
+use rts_engine::players::PlayerId;
 use rts_engine::selection::Selected;
-use rts_engine::simulation::MoveTarget;
 use rts_engine::units::UnitCatalog;
 
 use crate::coalition::{self, building::*, kind::*};
@@ -37,10 +38,13 @@ pub fn building_catalog(
     )
 }
 
+/// Le joueur humain (le seul pour l'instant).
+const HUMAN: PlayerId = PlayerId(0);
+
 /// Pose un bâtiment terminé centré au plus près du point (x, z).
 fn place(commands: &mut Commands, catalog: &BuildingCatalog, frame: GridFrame, type_index: usize, at: Vec2) -> Entity {
     let min_cell = frame.min_cell_centered(at, catalog.types[type_index].footprint);
-    catalog.spawn(commands, frame, type_index, min_cell, None)
+    catalog.spawn(commands, frame, HUMAN, type_index, min_cell, None)
 }
 
 /// Partie normale : le Quartier général et quatre Techniciens.
@@ -67,7 +71,7 @@ pub fn spawn_demo(commands: &mut Commands, buildings: &BuildingCatalog, units: &
 
     // Un chantier de Caserne au tiers, et son Technicien au travail.
     let site_cell = frame.min_cell_centered(Vec2::new(15.5, 1.0), buildings.types[CASERNE].footprint);
-    let site = buildings.spawn(commands, frame, CASERNE, site_cell, Some(0.2));
+    let site = buildings.spawn(commands, frame, HUMAN, CASERNE, site_cell, Some(0.2));
     let rect = frame.rect(site_cell, buildings.types[CASERNE].footprint);
     let worker = units.spawn_facing(commands, TECHNICIEN, Vec2::new(rect.min.x - 0.75, rect.center().y + 0.5), -std::f32::consts::FRAC_PI_2);
     commands.entity(worker).insert((ConstructionTask { sites: vec![site] }, Selected));
@@ -95,11 +99,11 @@ pub fn spawn_demo(commands: &mut Commands, buildings: &BuildingCatalog, units: &
     }
 }
 
-/// Donne l'ordre de contourner la Caserne, une seule fois, au bout de 11 s.
+/// Donne l'ordre de contourner la Caserne, une seule fois, au bout de 11 s
+/// (par la file des ordres, comme le ferait le joueur).
 fn order_demo_group(
-    mut commands: Commands,
     time: Res<Time<Real>>,
-    mut groups: ResMut<MoveGroupCounter>,
+    mut orders: ResMut<CommandQueue>,
     units: Query<Entity, With<DemoGroup>>,
     mut done: Local<bool>,
 ) {
@@ -107,13 +111,9 @@ fn order_demo_group(
         return;
     }
     *done = true;
-    let group = groups.next_group();
     let mut members: Vec<Entity> = units.iter().collect();
     members.sort_unstable();
-    for (i, entity) in members.into_iter().enumerate() {
-        let slot = Vec2::new(0.5 + (i % 4) as f32 * 1.4, -16.0 - (i / 4) as f32 * 1.4);
-        commands.entity(entity).insert((MoveTarget(slot), group));
-    }
+    orders.push(HUMAN, PlayerCommand::Move { units: members, target: Vec2::new(2.6, -16.7) });
 }
 
 /// `OPENRTS_FOCUS=x,z` : point du sol visé par la caméra au démarrage de la

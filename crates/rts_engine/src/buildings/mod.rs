@@ -32,20 +32,16 @@ use bevy::prelude::*;
 
 use crate::collision::{Collider, StaticObstacle};
 use crate::navigation::{GridFrame, MoveGroup, NavGrid, NavPath};
+use crate::orders::{owned_units, PlayerCommand, TickCommands};
+use crate::players::{Owner, PlayerId};
 use crate::selection::{Selectable, SelectionRing};
 use crate::simulation::{MoveTarget, SimPosition, SimSet};
 use crate::units::{position_jitter, spawn_model, MaterialSlot, ModelMaterials, Part, TypeVisual, Unit, UnitCatalog};
 use crate::RtsSystems;
 
-/// Coût d'un bâtiment ou d'une unité, dans les deux ressources du jeu.
-/// Pas encore débité : l'économie viendra avec l'étape 4 de la feuille de route.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub struct Cost {
-    /// Ressource principale (abondante).
-    pub primary: u32,
-    /// Ressource rare.
-    pub rare: u32,
-}
+// `pub use` : le type `Cost` (défini dans `economy`) est aussi accessible
+// sous le nom `buildings::Cost`.
+pub use crate::economy::Cost;
 
 /// Description d'un type de bâtiment, purement en données.
 #[derive(Debug, Clone)]
@@ -168,7 +164,16 @@ impl BuildingCatalog {
     /// Fait apparaître un bâtiment du type `type_index` sur le bloc de cases
     /// dont le coin est `min_cell`. `progress` : `None` pour un bâtiment
     /// terminé, `Some(p)` pour un chantier avancé de `p` (entre 0 et 1).
-    pub fn spawn(&self, commands: &mut Commands, frame: GridFrame, type_index: usize, min_cell: IVec2, progress: Option<f32>) -> Entity {
+    /// Le bâtiment appartient au joueur `owner`.
+    pub fn spawn(
+        &self,
+        commands: &mut Commands,
+        frame: GridFrame,
+        owner: PlayerId,
+        type_index: usize,
+        min_cell: IVec2,
+        progress: Option<f32>,
+    ) -> Entity {
         let building = &self.types[type_index];
         let visual = &self.visuals[type_index];
         let rect = frame.rect(min_cell, building.footprint);
@@ -184,6 +189,7 @@ impl BuildingCatalog {
         let mut entity = commands.spawn((
             Name::new(building.name.clone()),
             Building { type_index },
+            Owner(owner),
             Footprint { min_cell, size: building.footprint },
             StaticObstacle(rect),
             Health { current: health, max: building.max_health },
@@ -388,20 +394,6 @@ pub struct PlacementGhost {
 #[derive(Component, Debug)]
 pub(crate) struct GhostPiece;
 
-/// Une demande de pose, en attente du prochain pas de simulation.
-#[derive(Debug, Clone, PartialEq)]
-pub struct BuildOrder {
-    pub type_index: usize,
-    pub min_cell: IVec2,
-    /// Ouvriers qui peuvent s'en charger (le plus proche du chantier est choisi).
-    pub builders: Vec<Entity>,
-}
-
-/// Les poses demandées pendant les images écoulées : la simulation les
-/// applique à son prochain pas (c'est ce qui passera par le réseau en lockstep).
-#[derive(Resource, Debug, Default)]
-pub struct PendingBuildOrders(pub Vec<BuildOrder>);
-
 /// Distance (en plus de son rayon) sous laquelle un ouvrier touche son chantier.
 const CONTACT_MARGIN: f32 = 0.35;
 
@@ -409,12 +401,16 @@ pub struct BuildingsPlugin;
 
 impl Plugin for BuildingsPlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<PendingBuildOrders>()
-            .init_resource::<placement::Placement>()
+        app.init_resource::<placement::Placement>()
             .add_systems(
                 FixedUpdate,
                 (
-                    (apply_build_orders, drive_builders).chain().in_set(SimSet::Orders),
+                    // Après les déplacements : un ordre de pose donné juste
+                    // après un ordre de marche l'emporte.
+                    (apply_build_orders, drive_builders)
+                        .chain()
+                        .in_set(SimSet::Orders)
+                        .after(crate::orders::apply_unit_orders),
                     progress_construction.in_set(SimSet::Construction),
                 ),
             )
@@ -434,58 +430,62 @@ impl Plugin for BuildingsPlugin {
     }
 }
 
-/// `completed[i]` : le joueur possède-t-il un bâtiment terminé du type `i` ?
-pub(crate) fn completed_types(catalog: &BuildingCatalog, buildings: impl Iterator<Item = (usize, bool)>) -> Vec<bool> {
+/// `completed[i]` : le joueur `player` possède-t-il un bâtiment terminé du
+/// type `i` ? `buildings` donne, pour chaque bâtiment, son type, son
+/// propriétaire et s'il est encore en chantier.
+pub fn completed_types<'a>(
+    catalog: &BuildingCatalog,
+    player: PlayerId,
+    buildings: impl Iterator<Item = (&'a Building, &'a Owner, bool)>,
+) -> Vec<bool> {
     let mut completed = vec![false; catalog.types.len()];
-    for (type_index, under_construction) in buildings {
-        if !under_construction && let Some(slot) = completed.get_mut(type_index) {
+    for (building, owner, under_construction) in buildings {
+        if owner.0 == player
+            && !under_construction
+            && let Some(slot) = completed.get_mut(building.type_index)
+        {
             *slot = true;
         }
     }
     completed
 }
 
-/// Applique les poses demandées : vérifie l'emplacement et les prérequis,
-/// crée le chantier et le confie à l'ouvrier le plus proche.
+/// Applique les ordres de pose du pas : vérifie l'emplacement et les
+/// prérequis du joueur, crée le chantier et le confie à l'ouvrier le plus proche.
 fn apply_build_orders(
     mut commands: Commands,
-    mut orders: ResMut<PendingBuildOrders>,
+    tick: Res<TickCommands>,
     catalog: Option<Res<BuildingCatalog>>,
     grid: Option<Res<NavGrid>>,
-    buildings: Query<(&Building, Has<UnderConstruction>)>,
-    mut builders: Query<(Entity, &SimPosition, Option<&mut ConstructionTask>), With<Unit>>,
+    buildings: Query<(&Building, &Owner, Has<UnderConstruction>)>,
+    mut builders: Query<(Entity, &Owner, &SimPosition, Option<&mut ConstructionTask>), With<Unit>>,
 ) {
-    if orders.0.is_empty() {
-        return;
-    }
-    // Pas encore de grille (tout premier pas) : les ordres attendent le suivant.
-    let Some(grid) = grid else { return };
-    let Some(catalog) = catalog else {
-        orders.0.clear();
-        return;
-    };
-    let completed = completed_types(&catalog, buildings.iter().map(|(b, c)| (b.type_index, c)));
+    // Pas encore de grille (tout premier pas) ou pas de bâtiments dans ce jeu.
+    let (Some(grid), Some(catalog)) = (grid, catalog) else { return };
     // Chantiers posés pendant ce pas : la grille ne les connaîtra qu'au
     // prochain, il faut donc aussi vérifier qu'ils ne se chevauchent pas.
     let mut placed: Vec<Rect> = Vec::new();
     // Ouvriers qui ont reçu un chantier pendant ce pas (pour l'équité).
     let mut assigned: Vec<(Entity, Vec<Entity>)> = Vec::new();
 
-    for order in std::mem::take(&mut orders.0) {
-        let Some(building) = catalog.types.get(order.type_index) else { continue };
-        let rect = grid.frame().rect(order.min_cell, building.footprint);
+    for issued in &tick.0 {
+        let PlayerCommand::Build { type_index, min_cell, builders: ordered } = &issued.command else { continue };
+        let (type_index, min_cell, player) = (*type_index, *min_cell, issued.player);
+        let Some(building) = catalog.types.get(type_index) else { continue };
+        let completed = completed_types(&catalog, player, buildings.iter());
+        let rect = grid.frame().rect(min_cell, building.footprint);
         let overlaps = placed.iter().any(|p| !p.intersect(rect).is_empty());
-        if !grid.area_free(order.min_cell, building.footprint) || overlaps || !catalog.requirements_met(order.type_index, &completed) {
-            info!("Pose refusée : {} en {}", building.name, order.min_cell);
+        if !grid.area_free(min_cell, building.footprint) || overlaps || !catalog.requirements_met(type_index, &completed) {
+            info!("Pose refusée : {} en {}", building.name, min_cell);
             continue;
         }
         // L'ouvrier : d'abord ceux qui n'ont rien à faire, puis le plus proche
         // du chantier, puis le plus petit identifiant (déterministe).
-        let mut candidates: Vec<(bool, f32, Entity)> = order
-            .builders
+        let mine = owned_units(ordered, player, |e| builders.get(e).ok().map(|(_, o, ..)| *o));
+        let mut candidates: Vec<(bool, f32, Entity)> = mine
             .iter()
             .filter_map(|&e| builders.get(e).ok())
-            .map(|(entity, position, task)| {
+            .map(|(entity, _, position, task)| {
                 let busy = task.is_some_and(|t| !t.sites.is_empty()) || assigned.iter().any(|(b, _)| *b == entity);
                 (busy, position.current.distance(rect.center()), entity)
             })
@@ -493,7 +493,7 @@ fn apply_build_orders(
         candidates.sort_by(|a, b| a.0.cmp(&b.0).then(a.1.total_cmp(&b.1)).then(a.2.cmp(&b.2)));
         let Some(&(_, _, builder)) = candidates.first() else { continue };
 
-        let site = catalog.spawn(&mut commands, grid.frame(), order.type_index, order.min_cell, Some(0.0));
+        let site = catalog.spawn(&mut commands, grid.frame(), player, type_index, min_cell, Some(0.0));
         placed.push(rect);
         match assigned.iter_mut().find(|(b, _)| *b == builder) {
             Some((_, sites)) => sites.push(site),
@@ -501,7 +501,7 @@ fn apply_build_orders(
         }
     }
     for (builder, sites) in assigned {
-        let Ok((_, _, task)) = builders.get_mut(builder) else { continue };
+        let Ok((_, _, _, task)) = builders.get_mut(builder) else { continue };
         match task {
             Some(mut task) => task.sites.extend(sites),
             None => {
@@ -617,6 +617,8 @@ mod tests {
     use super::*;
     use crate::collision::CollisionLayer;
     use crate::input::{GameAction, InputContext};
+    use crate::orders::{CommandQueue, OrdersPlugin};
+    use crate::players::PlayersPlugin;
     use crate::simulation::{MoveSpeed, SimulationPlugin};
     use crate::units::{Palette, SurfaceDetail, SurfaceStyle};
     use bevy::time::TimeUpdateStrategy;
@@ -645,7 +647,7 @@ mod tests {
             .add_message::<GameAction>()
             .init_resource::<InputContext>()
             .init_resource::<crate::cursor::Pointer>()
-            .add_plugins((SimulationPlugin, BuildingsPlugin))
+            .add_plugins((SimulationPlugin, PlayersPlugin, OrdersPlugin, BuildingsPlugin))
             // Chaque `update` avance le temps d'exactement un pas de simulation.
             .insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_secs_f64(1.0 / 32.0)));
         let (mut meshes, mut materials, mut images) = (Assets::default(), Assets::default(), Assets::default());
@@ -666,6 +668,7 @@ mod tests {
             .world_mut()
             .spawn((
                 Unit { type_index: 0 },
+                Owner(PlayerId(0)),
                 SimPosition::new(Vec2::new(-10.0, 0.0)),
                 MoveSpeed(4.0),
                 Collider { radius: 0.6, mass: 1.0, layer: CollisionLayer::Ground },
@@ -678,14 +681,17 @@ mod tests {
         (app, worker)
     }
 
+    /// Le joueur 0 demande un chantier en `min_cell`, confié à `worker`.
+    fn build(app: &mut App, min_cell: IVec2, worker: Entity) {
+        app.world_mut()
+            .resource_mut::<CommandQueue>()
+            .push(PlayerId(0), PlayerCommand::Build { type_index: 0, min_cell, builders: vec![worker] });
+    }
+
     #[test]
     fn worker_walks_to_the_site_and_builds_it() {
         let (mut app, worker) = app();
-        app.world_mut().resource_mut::<PendingBuildOrders>().0.push(BuildOrder {
-            type_index: 0,
-            min_cell: IVec2::new(55, 49),
-            builders: vec![worker],
-        });
+        build(&mut app, IVec2::new(55, 49), worker);
         // 3 s de marche au plus, puis 2 s de construction.
         for _ in 0..32 * 7 {
             app.update();
@@ -709,11 +715,7 @@ mod tests {
     fn overlapping_orders_are_refused() {
         let (mut app, worker) = app();
         for x in [55, 56] {
-            app.world_mut().resource_mut::<PendingBuildOrders>().0.push(BuildOrder {
-                type_index: 0,
-                min_cell: IVec2::new(x, 49),
-                builders: vec![worker],
-            });
+            build(&mut app, IVec2::new(x, 49), worker);
         }
         app.update();
         let world = app.world_mut();

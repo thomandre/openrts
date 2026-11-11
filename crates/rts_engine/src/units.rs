@@ -29,6 +29,7 @@ use crate::graphics::animation::{AnimatedPart, PulsingPiece};
 use crate::graphics::shapes::merge_parts;
 use crate::graphics::textures::detail_images;
 use crate::graphics::Hover;
+use crate::players::{Owner, PlayerId};
 use crate::selection::{Selectable, SelectionRing};
 use crate::simulation::{MoveSpeed, SimPosition};
 
@@ -546,8 +547,14 @@ impl UnitCatalog {
     }
 
     /// Comme [`UnitCatalog::spawn`], tournée de `yaw` radians autour de la
-    /// verticale (0 : regarde vers −z ; π : regarde vers +z).
+    /// verticale (0 : regarde vers −z ; π : regarde vers +z). Comme `spawn`,
+    /// l'unité appartient au premier joueur (`PlayerId(0)`).
     pub fn spawn_facing(&self, commands: &mut Commands, type_index: usize, pos: Vec2, yaw: f32) -> Entity {
+        self.spawn_owned(commands, PlayerId(0), type_index, pos, yaw)
+    }
+
+    /// Fait apparaître une unité du joueur `owner`, tournée de `yaw` radians.
+    pub fn spawn_owned(&self, commands: &mut Commands, owner: PlayerId, type_index: usize, pos: Vec2, yaw: f32) -> Entity {
         let unit_type = &self.types[type_index];
         let visual = &self.visuals[type_index];
         let center = visual.center_height;
@@ -560,6 +567,7 @@ impl UnitCatalog {
             .spawn((
                 Name::new(unit_type.name.clone()),
                 Unit { type_index },
+                Owner(owner),
                 // L'origine de la racine est à mi-hauteur de l'unité : c'est là
                 // que la sélection teste les clics.
                 Transform::from_xyz(pos.x, center, pos.y).with_rotation(Quat::from_rotation_y(yaw)),

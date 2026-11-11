@@ -4,19 +4,19 @@
 //! Ce module consomme les actions `ChooseBuilding`, `PlaceBuildingAt` et
 //! `CancelPlacement` de la couche d'entrées : il ne sait pas si elles viennent
 //! d'un clic, d'un raccourci clavier ou d'un tap. Il ne change pas lui-même
-//! l'état du jeu : une pose acceptée devient une [`BuildOrder`], que la
-//! simulation appliquera (et revérifiera) à son prochain pas.
+//! l'état du jeu : une pose acceptée devient un ordre
+//! [`PlayerCommand::Build`], que la simulation appliquera (et revérifiera) à
+//! son prochain pas.
 
 use bevy::prelude::*;
 
-use super::{
-    completed_types, Building, BuildingCatalog, BuildOrder, ConstructionTask, GhostPiece, PendingBuildOrders,
-    PlacementGhost, UnderConstruction,
-};
+use super::{completed_types, Building, BuildingCatalog, GhostPiece, PlacementGhost, UnderConstruction};
 use crate::camera::{screen_to_ground, RtsCamera};
 use crate::cursor::Pointer;
 use crate::input::{GameAction, InputContext};
 use crate::navigation::NavGrid;
+use crate::orders::{CommandQueue, PlayerCommand};
+use crate::players::{LocalPlayer, Owner};
 use crate::selection::Selected;
 use crate::units::Unit;
 
@@ -26,12 +26,17 @@ pub struct Placement {
     pub active: Option<usize>,
 }
 
-/// Les ouvriers de la sélection, triés (ordre reproductible).
-fn selected_builders(catalog: &BuildingCatalog, selected: &Query<(Entity, &Unit), With<Selected>>) -> Vec<Entity> {
+/// Les ouvriers de la sélection qui appartiennent au joueur local, triés
+/// (ordre reproductible).
+fn selected_builders(
+    catalog: &BuildingCatalog,
+    local: LocalPlayer,
+    selected: &Query<(Entity, &Unit, &Owner), With<Selected>>,
+) -> Vec<Entity> {
     let mut builders: Vec<Entity> = selected
         .iter()
-        .filter(|(_, unit)| catalog.builders.contains(&unit.type_index))
-        .map(|(entity, _)| entity)
+        .filter(|(_, unit, owner)| catalog.builders.contains(&unit.type_index) && owner.0 == local.0)
+        .map(|(entity, ..)| entity)
         .collect();
     builders.sort_unstable();
     builders
@@ -39,15 +44,15 @@ fn selected_builders(catalog: &BuildingCatalog, selected: &Query<(Entity, &Unit)
 
 /// Consomme les actions de construction.
 pub(crate) fn handle_build_actions(
-    mut commands: Commands,
     mut actions: MessageReader<GameAction>,
     camera: Single<(&Camera, &GlobalTransform), With<RtsCamera>>,
     catalog: Option<Res<BuildingCatalog>>,
     grid: Option<Res<NavGrid>>,
-    selected: Query<(Entity, &Unit), With<Selected>>,
-    buildings: Query<(&Building, Has<UnderConstruction>)>,
+    local: Res<LocalPlayer>,
+    selected: Query<(Entity, &Unit, &Owner), With<Selected>>,
+    buildings: Query<(&Building, &Owner, Has<UnderConstruction>)>,
     mut placement: ResMut<Placement>,
-    mut orders: ResMut<PendingBuildOrders>,
+    mut orders: ResMut<CommandQueue>,
     mut context: ResMut<InputContext>,
 ) {
     let Some(catalog) = catalog else {
@@ -55,8 +60,8 @@ pub(crate) fn handle_build_actions(
         return;
     };
     let (camera, camera_transform) = camera.into_inner();
-    let builders = selected_builders(&catalog, &selected);
-    let completed = completed_types(&catalog, buildings.iter().map(|(b, c)| (b.type_index, c)));
+    let builders = selected_builders(&catalog, *local, &selected);
+    let completed = completed_types(&catalog, local.0, buildings.iter());
 
     for action in actions.read() {
         match *action {
@@ -74,18 +79,12 @@ pub(crate) fn handle_build_actions(
                 if !grid.area_free(min_cell, size) {
                     continue;
                 }
-                orders.0.push(BuildOrder { type_index, min_cell, builders: builders.clone() });
+                orders.push(local.0, PlayerCommand::Build { type_index, min_cell, builders: builders.clone() });
                 if !keep_placing {
                     placement.active = None;
                 }
             }
             GameAction::CancelPlacement => placement.active = None,
-            // Un ordre de déplacement donné à la main détourne les ouvriers de leurs chantiers.
-            GameAction::CommandAt { .. } => {
-                for &builder in &builders {
-                    commands.entity(builder).remove::<ConstructionTask>();
-                }
-            }
             _ => {}
         }
     }
@@ -148,12 +147,13 @@ pub(crate) fn update_pointer_ghost(
 pub(crate) fn refresh_ghosts(
     catalog: Option<Res<BuildingCatalog>>,
     grid: Option<Res<NavGrid>>,
-    buildings: Query<(&Building, Has<UnderConstruction>)>,
+    local: Res<LocalPlayer>,
+    buildings: Query<(&Building, &Owner, Has<UnderConstruction>)>,
     mut ghosts: Query<(&mut PlacementGhost, &mut Transform, &Children)>,
     mut pieces: Query<&mut MeshMaterial3d<StandardMaterial>, With<GhostPiece>>,
 ) {
     let (Some(catalog), Some(grid)) = (catalog, grid) else { return };
-    let completed = completed_types(&catalog, buildings.iter().map(|(b, c)| (b.type_index, c)));
+    let completed = completed_types(&catalog, local.0, buildings.iter());
     for (mut ghost, mut transform, children) in &mut ghosts {
         let size = catalog.types[ghost.type_index].footprint;
         let center = grid.frame().rect(ghost.min_cell, size).center();
