@@ -109,13 +109,17 @@ et la Pousse ressort de terre.
 | E | Écrin | 7 × 7 m | — | Cœur de base, dépôt, produit les Collecteurs (C), 15 de population, champ de résonance de 8 m |
 | R | Résonateur | 2 × 2 m | — | Relais : 8 de population, champ de résonance de 6,5 m |
 | C | Creuset | 4 × 4 m | — (pile sur une source d'Éther libre) | Récolte de l'Éther |
-| O | Orfèvrerie | 5 × 5 m | Écrin, dans un champ | Produit les Automates (A) ; Perceur (P) grisé |
+| O | Orfèvrerie | 5 × 5 m | Écrin, dans un champ | Produit les Automates (A) ; Perceur (P) avec un Lapidaire |
 | A | Aiguillon | 2 × 2 m | Orfèvrerie, dans un champ | Défense fixe |
+| L | Lapidaire | 4 × 4 m | Orfèvrerie, dans un champ | Taille les pierres : débloque le Perceur, l'Essaimeur et la Fonderie |
+| V | Volière | 5 × 5 m | Orfèvrerie, dans un champ | Atelier aérien : produit les Essaims (E) ; Essaimeur (M) avec un Lapidaire |
+| F | Fonderie | 6 × 6 m | Lapidaire, dans un champ | Produit les Titans (T) |
 
 Le Collectif construit par **sertissage à distance**. Avec des Collecteurs
 sélectionnés, B puis une lettre ouvre la pose ; les **champs de résonance**
 de l'Écrin et des Résonateurs terminés apparaissent alors au sol (cercles
-vert d'eau). Orfèvrerie et Aiguillon ne se posent qu'à l'intérieur d'un
+vert d'eau). Tous les bâtiments sauf l'Écrin, le Résonateur et le Creuset
+ne se posent qu'à l'intérieur d'un
 champ : ailleurs, leur fantôme est rouge et le clic affiche « Hors champ ».
 Le coût est débité à la pose et l'emplacement promis au Collecteur libre le
 plus proche ; il vole jusque-là, pose une gemme d'ancrage et **repart
@@ -210,7 +214,7 @@ Deux niveaux de qualité (`GraphicsQuality`) :
 | `OPENRTS_ZOOM=12` | Distance de départ de la caméra (10 à 70 m) |
 | `OPENRTS_DEMO=buildings` | Garde : scène de démonstration des bâtiments (les cinq bâtiments, un chantier en cours, un fantôme vert et un rouge, un groupe qui contourne la Caserne au bout de 11 s) |
 | `OPENRTS_FACTION=sylves OPENRTS_DEMO=buildings` | Sylves : les cinq bâtiments, un Calice et la ligne de Cristal récoltés par des Pousses, une Ronceraie en pleine croissance, un fantôme vert et un rouge, une Pousse sélectionnée qui part s'enraciner au bout de 10,5 s (emplacement promis en vert) |
-| `OPENRTS_FACTION=collectif OPENRTS_DEMO=buildings` | Collectif : les cinq bâtiments, les champs de résonance au sol, un Creuset et la ligne de Cristal récoltés par des Collecteurs, une Orfèvrerie en cours d'assemblage sous sa gemme, un fantôme vert dans un champ et un rouge hors champ, un Collecteur sélectionné qui part sertir un Aiguillon au bout de 10 s puis repart récolter |
+| `OPENRTS_FACTION=collectif OPENRTS_DEMO=buildings` | Collectif : les huit bâtiments (Lapidaire, Volière et Fonderie au nord, `OPENRTS_FOCUS=-1,8`), les champs de résonance au sol, un Creuset et la ligne de Cristal récoltés par des Collecteurs, une Orfèvrerie en cours d'assemblage sous sa gemme, un fantôme vert dans un champ et un rouge hors champ, un Collecteur sélectionné qui part sertir un Aiguillon au bout de 10 s puis repart récolter |
 | `OPENRTS_FOCUS=x,z` | La caméra vise ce point du sol au démarrage |
 | `OPENRTS_DEMO=economy` | Garde : l'économie en marche (douze Techniciens sur la ligne de Cristal, trois à un Extracteur, Quartier général sélectionné avec trois Techniciens en file et son point de ralliement, compteurs) |
 | `OPENRTS_DEMO=battle` | Deux armées (joueur 1 orange au sud, joueur 2 bleu au nord), chacune devant deux défenses fixes (Tourelles, Épineux, Aiguillons), qui partent à l'attaque-déplacement au bout de 8 s et se rencontrent au milieu. `OPENRTS_FACTION` et `OPENRTS_ENEMY` choisissent les factions, `OPENRTS_STRESS=1` donne 300 contre 300 |

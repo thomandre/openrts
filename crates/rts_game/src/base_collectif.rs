@@ -7,7 +7,8 @@
 //!
 //! `OPENRTS_FACTION=collectif OPENRTS_DEMO=buildings` met en scène au
 //! démarrage, pour vérifier le rendu d'un coup d'œil (et les captures) : les
-//! cinq bâtiments terminés, un Creuset sur une source d'Éther avec deux
+//! huit bâtiments terminés (le palier 2 au nord, dans le champ d'un
+//! troisième Résonateur), un Creuset sur une source d'Éther avec deux
 //! Collecteurs à son bord, des Collecteurs sur la ligne de Cristal, une
 //! Orfèvrerie en cours d'assemblage (sa gemme d'ancrage au-dessus), les
 //! champs de résonance au sol, un fantôme vert dans un champ et un rouge
@@ -52,6 +53,12 @@ pub fn spawn_demo(
     place(commands, buildings, frame, RESONATEUR, Vec2::new(-9.0, -5.0));
     place(commands, buildings, frame, ORFEVRERIE, Vec2::new(13.5, -8.5));
     place(commands, buildings, frame, AIGUILLON, Vec2::new(5.5, -1.0));
+    // Le palier 2, au nord, dans le champ d'un troisième Résonateur :
+    // Lapidaire, Volière et Fonderie.
+    place(commands, buildings, frame, RESONATEUR, Vec2::new(-2.0, 7.0));
+    place(commands, buildings, frame, LAPIDAIRE, Vec2::new(-6.0, 5.0));
+    place(commands, buildings, frame, VOLIERE, Vec2::new(3.0, 9.0));
+    place(commands, buildings, frame, FONDERIE, Vec2::new(-4.5, 12.5));
     let layout = gisements::starting_base(START_HQ);
     let (nodes, sources) = gisements::spawn_base(commands, deposits, frame, &layout);
     // Un Creuset terminé sur la source de gauche.
@@ -65,7 +72,7 @@ pub fn spawn_demo(
 
     // Deux fantômes : un Aiguillon dans le champ du Résonateur de droite
     // (vert), une Orfèvrerie loin de tout champ (rouge).
-    for (type_index, at) in [(AIGUILLON, Vec2::new(12.0, -1.0)), (ORFEVRERIE, Vec2::new(2.0, 4.5))] {
+    for (type_index, at) in [(AIGUILLON, Vec2::new(12.0, -1.0)), (ORFEVRERIE, Vec2::new(9.0, 6.0))] {
         let min_cell = frame.min_cell_centered(at, buildings.types[type_index].footprint);
         let ghost = PlacementGhost { type_index, min_cell, follows_pointer: false, valid: true };
         buildings.spawn_ghost(commands, ghost, frame);
