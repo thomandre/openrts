@@ -431,7 +431,7 @@ fn bastion() -> ModelBuilder {
 }
 
 // ---------------------------------------------------------------------------
-// Les bâtiments (palier 1 de l'arbre de la Garde, voir GAME_DESIGN.md).
+// Les bâtiments (paliers 1 et 2 de l'arbre de la Garde, voir GAME_DESIGN.md).
 // ---------------------------------------------------------------------------
 
 /// Indices des bâtiments dans [`building_types`].
@@ -441,15 +441,24 @@ pub mod building {
     pub const EXTRACTEUR: usize = 2;
     pub const CASERNE: usize = 3;
     pub const TOURELLE: usize = 4;
+    // Palier 2 : ajoutés à la fin, pour ne pas décaler les indices du palier 1.
+    pub const ARMURERIE: usize = 5;
+    pub const CENTRE_PROPULSION: usize = 6;
+    pub const USINE: usize = 7;
 }
 
-/// Les bâtiments du palier 1. Les tailles se comparent aux unités : un
-/// fantassin fait 1 m de large, le Bastion 3,6 m ; le Quartier général
+/// Les bâtiments des paliers 1 et 2. Les tailles se comparent aux unités :
+/// un fantassin fait 1 m de large, le Bastion 3,6 m ; le Quartier général
 /// (7 × 7 m, plus de 6 m de haut avec son radar) domine nettement la base.
 ///
 /// Chiffres provisoires (PV, temps en secondes, coût en ressource principale
 /// et rare), inspirés des ratios de SC2, à ajuster en test. L'Extracteur se
 /// pose exactement sur une source de ressource rare (4 × 4 m, comme elle).
+///
+/// Palier 2 (la spécialisation) : l'Armurerie et le Centre de propulsion ne
+/// produisent rien mais débloquent des unités à la Caserne ; l'Usine
+/// produit les Bastions et demande l'Armurerie. Les trois coûtent de la
+/// ressource rare : il faut un Extracteur avant de se spécialiser.
 pub fn building_types() -> Vec<BuildingType> {
     use building::*;
     vec![
@@ -466,18 +475,27 @@ pub fn building_types() -> Vec<BuildingType> {
             placement: PlacementRule::OnResource(ResourceKind::Rare),
             ..building_type("Extracteur", (4, 4), 500.0, 22.0, (75, 0), &[], 'e', extracteur())
         },
-        // La Caserne forme les Sentinelles ; Longue-Vue, Lancier et Faucon
-        // attendent des bâtiments du palier 2 pas encore dans le jeu.
+        // La Caserne forme les Sentinelles ; Longue-Vue et Lancier attendent
+        // une Armurerie terminée, le Faucon un Centre de propulsion.
         BuildingType {
             production: vec![
                 option(kind::SENTINELLE, 's', &[]),
-                option(kind::LONGUE_VUE, 'v', &["Armurerie"]),
-                option(kind::LANCIER, 'l', &["Armurerie"]),
-                option(kind::FAUCON, 'f', &["Centre de propulsion"]),
+                option(kind::LONGUE_VUE, 'v', &[ARMURERIE]),
+                option(kind::LANCIER, 'l', &[ARMURERIE]),
+                option(kind::FAUCON, 'f', &[CENTRE_PROPULSION]),
             ],
             ..building_type("Caserne", (5, 6), 1000.0, 45.0, (150, 0), &[QUARTIER_GENERAL], 'c', caserne())
         },
         building_type("Tourelle", (2, 2), 250.0, 18.0, (100, 0), &[CASERNE], 't', tourelle()),
+        // Palier 2. Raccourcis après B : A(rmurerie), P(ropulsion), U(sine).
+        building_type("Armurerie", (4, 4), 750.0, 45.0, (150, 50), &[CASERNE], 'a', armurerie()),
+        building_type("Centre de propulsion", (5, 5), 1000.0, 50.0, (150, 100), &[CASERNE], 'p', centre_propulsion()),
+        // L'Usine produit les Bastions (touche C, comme « char » : B ouvre
+        // déjà le menu de construction).
+        BuildingType {
+            production: vec![option(kind::BASTION, 'c', &[])],
+            ..building_type("Usine", (6, 7), 1250.0, 60.0, (200, 100), &[ARMURERIE], 'u', usine())
+        },
     ]
 }
 
@@ -513,14 +531,11 @@ pub fn economy_rules(resources: [ResourceInfo; 2]) -> EconomyRules {
     }
 }
 
-/// Une unité produite par un bâtiment ; `requires` : noms de bâtiments qui
-/// n'existent pas encore dans le jeu (l'option reste grisée).
-fn option(unit_type: usize, hotkey: char, requires: &[&str]) -> ProductionOption {
-    ProductionOption {
-        unit_type,
-        hotkey,
-        requires: requires.iter().map(|name| Requirement::NotYetAvailable((*name).into())).collect(),
-    }
+/// Une unité produite par un bâtiment ; `requires` : indices (dans
+/// [`building_types`]) des bâtiments à posséder, terminés, pour la produire
+/// (l'option reste grisée sinon).
+fn option(unit_type: usize, hotkey: char, requires: &[usize]) -> ProductionOption {
+    ProductionOption { unit_type, hotkey, requires: requires.iter().map(|&index| Requirement::Building(index)).collect() }
 }
 
 /// `cost` : (ressource principale, ressource rare).
@@ -782,5 +797,240 @@ fn tourelle() -> ModelBuilder {
         b.plate(Glow, v(0.3, 0.08, 0.04), v(0.0, 0.4, -0.66));
         b.plate(Dark, v(0.5, 0.3, 0.3), v(0.0, 0.3, 0.7)); // boîtier arrière
     });
+    b
+}
+
+// ---------------------------------------------------------------------------
+// Palier 2 : la spécialisation.
+// ---------------------------------------------------------------------------
+
+/// Plaque posée à plat sur une pente du profil (z, y), de `from` à `to`
+/// (vue de côté) : centrée au milieu de la pente, décollée de `lift` mètres
+/// vers l'extérieur ; `width` en x, `thickness` en épaisseur. Sert aux
+/// glacis et aux toits en dents de scie.
+#[allow(clippy::too_many_arguments)]
+fn slope_plate(b: &mut ModelBuilder, slot: MaterialSlot, x: f32, width: f32, thickness: f32, from: Vec2, to: Vec2, lift: f32) {
+    let along = (to - from).normalize();
+    // Normale à la pente, du côté du haut (y > 0).
+    let normal = if along.x > 0.0 { Vec2::new(-along.y, along.x) } else { Vec2::new(along.y, -along.x) };
+    let middle = (from + to) / 2.0 + normal * (thickness / 2.0 + lift);
+    // Rotation autour de x qui couche l'axe z de la plaque le long de la
+    // pente. `atan2(y, x)` donne l'angle d'une direction (x, y).
+    let angle = -along.y.atan2(along.x);
+    b.plate_beveled(slot, v(width, thickness, (to - from).length()), thickness * 0.3, v(x, middle.y, middle.x), v(angle, 0.0, 0.0));
+}
+
+/// Armurerie : casemate trapue au glacis incliné, blindée en couches, une
+/// meurtrière lumineuse et une porte blindée en façade ; à droite un
+/// râtelier de longs canons, à gauche des piles de plaques de blindage ; sur
+/// le toit, un palan qui soulève une plaque et un casier de missiles. Vu de
+/// dessus : un bloc carré barré d'une bande d'équipe, flanqué d'un râtelier
+/// rayé de canons et de deux piles.
+fn armurerie() -> ModelBuilder {
+    let mut b = ModelBuilder::new();
+    b.plate_beveled(Dark, v(3.8, 0.3, 3.8), 0.1, v(0.0, 0.15, 0.0), Vec3::ZERO);
+    b.plate_beveled(Hazard, v(2.4, 0.05, 0.4), 0.01, v(0.0, 0.32, -1.7), Vec3::ZERO);
+    // Casemate : profil (z, y), glacis incliné vers l'avant (−z).
+    let (glacis_low, glacis_high) = (v2(-1.4, 1.3), v2(-0.7, 2.3));
+    let hull = [v2(-1.4, 0.3), v2(1.4, 0.3), v2(1.4, 2.0), v2(1.1, 2.3), glacis_high, glacis_low];
+    b.beveled_prism(Steel, &hull, 2.4, 0.07, Vec3::ZERO, Vec3::ZERO);
+    // Glacis en deux couches de blindage peint, chevrons au pied, meurtrière.
+    slope_plate(&mut b, Paint, 0.0, 2.5, 0.1, glacis_low, glacis_high, 0.0);
+    slope_plate(&mut b, Paint, 0.0, 2.1, 0.08, glacis_low + v2(0.07, 0.1), glacis_low + v2(0.4, 0.57), 0.1);
+    slope_plate(&mut b, Hazard, 0.0, 2.52, 0.1, glacis_low, glacis_low + v2(0.14, 0.2), 0.02);
+    slope_plate(&mut b, Glow, 0.0, 1.6, 0.04, glacis_high - v2(0.2, 0.28), glacis_high - v2(0.07, 0.1), 0.1);
+    // Porte blindée sous le glacis, entre deux montants à chevrons.
+    b.plate_beveled(Dark, v(1.2, 0.9, 0.1), 0.03, v(0.0, 0.78, -1.45), Vec3::ZERO);
+    for slat in 0..3 {
+        b.plate(Steel, v(1.1, 0.05, 0.04), v(0.0, 0.5 + slat as f32 * 0.28, -1.51));
+    }
+    b.mirrored(|b, s| {
+        b.plate_beveled(Hazard, v(0.16, 1.0, 0.12), 0.02, v(s * 0.72, 0.8, -1.45), Vec3::ZERO);
+        // Flancs : plaques peintes rapportées, liseré d'équipe en haut.
+        b.plate_beveled(Paint, v(0.12, 1.2, 2.3), 0.04, v(s * 1.25, 1.15, 0.35), Vec3::ZERO);
+        b.plate_beveled(Team, v(0.14, 0.14, 2.3), 0.02, v(s * 1.26, 1.86, 0.35), Vec3::ZERO);
+    });
+    // Toit : bande d'équipe d'un bord à l'autre, casier de missiles à l'arrière.
+    b.plate_beveled(Team, v(2.5, 0.06, 0.55), 0.02, v(0.0, 2.33, 0.15), Vec3::ZERO);
+    b.plate_beveled(Dark, v(1.1, 0.4, 0.75), 0.05, v(0.55, 2.5, 0.8), Vec3::ZERO);
+    for row in 0..2 {
+        for col in 0..3 {
+            let at = v(0.2 + col as f32 * 0.35, 2.72, 0.62 + row as f32 * 0.36);
+            b.cylinder(Steel, 0.12, 0.1, at, Vec3::ZERO);
+            b.cone(Bare, 0.08, 0.0, 0.12, at + v(0.0, 0.1, 0.0), Vec3::ZERO); // ogive
+        }
+    }
+    // Palan : un mât, une flèche vers l'avant et une plaque pendue au câble.
+    b.cylinder(Dark, 0.07, 1.3, v(-0.8, 2.95, 0.6), Vec3::ZERO);
+    b.plate_beveled(Steel, v(0.14, 0.14, 1.9), 0.03, v(-0.8, 3.55, -0.2), Vec3::ZERO);
+    b.cylinder(Dark, 0.02, 0.7, v(-0.8, 3.15, -1.0), Vec3::ZERO);
+    b.plate_beveled(Paint, v(0.7, 0.5, 0.07), 0.02, v(-0.8, 2.6, -1.0), Vec3::ZERO);
+    b.plate_beveled(Hazard, v(0.72, 0.1, 0.08), 0.01, v(-0.8, 2.82, -1.0), Vec3::ZERO);
+    b.pulsing(BEACON_SLOW, |b| {
+        b.sphere(Engine, 0.08, v(-0.8, 3.68, 0.6));
+    });
+    // Râtelier, à droite : un socle, deux montants, une traverse d'équipe et
+    // sept longs canons appuyés dessus.
+    b.plate_beveled(Dark, v(0.6, 0.15, 3.3), 0.03, v(1.6, 0.37, 0.0), Vec3::ZERO);
+    for z in [-1.4, 1.4] {
+        b.plate(Dark, v(0.1, 1.6, 0.1), v(1.6, 1.15, z));
+    }
+    b.plate_beveled(Steel, v(0.14, 0.1, 2.9), 0.02, v(1.6, 1.9, 0.0), Vec3::ZERO);
+    b.plate_beveled(Team, v(0.16, 0.04, 2.9), 0.01, v(1.6, 1.97, 0.0), Vec3::ZERO);
+    for k in 0..7 {
+        let z = -1.2 + k as f32 * 0.4;
+        b.cylinder(Bare, 0.07, 1.7, v(1.78, 1.25, z), v(0.0, 0.0, 0.1)); // canon, penché vers la traverse
+        b.cylinder(Dark, 0.09, 0.16, v(1.7, 2.1, z), v(0.0, 0.0, 0.1)); // bouche
+        b.plate(Dark, v(0.16, 0.34, 0.16), v(1.84, 0.6, z)); // crosse
+    }
+    // Piles de plaques de blindage, à gauche : peinture et acier en couches.
+    for i in 0..5 {
+        let slot = if i % 2 == 0 { Paint } else { Steel };
+        let shift = if i % 2 == 0 { 0.05 } else { -0.05 };
+        b.plate_beveled(slot, v(0.62, 0.12, 1.5), 0.03, v(-1.6, 0.38 + i as f32 * 0.14, -0.6 + shift), Vec3::ZERO);
+    }
+    b.plate_beveled(Hazard, v(0.64, 0.05, 0.4), 0.01, v(-1.6, 1.07, -1.05), Vec3::ZERO);
+    for i in 0..3 {
+        b.plate_beveled(Steel, v(0.6, 0.12, 0.9), 0.03, v(-1.6, 0.38 + i as f32 * 0.14, 1.15), v(0.0, i as f32 * 0.08, 0.0));
+    }
+    b
+}
+
+/// Centre de propulsion : à gauche une piste d'envol balisée (feux cyan,
+/// tirets d'équipe, seuil à chevrons) ; à droite un portique d'essai où
+/// pendent deux gros réacteurs (formes de révolution) dont les flammes
+/// scintillent vers un déflecteur à chevrons ; une cabine de contrôle à
+/// l'arrière. Vu de dessus : une bande claire, une poutre d'équipe et deux
+/// disques de réacteurs.
+fn centre_propulsion() -> ModelBuilder {
+    let mut b = ModelBuilder::new();
+    b.plate_beveled(Dark, v(4.8, 0.25, 4.8), 0.08, v(0.0, 0.125, 0.0), Vec3::ZERO);
+    // Piste d'envol.
+    b.plate_beveled(Steel, v(1.7, 0.06, 4.6), 0.02, v(-1.45, 0.28, 0.0), Vec3::ZERO);
+    for k in 0..4 {
+        b.plate(Team, v(0.2, 0.02, 0.55), v(-1.45, 0.32, -1.5 + k as f32 * 1.05));
+    }
+    b.plate_beveled(Hazard, v(1.7, 0.03, 0.3), 0.01, v(-1.45, 0.32, -2.1), Vec3::ZERO);
+    for k in 0..5 {
+        let z = -2.0 + k as f32 * 1.0;
+        for x in [-2.22, -0.68] {
+            b.plate(Glow, v(0.1, 0.07, 0.12), v(x, 0.33, z));
+        }
+    }
+    // Déflecteur de jet sous le portique : disque sombre cerclé de chevrons, grille.
+    let ring = |r: f32, y0: f32, y1: f32| [v2(0.0, y0), v2(r, y0), v2(r, y1), v2(0.0, y1)];
+    b.faceted(Hazard, &ring(1.05, 0.25, 0.36), 8, v(1.3, 0.0, -0.2), Vec3::ZERO);
+    b.faceted(Dark, &ring(0.88, 0.25, 0.42), 8, v(1.3, 0.0, -0.2), Vec3::ZERO);
+    for k in 0..4 {
+        b.plate(Bare, v(1.3, 0.04, 0.08), v(1.3, 0.44, -0.65 + k as f32 * 0.3));
+    }
+    // Portique : deux montants, une poutre peinte à la couleur d'équipe.
+    for x in [0.25, 2.35] {
+        b.plate_beveled(Steel, v(0.3, 3.7, 0.36), 0.05, v(x, 2.1, -0.2), Vec3::ZERO);
+        b.plate_beveled(Hazard, v(0.32, 0.45, 0.38), 0.02, v(x, 0.5, -0.2), Vec3::ZERO);
+    }
+    b.plate_beveled(Dark, v(2.6, 0.42, 0.55), 0.05, v(1.3, 4.0, -0.2), Vec3::ZERO);
+    b.plate_beveled(Team, v(2.6, 0.06, 0.4), 0.02, v(1.3, 4.24, -0.2), Vec3::ZERO);
+    b.pulsing(BEACON_SLOW, |b| {
+        for x in [0.25, 2.35] {
+            b.sphere(Engine, 0.09, v(x, 4.36, -0.2));
+        }
+    });
+    // Les deux réacteurs, tuyère vers le bas. Profil (rayon, hauteur).
+    let pod = [v2(0.0, -0.9), v2(0.3, -0.9), v2(0.45, -0.45), v2(0.45, 0.6), v2(0.26, 0.95), v2(0.0, 0.95)];
+    for x in [0.85, 1.75] {
+        b.lathe(Paint, &pod, 20, v(x, 2.8, -0.2), Vec3::ZERO);
+        b.cylinder(Team, 0.46, 0.18, v(x, 2.95, -0.2), Vec3::ZERO); // bague d'équipe
+        b.plate(Dark, v(0.22, 0.2, 0.5), v(x, 3.78, -0.2)); // attache
+        b.cone(Bare, 0.36, 0.3, 0.25, v(x, 1.9, -0.2), Vec3::ZERO); // tuyère
+        b.pulsing(ENGINE_PULSE, |b| {
+            b.cylinder(Engine, 0.3, 0.04, v(x, 1.77, -0.2), Vec3::ZERO);
+        });
+    }
+    // Les flammes (un seul groupe animé, pivot à la hauteur des tuyères),
+    // tournées vers le bas, jusqu'au déflecteur.
+    let flicker = Motion::Flicker { axis: Vec3::Y, amplitude: 0.15, frequency: 4.0 };
+    b.animated(Transform::from_xyz(0.0, 1.76, -0.2), flicker, |b| {
+        for x in [0.85, 1.75] {
+            b.cone(Flame, 0.26, 0.0, 1.2, v(x, -0.6, 0.0), v(PI, 0.0, 0.0));
+            b.cone(Flame, 0.13, 0.0, 0.7, v(x, -0.35, 0.0), v(PI, 0.0, 0.0));
+        }
+    });
+    // Cabine de contrôle à l'arrière, baie vitrée tournée vers le banc.
+    b.plate_beveled(Steel, v(2.0, 1.4, 1.0), 0.06, v(1.3, 0.95, 1.75), Vec3::ZERO);
+    b.plate(Glow, v(1.6, 0.22, 0.04), v(1.3, 1.3, 1.24));
+    b.plate_beveled(Team, v(2.04, 0.06, 1.04), 0.02, v(1.3, 1.68, 1.75), Vec3::ZERO);
+    b.cylinder(Dark, 0.03, 1.2, v(2.0, 2.3, 2.0), Vec3::ZERO); // antenne
+    // Durite de carburant de la cabine au portique.
+    b.tube(Dark, &[v(2.2, 1.2, 1.3), v(2.45, 2.0, 0.6), v(2.4, 3.2, 0.0)], 0.07);
+    b
+}
+
+/// Usine : grand hangar à toit en dents de scie (verrières cyan, bandes
+/// d'équipe), grande porte cerclée de chevrons, et devant elle un portique
+/// roulant sur rails qui soulève une tourelle de Bastion ; deux cheminées
+/// rougeoyantes à l'arrière. Vu de dessus : un rectangle rayé de dents de
+/// scie, la poutre du portique en travers de l'avant, deux disques sombres.
+fn usine() -> ModelBuilder {
+    let mut b = ModelBuilder::new();
+    b.plate_beveled(Dark, v(5.8, 0.3, 6.8), 0.1, v(0.0, 0.15, 0.0), Vec3::ZERO);
+    // Le hangar, et son toit : trois dents (profil (z, y) : face vitrée
+    // verticale vers l'avant, pente vers l'arrière).
+    b.plate_beveled(Steel, v(5.2, 2.6, 4.6), 0.08, v(0.0, 1.6, 0.95), Vec3::ZERO);
+    let tooth = 4.6 / 3.0;
+    for k in 0..3 {
+        let z0 = -1.35 + k as f32 * tooth;
+        b.beveled_prism(Paint, &[v2(0.0, 0.0), v2(tooth, 0.0), v2(0.0, 1.0)], 5.2, 0.05, v(0.0, 2.9, z0), Vec3::ZERO);
+        b.plate(Glow, v(4.9, 0.55, 0.04), v(0.0, 3.4, z0 - 0.03)); // verrière
+        for x in [-1.6, 1.6] {
+            slope_plate(&mut b, Team, x, 0.8, 0.04, v2(z0, 3.9), v2(z0 + tooth, 2.9), 0.0);
+        }
+    }
+    // Grande porte, montants et linteau à chevrons.
+    b.plate_beveled(Dark, v(4.0, 2.3, 0.1), 0.03, v(0.0, 1.45, -1.4), Vec3::ZERO);
+    for slat in 0..7 {
+        b.plate(Steel, v(3.9, 0.05, 0.04), v(0.0, 0.5 + slat as f32 * 0.3, -1.47));
+    }
+    b.mirrored(|b, s| {
+        b.plate_beveled(Hazard, v(0.25, 2.5, 0.14), 0.02, v(s * 2.15, 1.55, -1.42), Vec3::ZERO);
+        // Projecteurs de façade.
+        b.plate_beveled(Dark, v(0.3, 0.2, 0.25), 0.03, v(s * 2.25, 3.0, -1.45), Vec3::ZERO);
+        b.plate(Glow, v(0.24, 0.12, 0.04), v(s * 2.25, 3.0, -1.58));
+    });
+    b.plate_beveled(Hazard, v(4.6, 0.25, 0.14), 0.02, v(0.0, 2.75, -1.42), Vec3::ZERO);
+    // Aire de sortie : chevrons au bord.
+    b.plate_beveled(Hazard, v(4.6, 0.05, 0.35), 0.01, v(0.0, 0.32, -3.15), Vec3::ZERO);
+    // Portique roulant : de chaque côté, un chariot sur rail et deux jambes
+    // en A ; une poutre en travers, à chevrons aux bouts, bande d'équipe dessus.
+    b.mirrored(|b, s| {
+        b.plate(Bare, v(0.14, 0.05, 2.0), v(s * 2.7, 0.33, -2.45));
+        b.plate_beveled(Dark, v(0.4, 0.3, 1.7), 0.04, v(s * 2.7, 0.5, -2.45), Vec3::ZERO);
+        strut(b, Paint, v(s * 2.7, 0.6, -3.2), v(s * 2.7, 4.45, -2.45), 0.13);
+        strut(b, Paint, v(s * 2.7, 0.6, -1.7), v(s * 2.7, 4.45, -2.45), 0.13);
+        b.plate_beveled(Hazard, v(1.0, 0.47, 0.52), 0.02, v(s * 2.3, 4.6, -2.45), Vec3::ZERO);
+    });
+    b.plate_beveled(Paint, v(5.8, 0.45, 0.5), 0.05, v(0.0, 4.6, -2.45), Vec3::ZERO);
+    b.plate_beveled(Team, v(3.6, 0.05, 0.36), 0.02, v(0.0, 4.85, -2.45), Vec3::ZERO);
+    // Chariot du portique, ses câbles et la tourelle de Bastion qu'il soulève
+    // (tournée en travers : son canon pointe vers +x).
+    b.plate_beveled(Dark, v(0.9, 0.4, 0.8), 0.04, v(0.4, 4.2, -2.45), Vec3::ZERO);
+    for dz in [-0.25, 0.25] {
+        b.cylinder(Dark, 0.025, 1.7, v(0.4, 3.2, -2.45 + dz), Vec3::ZERO);
+    }
+    let turret = [v2(-0.7, 0.0), v2(0.5, 0.0), v2(0.75, 0.25), v2(0.4, 0.5), v2(-0.6, 0.5), v2(-0.75, 0.3)];
+    b.beveled_prism(Steel, &turret, 1.0, 0.04, v(0.4, 1.95, -2.45), v(0.0, FRAC_PI_2, 0.0));
+    b.plate(Team, v(0.9, 0.04, 0.5), v(0.3, 2.47, -2.45));
+    b.cylinder(Bare, 0.08, 1.1, v(1.7, 2.2, -2.45), v(0.0, 0.0, FRAC_PI_2));
+    // Deux cheminées à l'arrière, bague d'équipe, braises au sommet.
+    for (x, h) in [(2.3, 4.8), (1.6, 4.2)] {
+        b.cylinder(Dark, 0.28, h, v(x, 0.3 + h / 2.0, 2.8), Vec3::ZERO);
+        b.cylinder(Team, 0.3, 0.2, v(x, h - 0.3, 2.8), Vec3::ZERO);
+        b.pulsing(ENGINE_PULSE, |b| {
+            b.cylinder(Engine, 0.22, 0.04, v(x, 0.31 + h, 2.8), Vec3::ZERO);
+        });
+    }
+    // Annexe à gauche, fenêtres lumineuses.
+    b.plate_beveled(Steel, v(0.3, 1.3, 3.0), 0.05, v(-2.75, 0.95, 1.2), Vec3::ZERO);
+    b.plate(Glow, v(0.04, 0.16, 2.4), v(-2.92, 1.2, 1.2));
     b
 }

@@ -9,7 +9,7 @@
 //! file et son point de ralliement sur un gisement.
 //!
 //! `OPENRTS_DEMO=buildings` met en scène au démarrage, pour vérifier le rendu
-//! d'un coup d'œil (et les captures) : les cinq bâtiments posés, un chantier
+//! d'un coup d'œil (et les captures) : les huit bâtiments posés, un chantier
 //! à mi-construction avec son Technicien, un fantôme vert et un rouge, et un
 //! groupe d'unités qui contourne la Caserne (l'ordre part au bout de 11 s, pour
 //! que la capture automatique, prise à 14 s, les montre en plein détour).
@@ -59,12 +59,17 @@ struct DemoGroup;
 /// La scène de démonstration des bâtiments.
 pub fn spawn_demo(commands: &mut Commands, buildings: &BuildingCatalog, units: &UnitCatalog, frame: GridFrame) {
     let yaw = std::f32::consts::PI;
-    // Les cinq bâtiments, terminés.
+    // Les huit bâtiments, terminés.
     place(commands, buildings, frame, QUARTIER_GENERAL, Vec2::new(-10.0, -9.0));
     place(commands, buildings, frame, CASERNE, Vec2::new(2.5, -9.0));
     place(commands, buildings, frame, HABITAT, Vec2::new(10.5, -11.0));
     place(commands, buildings, frame, EXTRACTEUR, Vec2::new(-19.0, -4.0));
     place(commands, buildings, frame, TOURELLE, Vec2::new(9.0, -3.5));
+    // Le palier 2, autour : Armurerie à gauche, Centre de propulsion à
+    // droite, Usine derrière le Quartier général.
+    place(commands, buildings, frame, ARMURERIE, Vec2::new(-19.0, -11.0));
+    place(commands, buildings, frame, CENTRE_PROPULSION, Vec2::new(17.5, -10.0));
+    place(commands, buildings, frame, USINE, Vec2::new(-10.0, -20.0));
 
     // Un chantier de Caserne au tiers, et son Technicien au travail.
     let site_cell = frame.min_cell_centered(Vec2::new(15.5, 1.0), buildings.types[CASERNE].footprint);

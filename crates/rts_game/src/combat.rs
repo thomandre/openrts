@@ -34,13 +34,17 @@ pub fn garde() -> CombatRules {
             CombatStats::unit(45.0, 0.0, &[Infantry, Ranged], vec![Weapon::new(8.0, 4.0, 0.8, GROUND)]),
         ],
         // Ordre de `garde::building` : Quartier général, Module d'habitat,
-        // Extracteur, Caserne, Tourelle (défense fixe : sol et air).
+        // Extracteur, Caserne, Tourelle (défense fixe : sol et air), puis le
+        // palier 2 : Armurerie, Centre de propulsion, Usine.
         buildings: vec![
             CombatStats::structure(1.0, &[Armored], Vec::new()),
             CombatStats::structure(1.0, &[Armored], Vec::new()),
             CombatStats::structure(1.0, &[Armored], Vec::new()),
             CombatStats::structure(1.0, &[Armored], Vec::new()),
             CombatStats::structure(1.0, &[Armored], vec![Weapon::new(12.0, 7.0, 0.9, BOTH)]),
+            CombatStats::structure(1.0, &[Armored], Vec::new()),
+            CombatStats::structure(1.0, &[Armored], Vec::new()),
+            CombatStats::structure(1.0, &[Armored], Vec::new()),
         ],
     }
 }

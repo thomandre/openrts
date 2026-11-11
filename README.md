@@ -40,7 +40,7 @@ Sous Linux, il faut aussi les dépendances système de Bevy
 | Voir une unité adverse | Clic gauche dessus (anneau rouge ; pas d'ordre possible) |
 | Récolter (Techniciens, Pousses ou Collecteurs sélectionnés) | Clic droit sur un gisement de Cristal, ou sur un Extracteur (Calice chez les Sylves, Creuset chez le Collectif) terminé |
 | Point de ralliement (bâtiment producteur sélectionné) | Clic droit sur le sol, ou sur un gisement (les Techniciens produits y récoltent directement) |
-| Produire (Quartier général ou Caserne sélectionné) | Touche de l'unité ou bouton du panneau en bas : T (Technicien, QG) ; S (Sentinelle), V, L, F (Caserne, grisés tant que leur bâtiment n'existe pas) |
+| Produire (Quartier général, Caserne ou Usine sélectionné) | Touche de l'unité ou bouton du panneau en bas : T (Technicien, QG) ; S (Sentinelle), V (Longue-Vue), L (Lancier), F (Faucon) à la Caserne, grisés tant qu'il manque l'Armurerie (V, L) ou le Centre de propulsion (F) ; C (Bastion, Usine) |
 | Annuler une unité en file | Clic sur sa case dans la file (remboursée) |
 | Annuler un chantier sélectionné | X ou bouton « Annuler » (remboursé) |
 | Mémoriser la sélection dans un groupe | Ctrl + 1 … 9 ou 0 (Cmd aussi sur Mac) |
@@ -77,13 +77,16 @@ passent au-dessus de tout et ne gênent que les autres volantes.
 
 ### Bâtiments de la Garde
 
-| Touche (après B) | Bâtiment | Empreinte | Prérequis |
-| --- | --- | --- | --- |
-| Q | Quartier général | 7 × 7 m | — |
-| H | Module d'habitat | 3 × 3 m | — |
-| E | Extracteur | 4 × 4 m | — (pile sur une source d'Éther libre) |
-| C | Caserne | 5 × 6 m | Quartier général |
-| T | Tourelle | 2 × 2 m | Caserne |
+| Touche (après B) | Bâtiment | Empreinte | Coût | Prérequis | Rôle |
+| --- | --- | --- | --- | --- | --- |
+| Q | Quartier général | 7 × 7 m | 400 Cristal | — | Dépôt, Techniciens (T) |
+| H | Module d'habitat | 3 × 3 m | 100 Cristal | — | Population (+8) |
+| E | Extracteur | 4 × 4 m | 75 Cristal | — (pile sur une source d'Éther libre) | Éther |
+| C | Caserne | 5 × 6 m | 150 Cristal | Quartier général | Sentinelles (S), Longue-Vue (V), Lanciers (L), Faucons (F) |
+| T | Tourelle | 2 × 2 m | 100 Cristal | Caserne | Défense fixe |
+| A | Armurerie | 4 × 4 m | 150 Cristal + 50 Éther | Caserne | Débloque Longue-Vue et Lanciers à la Caserne |
+| P | Centre de propulsion | 5 × 5 m | 150 Cristal + 100 Éther | Caserne | Débloque les Faucons à la Caserne |
+| U | Usine | 6 × 7 m | 200 Cristal + 100 Éther | Armurerie | Bastions (C) |
 
 Les raccourcis sont des lettres tapées : ils suivent ce qui est écrit sur les
 touches, en AZERTY comme en QWERTY. En mode pose, un fantôme suit le pointeur,
@@ -235,7 +238,7 @@ Deux niveaux de qualité (`GraphicsQuality`) :
 | `OPENRTS_QUALITY=bas` | Qualité graphique Basse (`haut` par défaut) |
 | `OPENRTS_STRESS=1` | Lance le test de charge (300 unités) au démarrage |
 | `OPENRTS_ZOOM=12` | Distance de départ de la caméra (10 à 70 m) |
-| `OPENRTS_DEMO=buildings` | Garde : scène de démonstration des bâtiments (les cinq bâtiments, un chantier en cours, un fantôme vert et un rouge, un groupe qui contourne la Caserne au bout de 11 s) |
+| `OPENRTS_DEMO=buildings` | Garde : scène de démonstration des bâtiments (les huit bâtiments, un chantier en cours, un fantôme vert et un rouge, un groupe qui contourne la Caserne au bout de 11 s) |
 | `OPENRTS_FACTION=sylves OPENRTS_DEMO=buildings` | Sylves : les cinq bâtiments, un Calice et la ligne de Cristal récoltés par des Pousses, une Ronceraie en pleine croissance, un fantôme vert et un rouge, une Pousse sélectionnée qui part s'enraciner au bout de 10,5 s (emplacement promis en vert) |
 | `OPENRTS_FACTION=collectif OPENRTS_DEMO=buildings` | Collectif : les huit bâtiments (Lapidaire, Volière et Fonderie au nord, `OPENRTS_FOCUS=-1,8`), les champs de résonance au sol, un Creuset et la ligne de Cristal récoltés par des Collecteurs, une Orfèvrerie en cours d'assemblage sous sa gemme, un fantôme vert dans un champ et un rouge hors champ, un Collecteur sélectionné qui part sertir un Aiguillon au bout de 10 s puis repart récolter |
 | `OPENRTS_FOCUS=x,z` | La caméra vise ce point du sol au démarrage |
