@@ -25,7 +25,7 @@ use bevy::prelude::*;
 use bevy::render::render_resource::Face;
 
 use crate::collision::{Collider, CollisionLayer};
-use crate::graphics::animation::{AnimatedPart, PulsingPiece};
+use crate::graphics::animation::{AnimatedPart, BodyMotion, PulsingPiece};
 use crate::graphics::shapes::merge_parts;
 use crate::graphics::textures::detail_images;
 use crate::graphics::Hover;
@@ -459,6 +459,10 @@ pub(crate) struct TypeVisual {
     pub(crate) top: f32,
 }
 
+/// Hauteur minimale (mètres) du bas du modèle d'une unité volante : elle
+/// passe nettement au-dessus des unités au sol.
+pub const FLIGHT_FLOOR: f32 = 3.0;
+
 /// Nombre de variantes décalées dans le temps de chaque matériau qui pulse :
 /// chaque unité en prend une, pour que toute l'armée ne clignote pas en
 /// chœur, sans pour autant créer un matériau par unité.
@@ -495,6 +499,8 @@ pub struct UnitCatalog {
     /// Couleur d'équipe de chaque joueur (voir [`UnitCatalog::set_team_colors`]).
     team_colors: Vec<Color>,
     visuals: Vec<TypeVisual>,
+    /// Pour chaque type : de combien son modèle est surélevé (volants).
+    altitudes: Vec<f32>,
     /// Textures de détail déjà créées (partagées par les matériaux qui les utilisent).
     detail_textures: HashMap<SurfaceDetail, Option<(Handle<Image>, Handle<Image>)>>,
     ring_mesh: Handle<Mesh>,
@@ -527,6 +533,7 @@ impl UnitCatalog {
             factions: Vec::new(),
             team_colors: Vec::new(),
             visuals: Vec::new(),
+            altitudes: Vec::new(),
             detail_textures: HashMap::new(),
             // Anneau de rayon 1, mis à l'échelle de chaque unité. Assez épais
             // pour rester lisible en dézoom.
@@ -566,7 +573,14 @@ impl UnitCatalog {
             .map(|&slot| (slot, materials.add(slot_material(palette, slot, &mut self.detail_textures, images))))
             .collect();
         self.factions.push(FactionLook { palette: palette.clone(), team_materials: vec![ModelMaterials(materials_by_slot)] });
+        let start = self.visuals.len();
         self.visuals.extend(types.iter().map(|t| build_visual(&t.parts, palette, meshes)));
+        // Les volants passent au-dessus des unités au sol : le bas de leur
+        // modèle est au moins à `FLIGHT_FLOOR` du sol.
+        for (t, visual) in types.iter().zip(&self.visuals[start..]) {
+            let bottom = 2.0 * visual.center_height - visual.top;
+            self.altitudes.push(if t.hover.is_some() { (FLIGHT_FLOOR - bottom).max(0.0) } else { 0.0 });
+        }
         self.type_faction.extend(std::iter::repeat_n(faction, types.len()));
         self.types.extend(types);
         // Une faction ajoutée après coup reçoit, elle aussi, les couleurs d'équipe.
@@ -669,7 +683,12 @@ impl UnitCatalog {
 
     /// Hauteur du sommet du modèle d'un type d'unité (barres de vie).
     pub(crate) fn model_top(&self, type_index: usize) -> f32 {
-        self.visuals.get(type_index).map_or(1.5, |v| v.top)
+        self.visuals.get(type_index).map_or(1.5, |v| v.top) + self.altitude(type_index)
+    }
+
+    /// De combien le modèle d'un type volant est surélevé (0 au sol).
+    pub(crate) fn altitude(&self, type_index: usize) -> f32 {
+        self.altitudes.get(type_index).copied().unwrap_or(0.0)
     }
 
     /// Épave d'une unité détruite (affichage seulement) : son modèle, sans
@@ -702,6 +721,9 @@ impl UnitCatalog {
         let unit_type = &self.types[type_index];
         let visual = &self.visuals[type_index];
         let center = visual.center_height;
+        // Volant : toute l'unité est surélevée (clic, barre de vie suivent),
+        // sauf son anneau de sélection, qui reste au sol.
+        let altitude = self.altitude(type_index);
         let ring_radius = unit_type.footprint_radius() + 0.2;
         // Nombre « au hasard » mais fixe, tiré de la position (entre 0 et 1) :
         // décale animations et flottement d'une unité à l'autre.
@@ -714,7 +736,7 @@ impl UnitCatalog {
                 Owner(owner),
                 // L'origine de la racine est à mi-hauteur de l'unité : c'est là
                 // que la sélection teste les clics.
-                Transform::from_xyz(pos.x, center, pos.y).with_rotation(Quat::from_rotation_y(yaw)),
+                Transform::from_xyz(pos.x, center + altitude, pos.y).with_rotation(Quat::from_rotation_y(yaw)),
                 Visibility::default(),
                 SimPosition::new(pos),
                 MoveSpeed(unit_type.speed),
@@ -737,14 +759,19 @@ impl UnitCatalog {
                     MeshMaterial3d(self.ring_material.clone()),
                     // L'anneau est dessiné dans le plan XY : on le couche sur le sol,
                     // juste au-dessus pour éviter qu'il clignote avec le terrain.
-                    Transform::from_xyz(0.0, -center + 0.03, 0.0)
+                    Transform::from_xyz(0.0, -center - altitude + 0.03, 0.0)
                         .with_rotation(Quat::from_rotation_x(-std::f32::consts::FRAC_PI_2))
                         .with_scale(Vec3::splat(ring_radius)),
                     Visibility::Hidden,
                 ));
 
                 // Le corps : ramène l'origine des pièces au niveau du sol.
-                let mut body = parent.spawn((Name::new("Corps"), Transform::from_xyz(0.0, -center, 0.0), Visibility::default()));
+                let mut body = parent.spawn((
+                    Name::new("Corps"),
+                    Transform::from_xyz(0.0, -center, 0.0),
+                    Visibility::default(),
+                    BodyMotion::new(-center, unit_type.footprint_radius(), unit_type.mass, unit_type.hover.is_some(), jitter),
+                ));
                 if let Some(motion) = unit_type.hover {
                     body.insert(Hover {
                         amplitude: motion.amplitude,

@@ -183,8 +183,9 @@ fn move_units(
 
 /// Affichage : place chaque unité entre ses deux dernières positions simulées
 /// et l'oriente dans sa direction de marche.
-fn sync_transforms(
+pub(crate) fn sync_transforms(
     fixed: Res<Time<Fixed>>,
+    time: Res<Time>,
     // `Has<T>` : vrai si l'entité possède le composant, sans le lire.
     mut units: Query<(&SimPosition, &mut Transform, Has<MoveTarget>)>,
 ) {
@@ -197,8 +198,12 @@ fn sync_transforms(
         // Une unité immobile bousculée par une autre recule sans se retourner.
         let dir = pos.current - pos.previous;
         if is_moving && dir.length_squared() > 1e-6 {
-            // Le « devant » d'une entité Bevy est -Z.
-            transform.rotation = Quat::from_rotation_y(f32::atan2(-dir.x, -dir.y));
+            // Le « devant » d'une entité Bevy est -Z. L'unité pivote vers sa
+            // direction de marche en un dixième de seconde environ, au lieu
+            // de se retourner d'un coup (`slerp` : interpolation entre deux rotations).
+            let target = Quat::from_rotation_y(f32::atan2(-dir.x, -dir.y));
+            let blend = 1.0 - (-14.0 * time.delta_secs()).exp();
+            transform.rotation = transform.rotation.slerp(target, blend);
         }
     }
 }

@@ -225,6 +225,12 @@ impl Plugin for GraphicsPlugin {
                     particles::respawn_particles,
                     particles::animate_particles,
                 ),
+            )
+            // Le corps des unités suit le déplacement de leur racine, placée
+            // juste avant (voir `simulation::sync_transforms`).
+            .add_systems(
+                PostUpdate,
+                animation::animate_bodies.after(crate::simulation::sync_transforms).before(bevy::transform::TransformSystems::Propagate),
             );
     }
 }

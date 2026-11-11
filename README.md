@@ -185,6 +185,14 @@ sans base adverse (démonstrations) ne se termine jamais.
 
 ## Rendu et réglages graphiques
 
+Animations de mouvement (affichage seulement, pour toutes les unités, sans
+données en plus) : rebond à chaque foulée et buste penché pour les unités
+au sol, vibration et tangage pour les engins lourds, recul à chaque tir,
+virages en douceur. Les volants (jetpacks du Faucon, Samares, Essaims…)
+volent au moins à 3 m du sol, au-dessus des unités au sol ; ils prennent un
+peu d'altitude en vol, piquent du nez en avançant et s'inclinent dans les
+virages.
+
 Le moteur gère le rendu (module `graphics`) : HDR, tone mapping filmique (ACES),
 bloom sur les pièces lumineuses, ombres en cascade recadrées sur la zone visible,
 brouillard proportionnel au zoom, éclairage d'ambiance par image (IBL) calculé au

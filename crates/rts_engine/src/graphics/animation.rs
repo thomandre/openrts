@@ -177,3 +177,161 @@ pub(super) fn animate_pulses(
         }
     }
 }
+
+// ---------------------------------------------------------------------------
+// Corps qui réagit au mouvement (toutes les unités, sans données en plus).
+// ---------------------------------------------------------------------------
+
+/// Le corps d'une unité (l'entité « Corps », enfant de la racine) et son
+/// état d'animation : il rebondit à chaque pas, se penche quand l'unité
+/// accélère, s'incline dans les virages et recule quand elle tire. Tout est
+/// déduit du déplacement affiché de la racine : aucune donnée de faction
+/// n'est nécessaire, et la simulation n'en sait rien.
+#[derive(Component, Debug, Clone)]
+pub struct BodyMotion {
+    /// Hauteur de repos du corps (sous l'origine de la racine).
+    pub base_height: f32,
+    /// Longueur d'une foulée, en mètres (un rebond par foulée).
+    pub stride: f32,
+    /// Hauteur d'un rebond, en mètres.
+    pub bob: f32,
+    /// Engin lourd (char, géant) : vibration et tangage au lieu de rebonds.
+    pub heavy: bool,
+    /// Unité volante : inclinaison dans les virages, pas de pas (son flottement
+    /// est géré par `Hover`).
+    pub flying: bool,
+    /// Décalage du pas, entre 0 et 1 (deux unités ne marchent pas en chœur).
+    pub phase: f32,
+    // État, mis à jour à chaque image.
+    last_position: Option<Vec2>,
+    last_yaw: f32,
+    distance: f32,
+    speed: f32,
+    accel: f32,
+    turn: f32,
+    recoil: f32,
+    /// Altitude gagnée en vol (unités volantes légères), en mètres.
+    lift: f32,
+}
+
+impl BodyMotion {
+    pub fn new(base_height: f32, footprint_radius: f32, mass: f32, flying: bool, phase: f32) -> Self {
+        Self {
+            base_height,
+            // Une foulée d'environ deux fois la largeur : petits pas pour
+            // l'infanterie, grandes enjambées pour les géants.
+            stride: (footprint_radius * 2.4).clamp(0.7, 4.0),
+            bob: (footprint_radius * 0.09).clamp(0.03, 0.14),
+            heavy: mass >= 5.0,
+            flying,
+            phase,
+            last_position: None,
+            last_yaw: 0.0,
+            distance: 0.0,
+            speed: 0.0,
+            accel: 0.0,
+            turn: 0.0,
+            recoil: 0.0,
+            lift: 0.0,
+        }
+    }
+}
+
+/// Lissage exponentiel : rapproche `value` de `target` à la vitesse `rate`
+/// (par seconde), indépendamment du nombre d'images par seconde.
+fn smooth(value: f32, target: f32, rate: f32, dt: f32) -> f32 {
+    value + (target - value) * (1.0 - (-rate * dt).exp())
+}
+
+/// Anime le corps des unités d'après le déplacement affiché de leur racine.
+/// Tourne après le placement des racines (`sync_transforms`), avant la
+/// propagation des transformations.
+pub(crate) fn animate_bodies(
+    time: Res<Time>,
+    mut shots: MessageReader<crate::combat::CombatEvent>,
+    roots: Query<(&Transform, &Children), Without<BodyMotion>>,
+    mut bodies: Query<(&mut BodyMotion, &mut Transform, &ChildOf)>,
+) {
+    let dt = time.delta_secs();
+    if dt <= 0.0 {
+        return;
+    }
+    // Recul : l'unité qui tire (sa racine) secoue son corps.
+    for event in shots.read() {
+        let crate::combat::CombatEvent::Shot { attacker, .. } = *event else { continue };
+        let Ok((_, children)) = roots.get(attacker) else { continue };
+        for child in children.iter() {
+            if let Ok((mut motion, ..)) = bodies.get_mut(child) {
+                motion.recoil = 1.0;
+            }
+        }
+    }
+    let t = time.elapsed_secs();
+    for (mut motion, mut transform, child_of) in &mut bodies {
+        let Ok((root, _)) = roots.get(child_of.parent()) else { continue };
+        let position = root.translation.xz();
+        let yaw = root.rotation.to_euler(EulerRot::YXZ).0;
+        let Some(last) = motion.last_position else {
+            motion.last_position = Some(position);
+            motion.last_yaw = yaw;
+            continue;
+        };
+        let step = position.distance(last);
+        // Un saut (apparition, téléportation) n'est pas un pas.
+        let step = if step > 2.0 { 0.0 } else { step };
+        let speed = step / dt;
+        let previous_speed = motion.speed;
+        motion.speed = smooth(motion.speed, speed, 10.0, dt);
+        motion.accel = smooth(motion.accel, (motion.speed - previous_speed) / dt, 6.0, dt);
+        // Virage : vitesse de rotation, l'angle ramené entre −π et π.
+        let mut turned = yaw - motion.last_yaw;
+        turned = (turned + std::f32::consts::PI).rem_euclid(TAU) - std::f32::consts::PI;
+        motion.turn = smooth(motion.turn, turned / dt, 6.0, dt);
+        motion.distance += step;
+        motion.last_position = Some(position);
+        motion.last_yaw = yaw;
+        motion.recoil = (motion.recoil - dt * 6.0).max(0.0);
+
+        // 0 à l'arrêt, 1 en pleine marche.
+        let moving = (motion.speed / 1.5).min(1.0);
+        let cycle = (motion.distance / motion.stride + motion.phase) * TAU;
+        // `if` est une expression en Rust : chaque branche donne le triplet.
+        let (height, mut pitch, roll) = if motion.flying {
+            // En vol, il prend encore un peu d'altitude (les volants légers :
+            // jetpacks, graines, guêpes) et la reperd à l'arrêt ; il pique du nez en
+            // avançant et s'incline franchement dans les virages.
+            // (Au repos, il vole déjà à `units::FLIGHT_FLOOR` au moins.)
+            let ceiling = if motion.heavy { 0.2 } else { 0.5 };
+            motion.lift = smooth(motion.lift, ceiling * moving, 2.5, dt);
+            let roll = (-motion.turn * 0.22).clamp(-0.5, 0.5);
+            let pitch = -0.18 * moving - (motion.accel * 0.03).clamp(-0.15, 0.15);
+            (motion.lift, pitch, roll)
+        } else if motion.heavy {
+            // Engin lourd : vibration rapide et tangage à l'accélération.
+            let height = (t * 31.0 + motion.phase * TAU).sin() * 0.012 * moving;
+            (height, (motion.accel * 0.015).clamp(-0.05, 0.05), (-motion.turn * 0.03).clamp(-0.04, 0.04))
+        } else {
+            // Un rebond par foulée (|sin| : deux appuis par cycle), un
+            // balancement d'un pied sur l'autre, le buste penché en avant.
+            let height = cycle.sin().abs() * motion.bob * moving;
+            (height, -0.07 * moving - (motion.accel * 0.02).clamp(-0.08, 0.08), cycle.sin() * 0.05 * moving)
+        };
+        // Recul : le corps part en arrière (+z : le devant est −z) et se cabre.
+        let recoil = motion.recoil * motion.recoil;
+        pitch += recoil * 0.08;
+        let back = recoil * 0.07;
+
+        let mut wanted = *transform;
+        wanted.translation.y = if motion.flying {
+            // Le flottement (`Hover`) vient de replacer le corps : on ajoute l'altitude.
+            transform.translation.y + height
+        } else {
+            motion.base_height + height
+        };
+        wanted.translation.z = back;
+        wanted.rotation = Quat::from_euler(EulerRot::YXZ, 0.0, pitch, roll);
+        // N'écrire que si ça change : une unité immobile ne coûte rien à la
+        // propagation des transformations.
+        transform.set_if_neq(wanted);
+    }
+}
