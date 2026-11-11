@@ -10,7 +10,7 @@ Le design du jeu est décrit dans [GAME_DESIGN.md](GAME_DESIGN.md).
 | Dossier | Rôle |
 | --- | --- |
 | `crates/rts_engine` | Le moteur générique : entrées, caméra, sélection, joueurs (`players`), file des ordres (`orders`), simulation, collisions, navigation (grille, A\*), bâtiments (pose, chantiers), économie (`economy` : gisements, récolte, production, population, interface), rendu (`graphics`). Aucun contenu de jeu. |
-| `crates/rts_game` | Le jeu : unités, bâtiments, factions, cartes, gisements (`coalition.rs`, `sylves.rs`, `collectif.rs`, `map.rs`, `base.rs`, `gisements.rs`). Utilise `rts_engine`. |
+| `crates/rts_game` | Le jeu : unités, bâtiments, factions, cartes, gisements (`coalition.rs`, `sylves.rs`, `collectif.rs`, `map.rs`, `base.rs`, `base_sylves.rs`, `gisements.rs`). Utilise `rts_engine`. |
 
 ## Compiler et lancer
 
@@ -32,7 +32,7 @@ Sous Linux, il faut aussi les dépendances système de Bevy
 | Sélection en rectangle | Glisser au clic gauche |
 | Ajouter / retirer de la sélection | Maj + clic ou Maj + rectangle |
 | Déplacer la sélection | Clic droit sur le sol |
-| Récolter (Techniciens sélectionnés) | Clic droit sur un gisement de Cristal ou sur un Extracteur terminé |
+| Récolter (Techniciens ou Pousses sélectionnés) | Clic droit sur un gisement de Cristal, ou sur un Extracteur (Calice chez les Sylves) terminé |
 | Point de ralliement (bâtiment producteur sélectionné) | Clic droit sur le sol, ou sur un gisement (les Techniciens produits y récoltent directement) |
 | Produire (Quartier général ou Caserne sélectionné) | Touche de l'unité ou bouton du panneau en bas : T (Technicien, QG) ; S (Sentinelle), V, L, F (Caserne, grisés tant que leur bâtiment n'existe pas) |
 | Annuler une unité en file | Clic sur sa case dans la file (remboursée) |
@@ -40,7 +40,7 @@ Sous Linux, il faut aussi les dépendances système de Bevy
 | Faire défiler la caméra | Flèches ou souris au bord de l'écran |
 | Zoomer | Molette ou trackpad |
 | Test de charge (300 unités) | F3 |
-| Construire (un Technicien sélectionné) | B puis la touche du bâtiment, ou un bouton de la barre en bas de l'écran |
+| Construire (un Technicien ou une Pousse sélectionné) | B puis la touche du bâtiment, ou un bouton de la barre en bas de l'écran |
 | Poser le bâtiment | Clic gauche (Maj + clic : en poser un autre) |
 | Annuler la pose | Clic droit ou Échap |
 | Libérer la souris | Échap (un clic dans le jeu la reprend ; pendant une pose, le premier Échap annule la pose) |
@@ -75,6 +75,27 @@ message « Ressources insuffisantes » sinon) et remboursé si l'on annule le
 chantier. L'Extracteur s'aimante sur la source d'Éther la plus proche ;
 ailleurs, son fantôme est rouge (« Doit être posé sur une source »).
 
+### Bâtiments des Sylves (`OPENRTS_FACTION=sylves`)
+
+| Touche (après B) | Bâtiment | Empreinte | Prérequis | Rôle |
+| --- | --- | --- | --- | --- |
+| A | Arbre-mère | 7 × 7 m | — | Cœur de base, dépôt, produit les Pousses (P), 15 de population |
+| S | Souche nourricière | 3 × 3 m | — | 8 de population |
+| C | Calice | 4 × 4 m | — (pile sur une source d'Éther libre) | Récolte de l'Éther |
+| R | Ronceraie | 5 × 5 m | Arbre-mère | Produit les Ronciers (R) ; Sourcier (S) et Lanceur de spores (L) grisés |
+| E | Épineux | 2 × 2 m | Ronceraie | Défense fixe |
+
+Les Sylves construisent autrement : **la Pousse devient le bâtiment**. Avec
+des Pousses sélectionnées, B puis une lettre (ou la barre de boutons) ouvre
+la pose, comme pour la Coalition. Le coût est débité à la pose et
+l'emplacement est promis (cadre vert au sol) à la Pousse libre la plus
+proche ; elle s'y rend, s'enracine et disparaît (sa population est libérée).
+Le chantier pousse ensuite tout seul, sans échafaudage : le bâtiment grandit
+du sol. Chaque Pousse ne fait qu'un bâtiment (« Aucun ouvrier libre » sinon).
+Donner un autre ordre à la Pousse avant qu'elle arrive annule la promesse,
+remboursée en entier ; annuler un chantier qui pousse (X) rend 75 % du coût
+et la Pousse ressort de terre.
+
 ### Économie
 
 Deux ressources, aux noms **provisoires** : le **Cristal** (principale,
@@ -96,7 +117,9 @@ compteurs en haut à droite montrent les stocks et la population
   global (200, réglable avec `OPENRTS_POP_MAX`). Au-delà : « Population maximale ».
 
 La partie démarre avec 50 Cristal, un Quartier général, deux Modules
-d'habitat, les gisements et quatre Techniciens qui récoltent déjà.
+d'habitat, les gisements et quatre Techniciens qui récoltent déjà. En
+Sylves : un Arbre-mère, deux Souches nourricières et quatre Pousses (elles
+rapportent à l'Arbre-mère, et récoltent l'Éther au pied d'un Calice).
 
 Tous les ordres (déplacer, récolter, poser, produire, rallier, annuler)
 passent par une file appliquée au pas de simulation suivant : c'est la base
@@ -129,6 +152,7 @@ Deux niveaux de qualité (`GraphicsQuality`) :
 | `OPENRTS_STRESS=1` | Lance le test de charge (300 unités) au démarrage |
 | `OPENRTS_ZOOM=12` | Distance de départ de la caméra (10 à 70 m) |
 | `OPENRTS_DEMO=buildings` | Coalition : scène de démonstration des bâtiments (les cinq bâtiments, un chantier en cours, un fantôme vert et un rouge, un groupe qui contourne la Caserne au bout de 11 s) |
+| `OPENRTS_FACTION=sylves OPENRTS_DEMO=buildings` | Sylves : les cinq bâtiments, un Calice et la ligne de Cristal récoltés par des Pousses, une Ronceraie en pleine croissance, un fantôme vert et un rouge, une Pousse sélectionnée qui part s'enraciner au bout de 10,5 s (emplacement promis en vert) |
 | `OPENRTS_FOCUS=x,z` | La caméra vise ce point du sol au démarrage |
 | `OPENRTS_DEMO=economy` | Coalition : l'économie en marche (douze Techniciens sur la ligne de Cristal, trois à un Extracteur, Quartier général sélectionné avec trois Techniciens en file et son point de ralliement, compteurs) |
 | `OPENRTS_POP_MAX=100` | Plafond global de population (200 par défaut) |
@@ -136,6 +160,7 @@ Deux niveaux de qualité (`GraphicsQuality`) :
 
 Exemples : `OPENRTS_WINDOWED=1 OPENRTS_STRESS=1 OPENRTS_SCREENSHOT=/tmp/charge.png cargo run --release`,
 `OPENRTS_WINDOWED=1 OPENRTS_DEMO=buildings OPENRTS_ZOOM=36 OPENRTS_SCREENSHOT=/tmp/batiments.png cargo run --release`,
+`OPENRTS_FACTION=sylves OPENRTS_WINDOWED=1 OPENRTS_DEMO=buildings OPENRTS_ZOOM=40 OPENRTS_FOCUS=0,-5 OPENRTS_SCREENSHOT=/tmp/sylves.png cargo run --release`,
 `OPENRTS_WINDOWED=1 OPENRTS_DEMO=economy OPENRTS_ZOOM=34 OPENRTS_FOCUS=1,-11 OPENRTS_SCREENSHOT=/tmp/economie.png cargo run --release`.
 Pour mesurer les performances, compiler en `--release` : en mode debug, les
 vérifications internes de Bevy et de wgpu coûtent beaucoup d'images par seconde.
