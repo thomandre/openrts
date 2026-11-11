@@ -2,7 +2,7 @@
 //!
 //! Partie normale (`OPENRTS_FACTION=sylves`) : un Arbre-mère déjà poussé
 //! près du centre de la carte, deux Souches nourricières, les gisements (même
-//! disposition que pour la Coalition) et quatre Pousses qui récoltent, en
+//! disposition que pour la Garde) et quatre Pousses qui récoltent, en
 //! plus de l'armée de présentation.
 //!
 //! `OPENRTS_FACTION=sylves OPENRTS_DEMO=buildings` met en scène au démarrage,

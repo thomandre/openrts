@@ -12,7 +12,7 @@
 //!
 //! La construction suit un [`ConstructionStyle`], propre à chaque faction :
 //!
-//! - **l'ouvrier reste sur le chantier** (`WorkerStays`, la Coalition) : le
+//! - **l'ouvrier reste sur le chantier** (`WorkerStays`, la Garde) : le
 //!   chantier est posé tout de suite (obstacle, points de vie qui montent) et
 //!   n'avance que tant qu'un ouvrier le touche ;
 //! - **l'ouvrier devient le bâtiment** (`WorkerConsumed`, les Sylves) : à la

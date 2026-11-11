@@ -10,7 +10,7 @@ Le design du jeu est décrit dans [GAME_DESIGN.md](GAME_DESIGN.md).
 | Dossier | Rôle |
 | --- | --- |
 | `crates/rts_engine` | Le moteur générique : entrées, caméra, sélection, joueurs (`players`), file des ordres (`orders`), simulation, collisions, navigation (grille, A\*), bâtiments (pose, chantiers), économie (`economy` : gisements, récolte, production, population, interface), rendu (`graphics`). Aucun contenu de jeu. |
-| `crates/rts_game` | Le jeu : unités, bâtiments, factions, cartes, gisements (`coalition.rs`, `sylves.rs`, `collectif.rs`, `map.rs`, `base.rs`, `base_sylves.rs`, `gisements.rs`). Utilise `rts_engine`. |
+| `crates/rts_game` | Le jeu : unités, bâtiments, factions, cartes, gisements (`garde.rs`, `sylves.rs`, `collectif.rs`, `map.rs`, `base.rs`, `base_sylves.rs`, `gisements.rs`). Utilise `rts_engine`. |
 
 ## Compiler et lancer
 
@@ -56,7 +56,7 @@ contournent les bâtiments (grille de navigation de 1 m et A\*) ; les grosses
 unités évitent les passages trop étroits pour elles. Les unités volantes
 passent au-dessus de tout et ne gênent que les autres volantes.
 
-### Bâtiments de la Coalition
+### Bâtiments de la Garde
 
 | Touche (après B) | Bâtiment | Empreinte | Prérequis |
 | --- | --- | --- | --- |
@@ -87,7 +87,7 @@ ailleurs, son fantôme est rouge (« Doit être posé sur une source »).
 
 Les Sylves construisent autrement : **la Pousse devient le bâtiment**. Avec
 des Pousses sélectionnées, B puis une lettre (ou la barre de boutons) ouvre
-la pose, comme pour la Coalition. Le coût est débité à la pose et
+la pose, comme pour la Garde. Le coût est débité à la pose et
 l'emplacement est promis (cadre vert au sol) à la Pousse libre la plus
 proche ; elle s'y rend, s'enracine et disparaît (sa population est libérée).
 Le chantier pousse ensuite tout seul, sans échafaudage : le bâtiment grandit
@@ -147,14 +147,14 @@ Deux niveaux de qualité (`GraphicsQuality`) :
 | Variable | Effet |
 | --- | --- |
 | `OPENRTS_WINDOWED=1` | Fenêtre au lieu du plein écran, souris libre |
-| `OPENRTS_FACTION=sylves` | Faction affichée : `coalition` (défaut), `sylves` ou `collectif` (ambiance, sol, unités, test de charge) |
+| `OPENRTS_FACTION=sylves` | Faction affichée : `garde` (défaut ; `coalition` accepté), `sylves` ou `collectif` (ambiance, sol, unités, test de charge) |
 | `OPENRTS_QUALITY=bas` | Qualité graphique Basse (`haut` par défaut) |
 | `OPENRTS_STRESS=1` | Lance le test de charge (300 unités) au démarrage |
 | `OPENRTS_ZOOM=12` | Distance de départ de la caméra (10 à 70 m) |
-| `OPENRTS_DEMO=buildings` | Coalition : scène de démonstration des bâtiments (les cinq bâtiments, un chantier en cours, un fantôme vert et un rouge, un groupe qui contourne la Caserne au bout de 11 s) |
+| `OPENRTS_DEMO=buildings` | Garde : scène de démonstration des bâtiments (les cinq bâtiments, un chantier en cours, un fantôme vert et un rouge, un groupe qui contourne la Caserne au bout de 11 s) |
 | `OPENRTS_FACTION=sylves OPENRTS_DEMO=buildings` | Sylves : les cinq bâtiments, un Calice et la ligne de Cristal récoltés par des Pousses, une Ronceraie en pleine croissance, un fantôme vert et un rouge, une Pousse sélectionnée qui part s'enraciner au bout de 10,5 s (emplacement promis en vert) |
 | `OPENRTS_FOCUS=x,z` | La caméra vise ce point du sol au démarrage |
-| `OPENRTS_DEMO=economy` | Coalition : l'économie en marche (douze Techniciens sur la ligne de Cristal, trois à un Extracteur, Quartier général sélectionné avec trois Techniciens en file et son point de ralliement, compteurs) |
+| `OPENRTS_DEMO=economy` | Garde : l'économie en marche (douze Techniciens sur la ligne de Cristal, trois à un Extracteur, Quartier général sélectionné avec trois Techniciens en file et son point de ralliement, compteurs) |
 | `OPENRTS_POP_MAX=100` | Plafond global de population (200 par défaut) |
 | `OPENRTS_SCREENSHOT=capture.png` | Après 14 s : affiche les FPS moyens des 6 dernières secondes, enregistre une capture du rendu et quitte (synchronisation verticale coupée pour mesurer) |
 

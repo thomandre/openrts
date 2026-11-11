@@ -1,4 +1,4 @@
-//! Base de départ de la Coalition, et scènes de démonstration.
+//! Base de départ de la Garde, et scènes de démonstration.
 //!
 //! Partie normale : un Quartier général déjà construit près du centre de la
 //! carte, ses gisements et quatre Techniciens qui récoltent, en plus de l'armée.
@@ -25,10 +25,10 @@ use rts_engine::players::PlayerId;
 use rts_engine::selection::Selected;
 use rts_engine::units::UnitCatalog;
 
-use crate::coalition::{self, building::*, kind::*};
+use crate::garde::{self, building::*, kind::*};
 use crate::gisements::{self, DepositVisuals};
 
-/// Le catalogue des bâtiments de la Coalition. Ils partagent les matériaux
+/// Le catalogue des bâtiments de la Garde. Ils partagent les matériaux
 /// (et donc la couleur d'équipe) du catalogue d'unités `units`.
 pub fn building_catalog(
     units: &UnitCatalog,
@@ -37,7 +37,7 @@ pub fn building_catalog(
 ) -> BuildingCatalog {
     // Les Techniciens construisent, et restent sur le chantier jusqu'au bout.
     BuildingCatalog::new(
-        coalition::building_types(),
+        garde::building_types(),
         vec![TECHNICIEN],
         ConstructionStyle::WorkerStays,
         units,

@@ -2,7 +2,7 @@
 //! lumineux qui marque les limites de la zone de jeu.
 //!
 //! L'aspect du sol dépend de la faction affichée ([`GroundStyle`] et
-//! [`GroundPattern`]) : roche sombre pour la Coalition, terre forestière pour
+//! [`GroundPattern`]) : roche sombre pour la Garde, terre forestière pour
 //! les Sylves, dalles hexagonales sombres pour le Collectif.
 
 use bevy::light::NotShadowCaster;
@@ -31,7 +31,7 @@ pub struct GroundStyle {
 }
 
 impl GroundStyle {
-    /// Roche sombre et grille, liseré cyan (Coalition).
+    /// Roche sombre et grille, liseré cyan (Garde).
     pub fn rock() -> Self {
         Self {
             base: Color::srgb(0.085, 0.1, 0.12),

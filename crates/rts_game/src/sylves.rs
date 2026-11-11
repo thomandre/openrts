@@ -5,7 +5,7 @@
 //! lumineuse ; une forêt consciente qui avance racine après racine ».
 //! Palette : écorce sombre, écorce, feuillage, sève ambrée, spores turquoise.
 //!
-//! Là où la Coalition tient le terrain avec des fantassins tireurs et des
+//! Là où la Garde tient le terrain avec des fantassins tireurs et des
 //! blindés, les Sylves sont lentes et organiques : mêlée en nombre (Ronciers),
 //! artillerie de zone enracinée (Lanceur de spores), soutien qui soigne
 //! (Sourcier), géant qui encaisse (Gardien), graines volantes d'éclaireurs
@@ -497,7 +497,7 @@ pub mod building {
     pub const EPINEUX: usize = 4;
 }
 
-/// Les bâtiments du palier 1, mêmes rôles que ceux de la Coalition :
+/// Les bâtiments du palier 1, mêmes rôles que ceux de la Garde :
 ///
 /// - **Arbre-mère** (7 × 7 m) : le cœur de la base, dépôt des récoltes,
 ///   produit les Pousses, 15 de population ;
@@ -509,7 +509,7 @@ pub mod building {
 ///
 /// Chiffres proposés, à ajuster en test. Chaque bâtiment coûte aussi une
 /// Pousse (50 de Cristal et 12 s de production) : ses prix en Cristal sont
-/// donc un peu plus bas que ceux de la Coalition, dont l'ouvrier survit.
+/// donc un peu plus bas que ceux de la Garde, dont l'ouvrier survit.
 pub fn building_types() -> Vec<BuildingType> {
     use building::*;
     vec![
@@ -821,7 +821,7 @@ mod tests {
         }
     }
 
-    /// Le palier 1 a les mêmes rôles que celui de la Coalition.
+    /// Le palier 1 a les mêmes rôles que celui de la Garde.
     #[test]
     fn tier_one_roles() {
         use building::*;

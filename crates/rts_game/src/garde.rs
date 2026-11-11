@@ -1,4 +1,4 @@
-//! La Coalition (nom provisoire) : palette, ambiance, unités et bâtiments.
+//! La Garde : palette, ambiance, unités et bâtiments.
 //!
 //! Direction artistique : « blindage en couches, peinture écaillée, moteurs
 //! brûlants ; une armée industrielle qui tient le terrain ». Palette :
@@ -39,7 +39,7 @@ pub const SIGNAL_ORANGE: Color = Color::srgb(0xE8 as f32 / 255.0, 0x73 as f32 / 
 pub const VISOR: Color = Color::srgb(0x4F as f32 / 255.0, 0xD1 as f32 / 255.0, 0xE0 as f32 / 255.0);
 const ENGINE_GLOW: Color = Color::srgb(1.0, 0x8A as f32 / 255.0, 0x2A as f32 / 255.0);
 
-/// Matériaux de la Coalition. `team_color` est la couleur du joueur (elle
+/// Matériaux de la Garde. `team_color` est la couleur du joueur (elle
 /// colore aussi les bandes de danger, rayées de noir).
 pub fn palette(team_color: Color) -> Palette {
     Palette {
@@ -55,7 +55,7 @@ pub fn palette(team_color: Color) -> Palette {
     }
 }
 
-/// Ambiance des cartes de la Coalition : nuit bleutée, lumière principale
+/// Ambiance des cartes de la Garde : nuit bleutée, lumière principale
 /// chaude, contre-jours orange et cyan, braises qui flottent.
 pub fn ambiance() -> Ambiance {
     let background = Color::srgb(0.039, 0.063, 0.094); // #0A1018
@@ -93,7 +93,7 @@ pub mod kind {
     pub const FAUCON: usize = 5;
 }
 
-/// Les six unités de la Coalition (voir le tableau de GAME_DESIGN.md).
+/// Les six unités de la Garde (voir le tableau de GAME_DESIGN.md).
 pub fn unit_types() -> Vec<UnitType> {
     vec![
         unit("Technicien", technicien(), 0.6, 1.0, 3.5),
@@ -431,7 +431,7 @@ fn bastion() -> ModelBuilder {
 }
 
 // ---------------------------------------------------------------------------
-// Les bâtiments (palier 1 de l'arbre de la Coalition, voir GAME_DESIGN.md).
+// Les bâtiments (palier 1 de l'arbre de la Garde, voir GAME_DESIGN.md).
 // ---------------------------------------------------------------------------
 
 /// Indices des bâtiments dans [`building_types`].
@@ -482,7 +482,7 @@ pub fn building_types() -> Vec<BuildingType> {
 }
 
 // ---------------------------------------------------------------------------
-// Économie de la Coalition (valeurs proposées, à ajuster en test).
+// Économie de la Garde (valeurs proposées, à ajuster en test).
 // ---------------------------------------------------------------------------
 
 /// Règles économiques : les Techniciens récoltent ; 5 de ressource

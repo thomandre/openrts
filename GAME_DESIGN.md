@@ -42,13 +42,13 @@ Asymétrique signifie des façons de jouer différentes, pas seulement des unit�
 
 Décisions et questions ouvertes :
 
-Première faction : **la Coalition** (nom provisoire), des humains militaires futuristes. La seconde faction reste à définir ; elle accueillera un grand vaisseau porte-drones qui lance une nuée de petits chasseurs, idée réservée à une race non humaine.
+Première faction : **la Garde** (nom décidé ; anciennement « Coalition »), des humains militaires futuristes. La seconde faction reste à définir ; elle accueillera un grand vaisseau porte-drones qui lance une nuée de petits chasseurs, idée réservée à une race non humaine.
 
-- [ ] Nom définitif de la Coalition
+- [x] Nom définitif de la première faction : la Garde
 - [ ] Thème et style de jeu de la seconde faction
 - [ ] Troisième faction, plus tard
 
-En cours d'exploration visuelle : **les Sylves**, une forêt consciente qui avance racine après racine (`OPENRTS_FACTION=sylves`). Ce n'est pas encore une décision de design : rien ne dit qu'elles seront la seconde faction, et elles n'accueillent pas le vaisseau porte-drones prévu pour celle-ci. Rôles provisoires, pensés en contraste avec la Coalition (lentes, organiques, fortes au contact, aucune infanterie rapide à distance) :
+En cours d'exploration visuelle : **les Sylves**, une forêt consciente qui avance racine après racine (`OPENRTS_FACTION=sylves`). Ce n'est pas encore une décision de design : rien ne dit qu'elles seront la seconde faction, et elles n'accueillent pas le vaisseau porte-drones prévu pour celle-ci. Rôles provisoires, pensés en contraste avec la Garde (lentes, organiques, fortes au contact, aucune infanterie rapide à distance) :
 
 | Unité | Rôle provisoire | Silhouette |
 | --- | --- | --- |
@@ -59,7 +59,7 @@ En cours d'exploration visuelle : **les Sylves**, une forêt consciente qui avan
 | Gardien | Géant qui encaisse | Arbre qui marche, grande couronne de feuillage |
 | Samare | Éclaireur volant, harcèlement | Graine à deux ailes qui plane |
 
-Bâtiments et économie des Sylves (**propositions**, étape 4, à valider et ajuster en test). Palier 1 aux mêmes rôles que celui de la Coalition, formes tirées de la forêt consciente (racines, souches, champignons, poches de sève) :
+Bâtiments et économie des Sylves (**propositions**, étape 4, à valider et ajuster en test). Palier 1 aux mêmes rôles que celui de la Garde, formes tirées de la forêt consciente (racines, souches, champignons, poches de sève) :
 
 | Bâtiment | Rôle | Empreinte | PV | Temps | Coût | Prérequis | Touche (après B) | Silhouette |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -69,14 +69,14 @@ Bâtiments et économie des Sylves (**propositions**, étape 4, à valider et aj
 | Ronceraie | Infanterie : Ronciers (Sourcier, Lanceur de spores grisés) | 5 × 5 m | 1 000 | 45 s | 125 P | Arbre-mère | R | Trois arches de ronces épineuses en voûte, trois cocons d'équipe dessous |
 | Épineux | Défense fixe | 2 × 2 m | 300 | 22 s | 100 P | Ronceraie | E | Bulbe d'écorce, tête qui balaie : couronne d'épines, collerette d'équipe, dard |
 
-Construction des Sylves : **la Pousse devient le bâtiment** (`ConstructionStyle::WorkerConsumed` dans le moteur). À la pose, le coût est payé et l'emplacement promis à la Pousse libre la plus proche ; elle s'y rend, s'enracine et disparaît (sa population est libérée) ; le chantier pousse ensuite seul pendant le temps de construction, sans ouvrier. C'est l'asymétrie voulue face à la Coalition, dont le Technicien reste sur le chantier : les Sylves ne perdent pas de temps d'ouvrier mais perdent l'ouvrier, d'où des prix en Cristal un peu plus bas. Règles proposées :
+Construction des Sylves : **la Pousse devient le bâtiment** (`ConstructionStyle::WorkerConsumed` dans le moteur). À la pose, le coût est payé et l'emplacement promis à la Pousse libre la plus proche ; elle s'y rend, s'enracine et disparaît (sa population est libérée) ; le chantier pousse ensuite seul pendant le temps de construction, sans ouvrier. C'est l'asymétrie voulue face à la Garde, dont le Technicien reste sur le chantier : les Sylves ne perdent pas de temps d'ouvrier mais perdent l'ouvrier, d'où des prix en Cristal un peu plus bas. Règles proposées :
 
 - Une Pousse ne fait qu'un bâtiment : sans Pousse libre dans la sélection, la pose est refusée (« Aucun ouvrier libre »).
 - Un autre ordre donné à la Pousse avant qu'elle arrive annule la promesse, remboursée en entier. Si l'emplacement est pris entre-temps, la promesse est remboursée et la Pousse s'arrête.
 - Annuler un chantier qui pousse rend **75 %** de son coût et **la Pousse**, qui ressort de terre (même au-delà de la limite de population : la production attend alors qu'il y ait de la place).
 - Économie : les Pousses récoltent le Cristal et l'Éther (au pied d'un Calice terminé) avec les mêmes cadences que les Techniciens (5 Cristal en 2,8 s, 4 Éther en 2 s) et rapportent à l'Arbre-mère. Coûts (P = Cristal, R = Éther), temps et population : Pousse 50 P, 12 s, 1 ; Roncier 50 P, 16 s, 1 ; Sourcier 75 P + 25 R, 22 s, 2 ; Lanceur de spores 125 P + 50 R, 30 s, 3 ; Gardien 250 P + 150 R, 55 s, 6 ; Samare 75 P + 25 R, 20 s, 2. Le Sourcier attend la « Fontaine de sève », le Lanceur la « Champignonnière » (palier 2, à concevoir) ; Gardien et Samare n'ont pas encore de bâtiment.
 
-- [ ] Asymétrie de récolte des Sylves (pour l'instant identique à la Coalition)
+- [ ] Asymétrie de récolte des Sylves (pour l'instant identique à la Garde)
 - [ ] Palier 2 des Sylves (Fontaine de sève, Champignonnière…)
 
 Également en exploration visuelle : **le Collectif**, une joaillerie mécanique à silhouette vivante (`OPENRTS_FACTION=collectif`). Il porte l'idée du grand vaisseau porte-drones (l'Essaimeur). Ce n'est pas non plus une décision : le choix de la seconde faction, entre le Collectif, les Sylves ou une autre, reste ouvert. Rôles provisoires, pensés en contraste avec les deux autres (beaucoup d'unités volantes, nuées de petites machines, peu d'unités au sol mais chères et solides) :
@@ -144,7 +144,7 @@ Combat :
 
 Visuels : modèles procéduraux assemblés de pièces simples, décrits en données (voir « Direction artistique »), puis éventuellement modèles 3D originaux (Blender, packs libres).
 
-### Unités de la Coalition
+### Unités de la Garde
 
 Six unités pour la première version. Chiffres de départ inspirés des ratios de SC2, à ajuster en test (P = ressource principale, R = ressource rare).
 
@@ -166,11 +166,11 @@ Capacités du Faucon :
 
 ### Direction artistique
 
-Référence : la page de direction artistique 3D des races (Coalition, Collectif, Sylves).
+Référence : la page de direction artistique 3D des races (Garde, Collectif, Sylves).
 
 - Rendu : HDR et tone mapping filmique, bloom réservé aux pièces émissives (visières, réacteurs), ombres douces, éclairage d'ambiance par image teinté aux couleurs de la faction, une lumière principale et deux contre-jours colorés, brouillard de distance.
 - Unités : assemblages de 20 à 30 pièces simples (plaques biseautées, cylindres, prismes) décrites en données, matériaux PBR métal/rugosité avec normal maps procédurales (panneaux, rivets, hexagones).
-- Chaque faction fournit sa palette et son ambiance. Coalition : métal sombre #171C24, acier #56667A, sable #CDBB90, visières #4FD1E0 ; ambiance nocturne bleutée, contre-jours orange et cyan, braises. Bandes de danger à chevrons (couleur d'équipe et noir) sur les jupes et le glacis du Bastion et sur le Technicien ; caisses et tourelles en prismes biseautés, réacteurs en formes de révolution. Animations purement visuelles : la tourelle du Bastion balaie, les flammes additives du Faucon scintillent, le radar du Longue-Vue tourne, réacteurs et gyrophares pulsent (les visières restent fixes, pour les performances).
+- Chaque faction fournit sa palette et son ambiance. Garde : métal sombre #171C24, acier #56667A, sable #CDBB90, visières #4FD1E0 ; ambiance nocturne bleutée, contre-jours orange et cyan, braises. Bandes de danger à chevrons (couleur d'équipe et noir) sur les jupes et le glacis du Bastion et sur le Technicien ; caisses et tourelles en prismes biseautés, réacteurs en formes de révolution. Animations purement visuelles : la tourelle du Bastion balaie, les flammes additives du Faucon scintillent, le radar du Longue-Vue tourne, réacteurs et gyrophares pulsent (les visières restent fixes, pour les performances).
 - Sylves (exploration) : écorce striée, feuillage sombre, poches de sève lumineuse. Écorce sombre #2A1E15, écorce #5A4030, feuillage #1B4221, sève #E0A33A, spores #2FE0C4 ; sous-bois nocturne vert, contre-jours turquoise et ambré, spores qui montent du sol, sol d'humus. Formes organiques (boules bosselées, branches courbes, formes de révolution, touffes de feuilles) et normal map d'écorce ; la couleur d'équipe passe sur les feuilles, bourgeons, carapaces, pétales et ailes, visibles de dessus.
 - Collectif (exploration) : des machines-bijoux, « or jaune, émail vert et émeraudes » — des machines et créatures dont les lignes et les ornements évoquent la joaillerie, pas des bijoux littéraux. Or #E2B552, or vieilli #B98A2F, émail vert #0F3D2E, émeraude #10B981, halo #6EE7B7. Surfaces lisses sans texture de panneaux ; plaques d'or et d'émail, prismes hexagonaux, sertis et cabochons, rangs de perles, couronnes de lames, émeraudes taillées (brillant), anneaux ouverts (tore partiel du moteur). La couleur d'équipe est un émail laqué sur les pièces vues de dessus (joug et crête du Titan, plastron des Automates, cabochon et perles serties du Perceur, élytres, abdomens des guêpes, cabochons de l'Essaimeur). Ambiance de vitrine de nuit : contre-jours émeraude et or chaud, panneaux de reflet nets dans l'éclairage d'ambiance, sol sombre en dalles hexagonales. Seules les trois grosses pierres pulsent (cœur du Titan, dard du Perceur, orbe de l'Essaimeur) ; ailes des guêpes réduites pour qu'une masse d'Essaims reste lisible en dézoom. L'essai « tout or rose » reste disponible (`OPENRTS_FACTION=collectif-or-rose`).
 - Couleur d'équipe : portée par les épaulières, genouillères, crêtes, bandes de toit, surfaces vues de dessus pour rester lisibles en dézoom. L'orange signal #E8732C est la couleur d'équipe du premier joueur.
@@ -187,17 +187,17 @@ Un arbre à vrais embranchements : se spécialiser dans une voie retarde les aut
 
 Décision : pas de système de doctrine. Toutes les unités et améliorations sont accessibles, comme dans SC2 ; la stratégie vient de l’ordre des investissements.
 
-### Arbre de la Coalition
+### Arbre de la Garde
 
 1. **Palier 1, les fondations** : Quartier général (Techniciens, dépôt des ressources), Module d’habitat (population), Extracteur (ressource rare), Caserne (Sentinelles), Tourelle (défense fixe, débloquée par la Caserne).
 2. **Palier 2, la spécialisation** (demande une Caserne) : Armurerie (Longue-Vue et Lanciers à la Caserne, améliorations infanterie), Centre de propulsion (Faucons à la Caserne, amélioration de leur capacité), Usine (Bastions, demande l’Armurerie ; améliorations véhicules).
 3. **Palier 3, la puissance** : amélioration du Quartier général (débloque les améliorations de niveau 2 et 3, plus de PV, détection), puis un bâtiment dédié aux unités aériennes, plus tard.
 
-Construction de la Coalition : **l'ouvrier reste sur le chantier**. Le Technicien le plus proche (parmi la sélection) s'y rend ; le chantier est posé tout de suite (c'est déjà un obstacle, ses PV montent de 10 % à 100 %) et n'avance que tant qu'un Technicien le touche. Les autres factions construisent autrement (les Sylves : l'ouvrier devient le bâtiment, qui pousse seul) : c'est l'asymétrie voulue, prévue dans le moteur (`ConstructionStyle`). Tailles retenues : Quartier général 7 × 7 m, Caserne 5 × 6, Extracteur 4 × 4, Module d'habitat 3 × 3, Tourelle 2 × 2 ; la Caserne demande le Quartier général, la Tourelle la Caserne. L'Extracteur se pose exactement sur une source de ressource rare libre. Production : le Quartier général forme les Techniciens, la Caserne les Sentinelles (Longue-Vue et Lancier attendent l'Armurerie, le Faucon le Centre de propulsion : grisés en attendant).
+Construction de la Garde : **l'ouvrier reste sur le chantier**. Le Technicien le plus proche (parmi la sélection) s'y rend ; le chantier est posé tout de suite (c'est déjà un obstacle, ses PV montent de 10 % à 100 %) et n'avance que tant qu'un Technicien le touche. Les autres factions construisent autrement (les Sylves : l'ouvrier devient le bâtiment, qui pousse seul) : c'est l'asymétrie voulue, prévue dans le moteur (`ConstructionStyle`). Tailles retenues : Quartier général 7 × 7 m, Caserne 5 × 6, Extracteur 4 × 4, Module d'habitat 3 × 3, Tourelle 2 × 2 ; la Caserne demande le Quartier général, la Tourelle la Caserne. L'Extracteur se pose exactement sur une source de ressource rare libre. Production : le Quartier général forme les Techniciens, la Caserne les Sentinelles (Longue-Vue et Lancier attendent l'Armurerie, le Faucon le Centre de propulsion : grisés en attendant).
 
 Améliorations par niveaux (armes 1 à 3, armure 1 à 3, séparées pour l’infanterie et les véhicules) : longues à rechercher et payées en ressource rare, impossibles à mener toutes en parallèle.
 
-- [ ] Unités aériennes de la Coalition
+- [ ] Unités aériennes de la Garde
 
 ## Contrôles
 
@@ -243,7 +243,7 @@ On avance par étapes courtes, chacune jouable et testée avant de passer à la 
    - les unités d'un même ordre et de même rayon partagent une seule recherche (un couloir commun qu'elles rejoignent et quittent en ligne droite), et un budget de cases explorées par pas étale le reste : 300 unités peuvent recevoir un ordre en même temps. Quand les groupes grossiront, des **flow fields** (un champ de directions par destination) remplaceront ce partage ;
    - les obstacles fixes repoussent les unités au sol (cercle contre rectangle), y compris celles sur lesquelles on pose un bâtiment.
 3. **Prototype iPad** : compilation iOS, gestes tactiles de base, test des 300 unités sur iPad.
-4. **Économie** : ouvriers, deux ressources, bâtiment principal, file de production, limite de population. *Fait pour la Coalition :*
+4. **Économie** : ouvriers, deux ressources, bâtiment principal, file de production, limite de population. *Fait pour la Garde :*
    - bâtiments décrits en données (empreinte, PV, temps, coût, prérequis, modèle, dépôt, population fournie, production), pose par la couche d'entrées (B puis une lettre, ou barre de boutons ; fantôme vert ou rouge aligné sur la grille), chantiers et construction ;
    - joueurs propriétaires (`Owner`) et file unique des ordres appliquée au pas suivant (prête pour le lockstep) ;
    - gisements de Cristal et sources d'Éther décrits en données de carte, Extracteur posé obligatoirement sur une source ;

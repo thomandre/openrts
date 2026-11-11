@@ -1,11 +1,11 @@
 //! Le jeu : contenu au-dessus du moteur `rts_engine`.
 //!
 //! Pour l'instant : une carte plate, et une faction affichée à la fois — la
-//! Coalition (nom provisoire, par défaut), les Sylves ou le Collectif — avec
+//! Garde (par défaut), les Sylves ou le Collectif — avec
 //! son ambiance, son sol et une dizaine de ses unités sur le terrain.
 //!
 //! Variables d'environnement utiles en développement :
-//! - `OPENRTS_FACTION=sylves` (ou `collectif`, `coalition`) : faction affichée ;
+//! - `OPENRTS_FACTION=sylves` (ou `collectif`, `garde` ; l'ancien nom `coalition` reste accepté) : faction affichée ;
 //! - `OPENRTS_WINDOWED=1` : fenêtre au lieu du plein écran, souris libre ;
 //! - `OPENRTS_QUALITY=bas` (ou `haut`) : qualité graphique ;
 //! - `OPENRTS_STRESS=1` : lance le test de charge (300 unités) au démarrage ;
@@ -13,13 +13,13 @@
 //!   quelques secondes, affiche les FPS moyens, puis quitte ;
 //! - `OPENRTS_ZOOM=12` : distance de départ de la caméra, de 10 à 70 m ;
 //! - `OPENRTS_DEMO=buildings` : scène de démonstration des bâtiments
-//!   (Coalition, ou Sylves avec `OPENRTS_FACTION=sylves`) ;
+//!   (Garde, ou Sylves avec `OPENRTS_FACTION=sylves`) ;
 //! - `OPENRTS_DEMO=economy` : l'économie en marche (récolte, production) ;
 //! - `OPENRTS_POP_MAX=100` : plafond global de population.
 
 mod base;
 mod base_sylves;
-mod coalition;
+mod garde;
 mod collectif;
 mod collectif_or_rose;
 mod gisements;
@@ -56,7 +56,7 @@ const MAP_SIZE: f32 = 100.0;
 /// une ressource, que les systèmes de démarrage lisent avec `Res<Faction>`.
 #[derive(Resource, Debug, Clone, Copy, PartialEq, Eq)]
 enum Faction {
-    Coalition,
+    Garde,
     Sylves,
     Collectif,
     /// Essai de direction artistique « tout or rose » du Collectif.
@@ -65,19 +65,19 @@ enum Faction {
 
 impl Faction {
     /// `OPENRTS_FACTION=sylves` choisit les Sylves, `collectif` le Collectif ;
-    /// tout le reste, la Coalition.
+    /// tout le reste, la Garde (y compris l'ancien nom `coalition`).
     fn from_env() -> Self {
         match std::env::var("OPENRTS_FACTION").map(|f| f.to_lowercase()).as_deref() {
             Ok("sylves") => Faction::Sylves,
             Ok("collectif") => Faction::Collectif,
             Ok("collectif-or-rose") => Faction::CollectifOrRose,
-            _ => Faction::Coalition,
+            _ => Faction::Garde,
         }
     }
 
     fn ambiance(self) -> Ambiance {
         match self {
-            Faction::Coalition => coalition::ambiance(),
+            Faction::Garde => garde::ambiance(),
             Faction::Sylves => sylves::ambiance(),
             Faction::Collectif => collectif::ambiance(),
             Faction::CollectifOrRose => collectif_or_rose::ambiance(),
@@ -87,7 +87,7 @@ impl Faction {
     /// Panneaux de reflet en plus de l'ambiance (vitrine de bijoutier du Collectif).
     fn reflection_panels(self) -> Option<ReflectionPanels> {
         match self {
-            Faction::Coalition | Faction::Sylves => None,
+            Faction::Garde | Faction::Sylves => None,
             Faction::Collectif => Some(collectif::reflection_panels()),
             Faction::CollectifOrRose => Some(collectif_or_rose::reflection_panels()),
         }
@@ -95,7 +95,7 @@ impl Faction {
 
     fn ground(self) -> GroundStyle {
         match self {
-            Faction::Coalition => GroundStyle::rock(),
+            Faction::Garde => GroundStyle::rock(),
             Faction::Sylves => sylves::ground(),
             Faction::Collectif => collectif::ground(),
             Faction::CollectifOrRose => collectif_or_rose::ground(),
@@ -104,7 +104,7 @@ impl Faction {
 
     fn ground_pattern(self) -> GroundPattern {
         match self {
-            Faction::Coalition | Faction::Sylves => GroundPattern::Natural,
+            Faction::Garde | Faction::Sylves => GroundPattern::Natural,
             Faction::Collectif => collectif::ground_pattern(),
             Faction::CollectifOrRose => collectif_or_rose::ground_pattern(),
         }
@@ -112,7 +112,7 @@ impl Faction {
 
     fn palette(self, team_color: Color) -> Palette {
         match self {
-            Faction::Coalition => coalition::palette(team_color),
+            Faction::Garde => garde::palette(team_color),
             Faction::Sylves => sylves::palette(team_color),
             Faction::Collectif => collectif::palette(team_color),
             Faction::CollectifOrRose => collectif_or_rose::palette(team_color),
@@ -121,7 +121,7 @@ impl Faction {
 
     fn unit_types(self) -> Vec<UnitType> {
         match self {
-            Faction::Coalition => coalition::unit_types(),
+            Faction::Garde => garde::unit_types(),
             Faction::Sylves => sylves::unit_types(),
             Faction::Collectif => collectif::unit_types(),
             Faction::CollectifOrRose => collectif_or_rose::unit_types(),
@@ -131,8 +131,8 @@ impl Faction {
     /// L'armée de démonstration : (type d'unité, position au sol).
     fn army(self) -> Vec<(usize, Vec2)> {
         match self {
-            Faction::Coalition => {
-                use coalition::kind::*;
+            Faction::Garde => {
+                use garde::kind::*;
                 vec![
                     (BASTION, Vec2::new(2.5, -3.5)),
                     (LANCIER, Vec2::new(-2.5, -2.5)),
@@ -256,7 +256,7 @@ fn main() {
         });
     }
     match (faction, base::demo_requested()) {
-        (Faction::Coalition, Some(base::Demo::Buildings)) => {
+        (Faction::Garde, Some(base::Demo::Buildings)) => {
             app.add_plugins(base::DemoPlugin);
         }
         (Faction::Sylves, Some(base::Demo::Buildings)) => {
@@ -301,17 +301,17 @@ fn spawn_units(
     mut images: ResMut<Assets<Image>>,
 ) {
     // Le premier joueur a l'orange signal comme couleur d'équipe, quelle que soit sa faction.
-    let palette = faction.palette(coalition::SIGNAL_ORANGE);
+    let palette = faction.palette(garde::SIGNAL_ORANGE);
     let catalog = UnitCatalog::new(faction.unit_types(), &palette, &mut meshes, &mut materials, &mut images);
 
-    // Bâtiments et économie : la Coalition et les Sylves pour l'instant (base
+    // Bâtiments et économie : la Garde et les Sylves pour l'instant (base
     // de départ, ou scènes de démonstration avec `OPENRTS_DEMO`).
     if *faction == Faction::Sylves {
         let buildings = base_sylves::building_catalog(&catalog, &mut meshes, &mut materials);
         let frame = GridFrame::new(bounds.0, &nav);
         let demo = base::demo_requested() == Some(base::Demo::Buildings);
         let deposits = gisements::DepositVisuals::new(&mut meshes, &mut materials);
-        // 50 de Cristal au départ, comme la Coalition ; la démonstration a de
+        // 50 de Cristal au départ, comme la Garde ; la démonstration a de
         // quoi payer la Souche que sa Pousse part faire pousser.
         let mut players = Players::default();
         players.get_mut(PlayerId(0)).stock = Cost::new(if demo { 300 } else { 50 }, 0);
@@ -328,7 +328,7 @@ fn spawn_units(
             return;
         }
     }
-    if *faction == Faction::Coalition {
+    if *faction == Faction::Garde {
         let buildings = base::building_catalog(&catalog, &mut meshes, &mut materials);
         let frame = GridFrame::new(bounds.0, &nav);
         let demo = base::demo_requested();
@@ -345,7 +345,7 @@ fn spawn_units(
             None => base::spawn_start(&mut commands, &buildings, &catalog, &deposits, frame),
         }
         commands.insert_resource(buildings);
-        commands.insert_resource(coalition::economy_rules(gisements::resource_infos()));
+        commands.insert_resource(garde::economy_rules(gisements::resource_infos()));
         let mut players = Players::default();
         players.get_mut(PlayerId(0)).stock = stock;
         commands.insert_resource(players);

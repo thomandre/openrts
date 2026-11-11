@@ -9,7 +9,7 @@
 //! joaillier : sertis et cabochons, rangs de perles, couronnes de lames,
 //! émeraudes taillées, anneaux et bracelet ouvert.
 //!
-//! Là où la Coalition tient le terrain avec des fantassins tireurs et des
+//! Là où la Garde tient le terrain avec des fantassins tireurs et des
 //! blindés, et où les Sylves avancent lentement au contact, le Collectif mise
 //! sur l'air et sur le nombre de petites machines : ses ouvriers volent
 //! (Collecteurs), un vaisseau porte-drones (Essaimeur) et des nuées de
