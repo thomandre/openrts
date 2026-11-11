@@ -45,6 +45,9 @@ pub enum PlayerCommand {
     Harvest { units: Vec<Entity>, node: Entity },
     /// Poser un chantier ; l'ouvrier le plus proche parmi `builders` s'en charge.
     Build { type_index: usize, min_cell: IVec2, builders: Vec<Entity> },
+    /// Reprendre un chantier inachevé (style « l'ouvrier reste sur le
+    /// chantier ») : les ouvriers de `units` s'y rendent et le terminent.
+    Construct { units: Vec<Entity>, site: Entity },
     /// Annuler un chantier (remboursé).
     CancelConstruction { building: Entity },
     /// Ajouter une unité à la file de production d'un bâtiment (payée tout de suite).

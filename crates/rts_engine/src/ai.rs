@@ -123,6 +123,8 @@ struct UnitView {
     type_index: usize,
     position: Vec2,
     harvesting: Option<Entity>,
+    /// Le chantier auquel elle travaille.
+    site: Option<Entity>,
     /// Occupée : construction, emplacement promis ou déplacement en cours.
     busy: bool,
     /// Sous un ordre de combat.
@@ -143,7 +145,17 @@ struct BuildingView {
 type UnitQuery<'w, 's> = Query<
     'w,
     's,
-    (Entity, &'static Unit, &'static Owner, &'static SimPosition, Option<&'static Harvesting>, Has<ConstructionTask>, Has<PlannedSite>, Has<MoveTarget>, Has<CombatOrder>),
+    (
+        Entity,
+        &'static Unit,
+        &'static Owner,
+        &'static SimPosition,
+        Option<&'static Harvesting>,
+        Option<&'static ConstructionTask>,
+        Has<PlannedSite>,
+        Has<MoveTarget>,
+        Has<CombatOrder>,
+    ),
 >;
 type BuildingQuery<'w, 's> =
     Query<'w, 's, (Entity, &'static Building, &'static Owner, &'static Footprint, Has<UnderConstruction>, Option<&'static ProductionQueue>)>;
@@ -177,7 +189,8 @@ fn think(
             type_index: unit.type_index,
             position: position.current,
             harvesting: harvesting.map(|h| h.node),
-            busy: task || planned || moving,
+            site: task.and_then(|t| t.sites.first().copied()),
+            busy: task.is_some_and(|t| !t.sites.is_empty()) || planned || moving,
             fighting,
         })
         .collect();
@@ -258,6 +271,7 @@ impl Plan<'_> {
             self.view.units.iter().filter(|u| u.owner == player && self.view.rules.harvesters.contains(&u.type_index)).collect();
 
         self.harvest(&workers, &mine, hq.1);
+        self.resume_sites(&workers, &mine);
 
         // Types de sa faction, par rôle.
         let own_types: Vec<usize> = (0..catalog.types.len()).filter(|&t| catalog.faction_of(t) == faction).collect();
@@ -407,6 +421,24 @@ impl Plan<'_> {
             let Some(slot) = best else { break };
             slot.1 += 1;
             self.orders.push(player, PlayerCommand::Harvest { units: vec![worker.entity], node: slot.0 });
+        }
+    }
+
+    /// Un chantier abandonné (son ouvrier est mort ou parti) qui attend un
+    /// ouvrier au contact : l'ouvrier libre le plus proche le reprend (un par
+    /// réflexion).
+    fn resume_sites(&mut self, workers: &[&UnitView], mine: &[&BuildingView]) {
+        let catalog = self.view.catalog;
+        let abandoned = mine.iter().find(|b| {
+            !b.done && !catalog.style_of(b.type_index).builds_alone() && !workers.iter().any(|u| u.site == Some(b.entity))
+        });
+        let Some(site) = abandoned else { return };
+        let worker = workers
+            .iter()
+            .filter(|u| !u.busy)
+            .min_by(|a, b| a.position.distance(site.center).total_cmp(&b.position.distance(site.center)).then(a.entity.cmp(&b.entity)));
+        if let Some(worker) = worker {
+            self.orders.push(self.ai.player, PlayerCommand::Construct { units: vec![worker.entity], site: site.entity });
         }
     }
 

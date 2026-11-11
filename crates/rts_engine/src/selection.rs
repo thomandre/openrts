@@ -7,6 +7,7 @@
 
 use bevy::prelude::*;
 
+use crate::buildings::{Building, BuildingCatalog, UnderConstruction};
 use crate::camera::{ray_at_height, screen_ray, screen_to_ground};
 use crate::collision::StaticObstacle;
 use crate::combat::{Attacker, Combatant, OrderMarker};
@@ -107,7 +108,12 @@ fn handle_actions(
     owners: Query<&Owner>,
     unit_types: Query<&Unit>,
     nodes: Query<(Entity, &ResourceNode, &StaticObstacle)>,
-    queues: Query<(), With<ProductionQueue>>,
+    // Un n-uplet compte pour un seul paramètre (Bevy en accepte 16 au plus).
+    (queues, sites, buildings): (
+        Query<(), With<ProductionQueue>>,
+        Query<&Building, With<UnderConstruction>>,
+        Option<Res<BuildingCatalog>>,
+    ),
     rules: Option<Res<EconomyRules>>,
     local: Res<LocalPlayer>,
     mut orders: ResMut<CommandQueue>,
@@ -205,6 +211,22 @@ fn handle_actions(
                     let (fighters, others): (Vec<Entity>, Vec<Entity>) = movers.into_iter().partition(|e| armed.contains(*e));
                     if !fighters.is_empty() {
                         orders.push(local.0, PlayerCommand::Attack { units: fighters, target: enemy });
+                    }
+                    movers = others;
+                }
+                // Sur un de ses chantiers inachevés qui attend un ouvrier : les
+                // ouvriers de sa faction le reprennent.
+                let resumable = picked.filter(|&e| {
+                    owners.get(e).is_ok_and(|o| o.0 == local.0)
+                        && sites.get(e).ok().zip(buildings.as_ref()).is_some_and(|(b, c)| !c.style_of(b.type_index).builds_alone())
+                });
+                if let (Some(site), Some(catalog)) = (resumable, buildings.as_ref()) {
+                    let faction = sites.get(site).map(|b| catalog.faction_of(b.type_index)).ok();
+                    let (builders, others): (Vec<Entity>, Vec<Entity>) = movers.into_iter().partition(|e| {
+                        unit_types.get(*e).is_ok_and(|u| catalog.faction_of_builder(u.type_index).is_some() && catalog.faction_of_builder(u.type_index) == faction)
+                    });
+                    if !builders.is_empty() {
+                        orders.push(local.0, PlayerCommand::Construct { units: builders, site });
                     }
                     movers = others;
                 }

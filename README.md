@@ -76,7 +76,9 @@ Les raccourcis sont des lettres tapées : ils suivent ce qui est écrit sur les
 touches, en AZERTY comme en QWERTY. En mode pose, un fantôme suit le pointeur,
 aligné sur la grille : vert si l'emplacement est libre, rouge sinon. Le
 Technicien le plus proche se rend sur le chantier et y reste : le bâtiment
-monte du sol tant qu'il travaille. Le coût est débité à la pose (refus et
+monte du sol tant qu'il travaille. Un chantier abandonné (Technicien
+envoyé ailleurs ou tué) s'arrête : **clic droit dessus** avec des
+Techniciens sélectionnés pour le reprendre. Le coût est débité à la pose (refus et
 message « Ressources insuffisantes » sinon) et remboursé si l'on annule le
 chantier. L'Extracteur s'aimante sur la source d'Éther la plus proche ;
 ailleurs, son fantôme est rouge (« Doit être posé sur une source »).

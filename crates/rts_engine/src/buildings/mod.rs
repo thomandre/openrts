@@ -238,6 +238,8 @@ pub struct BuildingCatalog {
     pub builders: Vec<usize>,
     /// La faction de chaque type (numéro de faction des catalogues).
     type_faction: Vec<usize>,
+    /// Pour chaque type d'ouvrier : la faction dont il construit les bâtiments.
+    builder_factions: Vec<(usize, usize)>,
     /// Ce qui est propre à chaque faction, rangé par numéro de faction
     /// (`None` : une faction sans bâtiments).
     factions: Vec<Option<FactionBuildings>>,
@@ -312,6 +314,7 @@ impl BuildingCatalog {
             types: Vec::new(),
             builders: Vec::new(),
             type_faction: Vec::new(),
+            builder_factions: Vec::new(),
             factions: Vec::new(),
             menu_key: 'b',
             facing: std::f32::consts::PI,
@@ -360,7 +363,10 @@ impl BuildingCatalog {
         }
         self.type_faction.extend(std::iter::repeat_n(faction, types.len()));
         self.types.extend(types);
-        self.builders.extend(builders.into_iter().map(|b| b + first_unit));
+        for builder in builders {
+            self.builders.push(builder + first_unit);
+            self.builder_factions.push((builder + first_unit, faction));
+        }
         if self.factions.len() <= faction {
             self.factions.resize_with(faction + 1, || None);
         }
@@ -375,6 +381,11 @@ impl BuildingCatalog {
             anchor_visual: None,
         });
         first_building
+    }
+
+    /// La faction dont l'ouvrier de type `unit_type` construit les bâtiments.
+    pub fn faction_of_builder(&self, unit_type: usize) -> Option<usize> {
+        self.builder_factions.iter().find(|(u, _)| *u == unit_type).map(|(_, f)| *f)
     }
 
     /// La faction du type `type_index`.
@@ -844,7 +855,7 @@ impl Plugin for BuildingsPlugin {
                 (
                     // Après les déplacements : un ordre de pose donné juste
                     // après un ordre de marche l'emporte.
-                    (apply_build_orders, drive_builders, root_planned_sites)
+                    (apply_resume_orders, apply_build_orders, drive_builders, root_planned_sites)
                         .chain()
                         .in_set(SimSet::Orders)
                         .after(crate::orders::apply_unit_orders),
@@ -1013,6 +1024,46 @@ pub(crate) fn apply_build_orders(
             None => {
                 commands.entity(builder).insert(ConstructionTask { sites });
             }
+        }
+    }
+}
+
+/// Applique les ordres de reprise : un chantier inachevé du joueur, dont le
+/// style demande un ouvrier au contact, est confié aux ouvriers de l'ordre
+/// (ceux de sa faction), qui lâchent ce qu'ils faisaient pour s'y rendre.
+/// Un chantier qui se construit seul n'a besoin de personne : l'ordre est ignoré.
+fn apply_resume_orders(
+    mut commands: Commands,
+    tick: Res<TickCommands>,
+    catalog: Option<Res<BuildingCatalog>>,
+    sites: Query<(&Building, &Owner), With<UnderConstruction>>,
+    workers: Query<(&Owner, &Unit, Option<&PlannedSite>)>,
+    mut players: ResMut<Players>,
+) {
+    let Some(catalog) = catalog else { return };
+    for issued in &tick.0 {
+        let PlayerCommand::Construct { units: ordered, site } = &issued.command else { continue };
+        let player = issued.player;
+        let Ok((building, owner)) = sites.get(*site) else { continue };
+        if owner.0 != player || catalog.style_of(building.type_index).builds_alone() {
+            continue;
+        }
+        let faction = catalog.faction_of(building.type_index);
+        let builders = owned_units(ordered, player, |e| workers.get(e).ok().map(|(o, ..)| *o));
+        for worker in builders {
+            let Ok((_, unit, plan)) = workers.get(worker) else { continue };
+            // Seuls les ouvriers de la faction du bâtiment savent le construire.
+            if !catalog.builders.contains(&unit.type_index) || catalog.faction_of_builder(unit.type_index) != Some(faction) {
+                continue;
+            }
+            // Un emplacement promis abandonné est remboursé.
+            if let Some(plan) = plan {
+                refund_plan(&mut players, player, plan);
+            }
+            commands
+                .entity(worker)
+                .insert(ConstructionTask { sites: vec![*site] })
+                .remove::<(Harvesting, PlannedSite, ResumeHarvest, MoveTarget, NavPath, MoveGroup, crate::combat::CombatOrder)>();
         }
     }
 }
@@ -1448,6 +1499,36 @@ mod tests {
         build_type(&mut app, 5, IVec2::new(55, 49), worker);
         app.update();
         assert!(app.world().get::<PlannedSite>(worker).is_some());
+    }
+
+    #[test]
+    fn an_abandoned_site_can_be_resumed() {
+        let (mut app, worker) = app();
+        build(&mut app, IVec2::new(55, 49), worker);
+        // Quelques secondes : il est arrivé et a commencé.
+        for _ in 0..32 * 4 {
+            app.update();
+        }
+        // Envoyé ailleurs, il abandonne le chantier, qui n'avance plus.
+        app.world_mut().resource_mut::<CommandQueue>().push(PlayerId(0), PlayerCommand::Move { units: vec![worker], target: Vec2::new(-10.0, 0.0) });
+        for _ in 0..32 * 2 {
+            app.update();
+        }
+        let site = {
+            let world = app.world_mut();
+            world.query_filtered::<Entity, With<UnderConstruction>>().single(world).expect("le chantier aurait dû rester")
+        };
+        let stalled = app.world().get::<UnderConstruction>(site).unwrap().progress;
+        for _ in 0..32 {
+            app.update();
+        }
+        assert_eq!(app.world().get::<UnderConstruction>(site).unwrap().progress, stalled, "un chantier abandonné n'avance pas");
+        // L'ordre de reprise : il y retourne et le termine.
+        app.world_mut().resource_mut::<CommandQueue>().push(PlayerId(0), PlayerCommand::Construct { units: vec![worker], site });
+        for _ in 0..32 * 8 {
+            app.update();
+        }
+        assert!(app.world().get::<UnderConstruction>(site).is_none(), "le chantier aurait dû être terminé");
     }
 
     #[test]
