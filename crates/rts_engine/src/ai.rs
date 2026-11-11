@@ -22,7 +22,10 @@
 //! 2. dépenses, par priorité : population (avant d'être bloquée), ouvriers
 //!    jusqu'à [`AiSettings::workers`], un premier bâtiment de production,
 //!    l'extraction de la ressource rare, un second bâtiment de production
-//!    quand l'argent s'accumule, puis des unités de combat ;
+//!    quand l'argent s'accumule (de préférence d'un type qu'elle n'a pas
+//!    encore, en posant d'abord ce qu'il exige), les bâtiments qui
+//!    débloquent des unités (prérequis des options de production), puis
+//!    des unités de combat ;
 //! 3. armée : elle défend sa base contre les intrus, et, passé
 //!    [`AiSettings::first_attack_secs`], attaque dès qu'elle a réuni une
 //!    vague (de plus en plus grosse) ; les renforts rejoignent l'attaque.
@@ -33,7 +36,9 @@
 use bevy::prelude::*;
 
 use crate::buildings::field::ConstructionFields;
-use crate::buildings::{completed_types, Building, BuildingCatalog, ConstructionTask, Footprint, PlacementRule, PlannedSite, UnderConstruction};
+use crate::buildings::{
+    completed_types, Building, BuildingCatalog, ConstructionTask, Footprint, PlacementRule, PlannedSite, Requirement, UnderConstruction,
+};
 use crate::combat::CombatOrder;
 use crate::economy::harvest::Harvesting;
 use crate::economy::production::ProductionQueue;
@@ -308,13 +313,25 @@ impl Plan<'_> {
         let producers = count(&producer_types);
         let want_producer = producers == 0 || (producers < self.settings.max_production && self.stock.primary >= 300);
         if want_producer && !pending(&|t| producer_types.contains(&t)) {
-            let ready = producer_types.iter().copied().filter(|&t| catalog.requirements_met(t, &self.completed)).min_by_key(|&t| catalog.types[t].cost.primary);
-            // Sinon, ce qu'il manque pour en poser un.
-            let missing = producer_types
+            let ready = |t: &usize| catalog.requirements_met(*t, &self.completed);
+            let cheapest = |types: Vec<usize>| types.into_iter().min_by_key(|&t| catalog.types[t].cost.primary);
+            // D'abord un type de production qu'elle n'a pas encore (son
+            // armée sera plus variée)…
+            let unowned: Vec<usize> = producer_types.iter().copied().filter(|&t| count(&[t]) == 0).collect();
+            let new_ready = cheapest(unowned.iter().copied().filter(ready).collect());
+            // … sinon ce qu'il manque pour en poser un…
+            let missing = unowned
                 .iter()
                 .flat_map(|&t| catalog.types[t].requires.clone())
-                .find(|&r| !self.completed[r] && catalog.requirements_met(r, &self.completed) && !pending(&|t| t == r));
-            if let Some(type_index) = ready.or(missing) {
+                .find(|&r| !self.completed[r] && catalog.requirements_met(r, &self.completed));
+            let choice = match (new_ready, missing) {
+                (Some(type_index), _) => Some(type_index),
+                // (déjà en chantier : elle attend plutôt que de doubler un type)
+                (None, Some(required)) => (!pending(&|t| t == required)).then_some(required),
+                // … sinon un de plus du type le moins cher.
+                (None, None) => cheapest(producer_types.iter().copied().filter(ready).collect()),
+            };
+            if let Some(type_index) = choice {
                 self.build(type_index, hq.1, &workers);
             }
         }
@@ -329,7 +346,38 @@ impl Plan<'_> {
             self.build_extractor(extractor, hq.1, &workers);
         }
 
-        // 5. Unités de combat.
+        // 5. Technologie : les bâtiments qui débloquent une unité d'un
+        // bâtiment de production (prérequis `Requirement::Building` d'une
+        // option), même s'ils ne produisent rien. Un seul à la fois, dans
+        // l'ordre du catalogue ; s'il coûte de la ressource rare, une fois
+        // l'extraction lancée. Elle garde de quoi le payer.
+        let unlocks: Vec<usize> = own_types
+            .iter()
+            .copied()
+            .filter(|&t| {
+                producer_types.iter().any(|&p| catalog.types[p].production.iter().any(|o| o.requires.contains(&Requirement::Building(t))))
+            })
+            .collect();
+        // `self.planned`, et non sa copie : elle a pu poser un bâtiment plus haut.
+        let planned_now = |t: usize| self.planned.iter().any(|(p, _)| *p == t);
+        let unlock_pending = unlocks.iter().any(|&t| mine.iter().any(|b| !b.done && b.type_index == t) || planned_now(t));
+        let has_rare = count(&extractors) > 0;
+        let next_unlock = unlocks.iter().copied().find(|&t| {
+            count(&[t]) == 0 && !planned_now(t) && catalog.requirements_met(t, &self.completed) && (has_rare || catalog.types[t].cost.rare == 0)
+        });
+        if producers > 0
+            && !unlock_pending
+            && let Some(type_index) = next_unlock
+            && !self.build(type_index, hq.1, &workers)
+        {
+            // Pas encore de quoi le payer : l'argent est mis de côté (les
+            // unités ne se paient qu'avec le reste).
+            let cost = catalog.types[type_index].cost;
+            self.stock.primary = self.stock.primary.saturating_sub(cost.primary);
+            self.stock.rare = self.stock.rare.saturating_sub(cost.rare);
+        }
+
+        // 6. Unités de combat.
         let rally = self.rally_point(hq.1);
         for building in mine.iter().filter(|b| b.done && producer_types.contains(&b.type_index)) {
             if !self.ai.rallied.contains(&building.entity) {
@@ -589,6 +637,9 @@ mod tests {
     const AI: PlayerId = PlayerId(1);
     const WORKER: usize = 0;
     const SOLDIER: usize = 1;
+    const ELITE: usize = 2;
+    /// L'atelier, dans le catalogue des bâtiments du test.
+    const WORKSHOP: usize = 3;
 
     fn palette() -> Palette {
         let plain = SurfaceStyle::new(Color::WHITE, 0.0, 0.5, SurfaceDetail::Smooth);
@@ -609,6 +660,12 @@ mod tests {
     /// ouvriers inoccupés, une ligne de gisements, de quoi construire.
     /// L'IA connaît aussi une caserne (soldats) et un abri (population).
     fn app() -> App {
+        app_with(false)
+    }
+
+    /// `tech` : la caserne sait aussi former une élite, qui demande un
+    /// atelier (un bâtiment qui ne produit rien).
+    fn app_with(tech: bool) -> App {
         let mut app = App::new();
         app.add_plugins(MinimalPlugins)
             .add_message::<GameAction>()
@@ -621,12 +678,12 @@ mod tests {
                 harvesters: vec![WORKER],
                 carry: [5, 4],
                 gather_time: [2.0, 1.5],
-                units: vec![UnitEconomy { cost: Cost::new(50, 0), train_time: 4.0, population: 1 }; 2],
+                units: vec![UnitEconomy { cost: Cost::new(50, 0), train_time: 4.0, population: 1 }; 3],
             })
             .insert_resource(AiPlayers(vec![AiPlayer::new(AI)]));
         let (mut meshes, mut materials, mut images) = (Assets::default(), Assets::default(), Assets::default());
         let unit = |name: &str| UnitType { name: name.into(), parts: Vec::new(), footprint_radius: 0.5, mass: 1.0, speed: 4.0, hover: None };
-        let units = UnitCatalog::new(vec![unit("Ouvrier"), unit("Soldat")], &palette(), &mut meshes, &mut materials, &mut images);
+        let units = UnitCatalog::new(vec![unit("Ouvrier"), unit("Soldat"), unit("Élite")], &palette(), &mut meshes, &mut materials, &mut images);
         let option = |unit_type| ProductionOption { unit_type, hotkey: 'a', requires: Vec::new() };
         let hq = BuildingType {
             name: "Dépôt".into(),
@@ -638,9 +695,14 @@ mod tests {
             production: vec![option(WORKER)],
             ..default()
         };
-        let barracks = BuildingType { name: "Caserne".into(), cost: Cost::new(150, 0), dropoff: false, supply: 0, production: vec![option(SOLDIER)], ..hq.clone() };
+        let mut barracks = BuildingType { name: "Caserne".into(), cost: Cost::new(150, 0), dropoff: false, supply: 0, production: vec![option(SOLDIER)], ..hq.clone() };
         let house = BuildingType { name: "Abri".into(), footprint: UVec2::new(2, 2), cost: Cost::new(100, 0), dropoff: false, supply: 8, production: Vec::new(), ..hq.clone() };
-        let catalog = BuildingCatalog::new(vec![hq, barracks, house], vec![WORKER], ConstructionStyle::WorkerStays, &units, &mut meshes, &mut materials);
+        let workshop = BuildingType { name: "Atelier".into(), requires: vec![1], production: Vec::new(), ..house.clone() };
+        if tech {
+            barracks.production.push(ProductionOption { unit_type: ELITE, hotkey: 'e', requires: vec![Requirement::Building(WORKSHOP)] });
+        }
+        let catalog =
+            BuildingCatalog::new(vec![hq, barracks, house, workshop], vec![WORKER], ConstructionStyle::WorkerStays, &units, &mut meshes, &mut materials);
         app.insert_resource(catalog).insert_resource(units);
         app.world_mut().resource_mut::<Players>().get_mut(AI).stock = Cost::new(600, 0);
         // Quelques pas : la grille de navigation est créée au premier pas de simulation.
@@ -669,7 +731,7 @@ mod tests {
     fn summary(app: &mut App) -> (usize, usize, Vec<usize>, Cost) {
         let world = app.world_mut();
         let units: Vec<usize> = world.query::<&Unit>().iter(world).map(|u| u.type_index).collect();
-        let mut buildings = vec![0; 3];
+        let mut buildings = vec![0; 4];
         for building in world.query::<&Building>().iter(world) {
             buildings[building.type_index] += 1;
         }
@@ -698,5 +760,28 @@ mod tests {
             second.update();
         }
         assert_eq!(summary(&mut first), summary(&mut second));
+    }
+
+    /// Un bâtiment qui ne produit rien mais débloque une unité (l'atelier) :
+    /// l'IA le pose, puis forme cette unité. Sans lui (`app()`), elle n'en
+    /// pose aucun.
+    #[test]
+    fn ai_builds_what_unlocks_units() {
+        let mut with_tech = app_with(true);
+        // Une minute et demie de partie.
+        for _ in 0..32 * 90 {
+            with_tech.update();
+        }
+        let (_, _, buildings, _) = summary(&mut with_tech);
+        assert_eq!(buildings[WORKSHOP], 1, "l'IA aurait dû poser un seul atelier : {buildings:?}");
+        let world = with_tech.world_mut();
+        let elites = world.query::<&Unit>().iter(world).filter(|u| u.type_index == ELITE).count();
+        assert!(elites >= 1, "l'IA aurait dû former l'unité débloquée");
+
+        let mut plain = app();
+        for _ in 0..32 * 90 {
+            plain.update();
+        }
+        assert_eq!(summary(&mut plain).2[WORKSHOP], 0, "rien ne demande l'atelier : l'IA ne devrait pas le poser");
     }
 }
