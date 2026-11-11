@@ -472,6 +472,15 @@ const PULSE_PHASES: usize = 3;
 /// faction les mêmes matériaux. Bevy regroupe alors les objets identiques
 /// pour les dessiner en lot (« instanciation ») : 300 unités ne coûtent pas
 /// 300 fois plus cher qu'une.
+///
+/// **Couleurs d'équipe** : la même faction peut être jouée par plusieurs
+/// joueurs, chacun avec sa couleur ([`UnitCatalog::set_team_colors`]). Seuls
+/// les deux matériaux qui dépendent de la couleur d'équipe (`Team` et
+/// `Hazard`) sont recréés pour chaque joueur : quelques matériaux par
+/// joueur, jamais un par unité.
+///
+/// Limite actuelle : un seul catalogue (donc une seule faction) par partie ;
+/// deux joueurs de factions différentes demanderont un catalogue par joueur.
 #[derive(Resource)]
 pub struct UnitCatalog {
     pub types: Vec<UnitType>,
@@ -479,9 +488,15 @@ pub struct UnitCatalog {
     /// les bâtiments, avec les mêmes matériaux).
     palette: Palette,
     visuals: Vec<TypeVisual>,
-    materials: ModelMaterials,
+    /// Les matériaux de chaque joueur (indice : numéro du joueur). Le premier
+    /// est celui de la palette ; un joueur au-delà de la liste prend le premier.
+    team_materials: Vec<ModelMaterials>,
+    /// Textures de détail déjà créées (partagées par les matériaux qui les utilisent).
+    detail_textures: HashMap<SurfaceDetail, Option<(Handle<Image>, Handle<Image>)>>,
     ring_mesh: Handle<Mesh>,
     ring_material: Handle<StandardMaterial>,
+    /// Anneau rouge sous une unité ou un bâtiment adverse sélectionné.
+    enemy_ring_material: Handle<StandardMaterial>,
 }
 
 impl UnitCatalog {
@@ -497,23 +512,17 @@ impl UnitCatalog {
 
         // Les textures de détail sont partagées par tous les matériaux qui les utilisent.
         let mut detail_textures = HashMap::new();
-        let mut material_for = |style: &SurfaceStyle, slot: MaterialSlot| {
-            let textures = detail_textures
-                .entry(style.detail)
-                .or_insert_with(|| detail_images(style.detail).map(|t| (images.add(t.albedo), images.add(t.normal))))
-                .clone();
-            surface_material(style, slot, textures)
-        };
         let materials_by_slot: HashMap<MaterialSlot, Handle<StandardMaterial>> = MaterialSlot::ALL
             .iter()
-            .map(|&slot| (slot, materials.add(material_for(&palette.surface(slot), slot))))
+            .map(|&slot| (slot, materials.add(slot_material(palette, slot, &mut detail_textures, images))))
             .collect();
 
         Self {
             types,
             palette: palette.clone(),
             visuals,
-            materials: ModelMaterials(materials_by_slot),
+            team_materials: vec![ModelMaterials(materials_by_slot)],
+            detail_textures,
             // Anneau de rayon 1, mis à l'échelle de chaque unité. Assez épais
             // pour rester lisible en dézoom.
             ring_mesh: meshes.add(Annulus::new(0.8, 1.0)),
@@ -523,7 +532,43 @@ impl UnitCatalog {
                 fog_enabled: false,
                 ..default()
             }),
+            enemy_ring_material: materials.add(StandardMaterial {
+                base_color: LinearRgba::rgb(2.4, 0.25, 0.18).into(),
+                unlit: true,
+                fog_enabled: false,
+                ..default()
+            }),
         }
+    }
+
+    /// Donne à chaque joueur sa couleur d'équipe : `colors[i]` est celle du
+    /// joueur `i` (le joueur 0 garde la palette s'il manque des couleurs).
+    /// À appeler **avant** de créer le catalogue des bâtiments, qui reprend
+    /// ces matériaux.
+    ///
+    /// `&mut self` : la méthode modifie le catalogue (emprunt exclusif).
+    pub fn set_team_colors(&mut self, colors: &[Color], materials: &mut Assets<StandardMaterial>, images: &mut Assets<Image>) {
+        let base = self.team_materials[0].clone();
+        self.team_materials = vec![base.clone()];
+        for (index, &color) in colors.iter().enumerate() {
+            let mut palette = self.palette.clone();
+            palette.team.color = color;
+            let mut team = base.clone();
+            // Seuls les emplacements qui dérivent de la couleur d'équipe changent.
+            for slot in [MaterialSlot::Team, MaterialSlot::Hazard] {
+                team.0.insert(slot, materials.add(slot_material(&palette, slot, &mut self.detail_textures, images)));
+            }
+            if index == 0 {
+                self.team_materials[0] = team;
+            } else {
+                self.team_materials.push(team);
+            }
+        }
+    }
+
+    /// Les matériaux du joueur `owner`.
+    pub(crate) fn materials_for(&self, owner: PlayerId) -> &ModelMaterials {
+        self.team_materials.get(usize::from(owner.0)).unwrap_or(&self.team_materials[0])
     }
 
     /// Prépare les maillages d'un autre modèle (un bâtiment) avec la palette
@@ -532,19 +577,24 @@ impl UnitCatalog {
         build_visual(parts, &self.palette, meshes)
     }
 
-    /// Le matériau partagé d'un emplacement de la palette.
+    /// Le matériau partagé d'un emplacement de la palette (premier joueur).
     pub(crate) fn material(&self, slot: MaterialSlot) -> Handle<StandardMaterial> {
-        self.materials.0[&slot].clone()
+        self.team_materials[0].get(slot)
     }
 
-    /// Tous les matériaux de la palette (des poignées : la copie ne duplique rien).
-    pub(crate) fn model_materials(&self) -> ModelMaterials {
-        self.materials.clone()
+    /// Les matériaux de tous les joueurs (des poignées : la copie ne duplique rien).
+    pub(crate) fn all_team_materials(&self) -> Vec<ModelMaterials> {
+        self.team_materials.clone()
     }
 
     /// Le matériau de l'anneau de sélection.
     pub(crate) fn ring_material(&self) -> Handle<StandardMaterial> {
         self.ring_material.clone()
+    }
+
+    /// Le matériau de l'anneau de sélection d'une entité adverse (rouge).
+    pub(crate) fn enemy_ring_material(&self) -> Handle<StandardMaterial> {
+        self.enemy_ring_material.clone()
     }
 
     /// Fait apparaître une unité du type `type_index` à la position (x, z) du sol.
@@ -616,7 +666,7 @@ impl UnitCatalog {
                         base_height: -center,
                     });
                 }
-                body.with_children(|body| spawn_model(body, visual, jitter, &self.materials));
+                body.with_children(|body| spawn_model(body, visual, jitter, self.materials_for(owner)));
             })
             .id()
     }
@@ -625,6 +675,29 @@ impl UnitCatalog {
 /// Les matériaux d'une palette, un par emplacement.
 #[derive(Debug, Clone)]
 pub(crate) struct ModelMaterials(HashMap<MaterialSlot, Handle<StandardMaterial>>);
+
+impl ModelMaterials {
+    /// Le matériau d'un emplacement.
+    pub(crate) fn get(&self, slot: MaterialSlot) -> Handle<StandardMaterial> {
+        self.0[&slot].clone()
+    }
+}
+
+/// Le matériau Bevy d'un emplacement de `palette`, avec ses textures de
+/// détail (créées une seule fois, rangées dans `cache`).
+fn slot_material(
+    palette: &Palette,
+    slot: MaterialSlot,
+    cache: &mut HashMap<SurfaceDetail, Option<(Handle<Image>, Handle<Image>)>>,
+    images: &mut Assets<Image>,
+) -> StandardMaterial {
+    let style = palette.surface(slot);
+    let textures = cache
+        .entry(style.detail)
+        .or_insert_with(|| detail_images(style.detail).map(|t| (images.add(t.albedo), images.add(t.normal))))
+        .clone();
+    surface_material(&style, slot, textures)
+}
 
 /// Crée sous `body` toutes les pièces d'un modèle (unité ou bâtiment) :
 /// maillages fixes et groupes animés. `jitter` (entre 0 et 1) décale les
@@ -776,5 +849,46 @@ fn surface_material(
         // répétition du motif mesure `detail_size` mètres.
         uv_transform: Affine2::from_scale(Vec2::splat(1.0 / style.detail_size)),
         ..default()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn palette() -> Palette {
+        let plain = SurfaceStyle::new(Color::WHITE, 0.0, 0.5, SurfaceDetail::Smooth);
+        Palette {
+            paint: plain,
+            dark: plain,
+            steel: plain,
+            bare: plain,
+            rubber: plain,
+            team: plain,
+            glow: SurfaceStyle::glowing(Color::WHITE, 2.0),
+            engine: SurfaceStyle::glowing(Color::WHITE, 2.0),
+            selection: LinearRgba::WHITE,
+        }
+    }
+
+    #[test]
+    fn each_player_gets_its_own_team_color() {
+        let (mut meshes, mut materials, mut images) = (Assets::default(), Assets::default(), Assets::default());
+        let mut catalog = UnitCatalog::new(Vec::new(), &palette(), &mut meshes, &mut materials, &mut images);
+        let orange = Color::srgb(0.9, 0.45, 0.17);
+        let blue = Color::srgb(0.18, 0.42, 0.94);
+        catalog.set_team_colors(&[orange, blue], &mut materials, &mut images);
+        let color = |player: u8, slot: MaterialSlot| {
+            let handle = catalog.materials_for(PlayerId(player)).get(slot);
+            materials.get(&handle).unwrap().base_color
+        };
+        assert_eq!(color(0, MaterialSlot::Team), orange);
+        assert_eq!(color(1, MaterialSlot::Team), blue);
+        assert_eq!(color(1, MaterialSlot::Hazard), blue);
+        // Les autres matériaux restent partagés par tous les joueurs (dessin en lot).
+        let paint = |player: u8| catalog.materials_for(PlayerId(player)).get(MaterialSlot::Paint);
+        assert_eq!(paint(0), paint(1));
+        // Un joueur sans couleur prend celle du premier.
+        assert_eq!(color(5, MaterialSlot::Team), orange);
     }
 }

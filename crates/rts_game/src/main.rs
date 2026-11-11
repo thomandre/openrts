@@ -49,6 +49,16 @@ use map::{GroundPattern, GroundStyle};
 /// Côté de la carte, en mètres.
 const MAP_SIZE: f32 = 100.0;
 
+/// Le joueur adverse (pas encore d'IA : ses unités attendent, et ripostent).
+pub(crate) const ENEMY: PlayerId = PlayerId(1);
+
+/// Bleu froid : la couleur d'équipe du second joueur, bien distincte de
+/// l'orange signal du premier et des lueurs cyan, turquoise ou émeraude des factions.
+const COLD_BLUE: Color = Color::srgb(0x2E as f32 / 255.0, 0x6C as f32 / 255.0, 0xF0 as f32 / 255.0);
+
+/// Couleur d'équipe de chaque joueur, dans l'ordre des numéros.
+const TEAM_COLORS: [Color; 2] = [garde::SIGNAL_ORANGE, COLD_BLUE];
+
 /// La faction affichée. Une seule à la fois pour l'instant : elle décide de
 /// l'ambiance, du sol, des matériaux et des types d'unités du catalogue.
 ///
@@ -300,9 +310,12 @@ fn spawn_units(
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut images: ResMut<Assets<Image>>,
 ) {
-    // Le premier joueur a l'orange signal comme couleur d'équipe, quelle que soit sa faction.
+    // Le premier joueur a l'orange signal comme couleur d'équipe, quelle que
+    // soit sa faction ; le second, le bleu froid (même faction : un seul
+    // catalogue par partie pour l'instant).
     let palette = faction.palette(garde::SIGNAL_ORANGE);
-    let catalog = UnitCatalog::new(faction.unit_types(), &palette, &mut meshes, &mut materials, &mut images);
+    let mut catalog = UnitCatalog::new(faction.unit_types(), &palette, &mut meshes, &mut materials, &mut images);
+    catalog.set_team_colors(&TEAM_COLORS, &mut materials, &mut images);
 
     // Bâtiments et économie : la Garde et les Sylves pour l'instant (base
     // de départ, ou scènes de démonstration avec `OPENRTS_DEMO`).
@@ -363,6 +376,11 @@ fn spawn_units(
     };
     for (type_index, pos) in faction.army() {
         catalog.spawn_facing(&mut commands, type_index, pos, yaw);
+    }
+    // La même armée chez l'adversaire, en miroir à 26 m vers le sud (+z),
+    // tournée vers la nôtre.
+    for (type_index, pos) in faction.army() {
+        catalog.spawn_owned(&mut commands, ENEMY, type_index, Vec2::new(pos.x, 26.0 - pos.y), yaw - std::f32::consts::PI);
     }
 
     commands.insert_resource(catalog);

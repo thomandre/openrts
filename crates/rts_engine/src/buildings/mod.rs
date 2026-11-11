@@ -182,15 +182,18 @@ pub struct BuildingCatalog {
     /// Seuls 0 et π gardent l'empreinte telle quelle.
     pub facing: f32,
     visuals: Vec<TypeVisual>,
-    /// Les matériaux de la faction, partagés avec les unités.
-    materials: ModelMaterials,
+    /// Les matériaux de la faction pour chaque joueur (couleur d'équipe),
+    /// partagés avec les unités.
+    materials: Vec<ModelMaterials>,
     /// Pour chaque type : le cadre de sélection, le cadre du chantier et la
     /// dalle (fantôme) à ses dimensions.
     outlines: Vec<Handle<Mesh>>,
     site_frames: Vec<Handle<Mesh>>,
     pads: Vec<Handle<Mesh>>,
     ring_material: Handle<StandardMaterial>,
-    site_material: Handle<StandardMaterial>,
+    /// Cadre des chantiers : emplacement de la palette (chevrons de danger
+    /// aux couleurs du joueur, ou simple anneau).
+    site_slot: MaterialSlot,
     /// Échafaudage des chantiers : poteau (cylindre de 1 m de haut, mis à
     /// l'échelle) et son matériau.
     pole_mesh: Handle<Mesh>,
@@ -236,7 +239,7 @@ impl BuildingCatalog {
             menu_key: 'b',
             facing: std::f32::consts::PI,
             visuals,
-            materials: units.model_materials(),
+            materials: units.all_team_materials(),
             outlines,
             site_frames,
             pads,
@@ -244,7 +247,7 @@ impl BuildingCatalog {
             // Cadre de chantier : chevrons de danger pour un chantier
             // d'ouvriers ; un simple anneau (de mousse, chez les Sylves) autour
             // d'un bâtiment qui pousse seul.
-            site_material: units.material(if style.consumes_worker() { MaterialSlot::Steel } else { MaterialSlot::Hazard }),
+            site_slot: if style.consumes_worker() { MaterialSlot::Steel } else { MaterialSlot::Hazard },
             pole_mesh: meshes.add(Cylinder::new(0.07, 1.0)),
             pole_material: units.material(MaterialSlot::Dark),
             ghost_materials: [
@@ -350,6 +353,8 @@ impl BuildingCatalog {
             None => building.max_health,
         };
         let jitter = position_jitter(center);
+        let materials = self.materials.get(usize::from(owner.0)).unwrap_or(&self.materials[0]);
+        let site_material = materials.get(self.site_slot);
 
         let mut entity = commands.spawn((
             Name::new(building.name.clone()),
@@ -385,7 +390,7 @@ impl BuildingCatalog {
                 parent.spawn((
                     SiteFrame,
                     Mesh3d(self.site_frames[type_index].clone()),
-                    MeshMaterial3d(self.site_material.clone()),
+                    MeshMaterial3d(site_material.clone()),
                     Transform::from_xyz(0.0, -height + 0.03, 0.0),
                     NotShadowCaster,
                 ));
@@ -399,7 +404,7 @@ impl BuildingCatalog {
                     .spawn((
                         SiteFrame,
                         Mesh3d(self.site_frames[type_index].clone()),
-                        MeshMaterial3d(self.site_material.clone()),
+                        MeshMaterial3d(site_material.clone()),
                         Transform::from_xyz(0.0, -height + 0.03, 0.0),
                         NotShadowCaster,
                     ))
@@ -414,7 +419,7 @@ impl BuildingCatalog {
                         }
                         frame.spawn((
                             Mesh3d(self.outlines[type_index].clone()),
-                            MeshMaterial3d(self.site_material.clone()),
+                            MeshMaterial3d(site_material.clone()),
                             Transform::from_xyz(0.0, top, 0.0),
                         ));
                     });
@@ -426,7 +431,7 @@ impl BuildingCatalog {
                     Transform::from_xyz(0.0, -height, 0.0),
                     Visibility::default(),
                 ))
-                .with_children(|body| spawn_model(body, visual, jitter, &self.materials));
+                .with_children(|body| spawn_model(body, visual, jitter, materials));
         });
         entity.id()
     }

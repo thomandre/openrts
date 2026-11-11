@@ -123,12 +123,21 @@ fn handle_actions(
                 // passant par son centre : si c'est dans son rayon, elle est touchée.
                 // On garde la plus proche de la caméra.
                 let hit = pick(ray, &units);
+                // Une entité adverse (ou sans propriétaire) se sélectionne
+                // seule, pour voir ses infos : on ne peut pas lui donner d'ordre.
+                let is_mine = |e: Entity| owners.get(e).is_ok_and(|o| o.0 == local.0);
+                let foreign_hit = hit.is_some_and(|e| !is_mine(e));
 
-                if !additive {
+                if !additive || foreign_hit {
                     clear_selection(&mut commands, &selected);
+                } else {
+                    // Ajout à une sélection qui montrait une entité adverse : on la retire.
+                    for entity in selected.iter().filter(|&e| !is_mine(e)) {
+                        commands.entity(entity).remove::<Selected>();
+                    }
                 }
                 if let Some(entity) = hit {
-                    if additive && selected.contains(entity) {
+                    if additive && !foreign_hit && selected.contains(entity) {
                         commands.entity(entity).remove::<Selected>();
                     } else {
                         commands.entity(entity).insert(Selected);
@@ -140,11 +149,18 @@ fn handle_actions(
                 // Test en espace écran : une unité est prise si son centre, projeté
                 // à l'écran, tombe dans le rectangle. C'est ce que voit le joueur.
                 let rect = Rect::from_corners(corner_a, corner_b);
+                // Le rectangle ne prend que les entités du joueur local.
+                let is_mine = |e: Entity| owners.get(e).is_ok_and(|o| o.0 == local.0);
                 if !additive {
                     clear_selection(&mut commands, &selected);
+                } else {
+                    for entity in selected.iter().filter(|&e| !is_mine(e)) {
+                        commands.entity(entity).remove::<Selected>();
+                    }
                 }
                 let inside: Vec<Entity> = units
                     .iter()
+                    .filter(|(entity, ..)| is_mine(*entity))
                     .filter(|(_, transform, _)| {
                         camera
                             .world_to_viewport(camera_transform, transform.translation())
@@ -255,16 +271,29 @@ fn spawn_stress_test(commands: &mut Commands, catalog: &UnitCatalog) {
 }
 
 /// Affiche l'anneau des unités sélectionnées, cache celui des autres.
+/// L'anneau d'une entité adverse est rouge.
 fn show_selection_rings(
-    units: Query<(Has<Selected>, &Children), With<Selectable>>,
-    mut rings: Query<&mut Visibility, With<SelectionRing>>,
+    catalog: Option<Res<UnitCatalog>>,
+    local: Res<LocalPlayer>,
+    units: Query<(Has<Selected>, Option<&Owner>, &Children), With<Selectable>>,
+    mut rings: Query<(&mut Visibility, &mut MeshMaterial3d<StandardMaterial>), With<SelectionRing>>,
 ) {
-    for (is_selected, children) in &units {
+    for (is_selected, owner, children) in &units {
         let wanted = if is_selected { Visibility::Inherited } else { Visibility::Hidden };
+        let foreign = owner.is_none_or(|o| o.0 != local.0);
         for child in children.iter() {
-            if let Ok(mut visibility) = rings.get_mut(child) {
+            if let Ok((mut visibility, mut material)) = rings.get_mut(child) {
                 // `set_if_neq` n'écrit que si la valeur change (évite du travail inutile à Bevy).
                 visibility.set_if_neq(wanted);
+                if is_selected
+                    && foreign
+                    && let Some(catalog) = &catalog
+                {
+                    let red = catalog.enemy_ring_material();
+                    if material.0 != red {
+                        material.0 = red;
+                    }
+                }
             }
         }
     }
