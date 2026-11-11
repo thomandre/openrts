@@ -22,7 +22,9 @@
 //! 2. dépenses, par priorité : population (avant d'être bloquée), ouvriers
 //!    jusqu'à [`AiSettings::workers`], un premier bâtiment de production,
 //!    l'extraction de la ressource rare, un second bâtiment de production
-//!    quand l'argent s'accumule, puis des unités de combat ;
+//!    quand l'argent s'accumule (d'un type qu'elle n'a pas encore, en
+//!    posant d'abord ses prérequis), ce qui débloque les unités grisées de
+//!    ses bâtiments de production, puis des unités de combat ;
 //! 3. armée : elle défend sa base contre les intrus, et, passé
 //!    [`AiSettings::first_attack_secs`], attaque dès qu'elle a réuni une
 //!    vague (de plus en plus grosse) ; les renforts rejoignent l'attaque.
@@ -33,7 +35,9 @@
 use bevy::prelude::*;
 
 use crate::buildings::field::ConstructionFields;
-use crate::buildings::{completed_types, Building, BuildingCatalog, ConstructionTask, Footprint, PlacementRule, PlannedSite, UnderConstruction};
+use crate::buildings::{
+    completed_types, Building, BuildingCatalog, ConstructionTask, Footprint, PlacementRule, PlannedSite, Requirement, UnderConstruction,
+};
 use crate::combat::CombatOrder;
 use crate::economy::harvest::Harvesting;
 use crate::economy::production::ProductionQueue;
@@ -218,6 +222,39 @@ fn think(
     }
 }
 
+/// Le prochain pas vers un type de bâtiment (voir [`next_step`]).
+#[derive(Debug, PartialEq)]
+enum Step {
+    /// Poser ce bâtiment (le type visé ou un prérequis qui manque).
+    Build(usize),
+    /// Le type visé ou un prérequis est déjà en chantier : attendre.
+    Wait,
+    /// Hors d'atteinte (chaîne de prérequis trop longue ou circulaire).
+    Unreachable,
+}
+
+/// Ce qu'il faut poser pour obtenir un jour le type `target` : lui-même si
+/// ses prérequis sont remplis, sinon (en remontant la chaîne) le premier
+/// prérequis manquant. `pending(t)` : un bâtiment de type `t` est en
+/// chantier ou promis.
+fn next_step(catalog: &BuildingCatalog, completed: &[bool], pending: &dyn Fn(usize) -> bool, target: usize) -> Step {
+    let mut current = target;
+    // Une chaîne de prérequis courte : quelques maillons suffisent.
+    for _ in 0..8 {
+        if pending(current) {
+            return Step::Wait;
+        }
+        if catalog.requirements_met(current, completed) {
+            return Step::Build(current);
+        }
+        let Some(&missing) = catalog.types[current].requires.iter().find(|&&r| !completed.get(r).copied().unwrap_or(false)) else {
+            return Step::Unreachable;
+        };
+        current = missing;
+    }
+    Step::Unreachable
+}
+
 /// Ce que l'IA voit de la partie.
 struct Snapshot<'a> {
     catalog: &'a BuildingCatalog,
@@ -304,17 +341,57 @@ impl Plan<'_> {
             }
         }
 
-        // 3. Bâtiments de production (et ce qu'ils exigent).
+        // 3. Bâtiments de production (et ce qu'ils exigent) : d'abord un type
+        //    qu'elle n'a pas encore (le moins cher), pour varier son armée ;
+        //    sinon, un de plus du moins cher.
         let producers = count(&producer_types);
-        let want_producer = producers == 0 || (producers < self.settings.max_production && self.stock.primary >= 300);
+        let rich = self.stock.primary >= 300;
+        let want_producer = producers == 0 || (producers < self.settings.max_production && rich);
         if want_producer && !pending(&|t| producer_types.contains(&t)) {
-            let ready = producer_types.iter().copied().filter(|&t| catalog.requirements_met(t, &self.completed)).min_by_key(|&t| catalog.types[t].cost.primary);
-            // Sinon, ce qu'il manque pour en poser un.
-            let missing = producer_types
-                .iter()
-                .flat_map(|&t| catalog.types[t].requires.clone())
-                .find(|&r| !self.completed[r] && catalog.requirements_met(r, &self.completed) && !pending(&|t| t == r));
-            if let Some(type_index) = ready.or(missing) {
+            let mut new_types: Vec<usize> = producer_types.iter().copied().filter(|&t| count(&[t]) == 0).collect();
+            new_types.sort_by_key(|&t| catalog.types[t].cost.primary);
+            let mut target = None;
+            let mut waiting = false;
+            for &t in &new_types {
+                match next_step(catalog, &self.completed, &|p| pending(&|q| q == p), t) {
+                    Step::Build(type_index) => {
+                        target = Some(type_index);
+                        break;
+                    }
+                    Step::Wait => waiting = true,
+                    Step::Unreachable => {}
+                }
+            }
+            // Un prérequis d'un nouveau type pousse déjà : elle l'attend
+            // plutôt que de doubler un bâtiment qu'elle a.
+            if target.is_none() && !waiting {
+                target = producer_types.iter().copied().filter(|&t| catalog.requirements_met(t, &self.completed)).min_by_key(|&t| catalog.types[t].cost.primary);
+            }
+            if let Some(type_index) = target {
+                self.build(type_index, hq.1, &workers);
+            }
+        }
+
+        // 3 bis. Ce qui débloque des unités grisées dans ses bâtiments de
+        //    production terminés (un bâtiment qui ne produit rien lui-même,
+        //    comme une armurerie), un à la fois, quand l'argent s'accumule.
+        let locked: Vec<usize> = mine
+            .iter()
+            .filter(|b| b.done && producer_types.contains(&b.type_index))
+            .flat_map(|b| &catalog.types[b.type_index].production)
+            .flat_map(|o| &o.requires)
+            // `filter_map` : garde et transforme en une seule étape (`None` : écarté).
+            .filter_map(|r| match r {
+                Requirement::Building(index) if !self.completed[*index] => Some(*index),
+                _ => None,
+            })
+            .collect();
+        if self.stock.primary >= 300 && !locked.iter().any(|&t| pending(&|p| p == t)) {
+            let step = locked.iter().find_map(|&t| match next_step(catalog, &self.completed, &|p| pending(&|q| q == p), t) {
+                Step::Build(type_index) => Some(type_index),
+                _ => None,
+            });
+            if let Some(type_index) = step {
                 self.build(type_index, hq.1, &workers);
             }
         }
@@ -698,5 +775,23 @@ mod tests {
             second.update();
         }
         assert_eq!(summary(&mut first), summary(&mut second));
+    }
+
+    /// Pour atteindre un type, l'IA remonte sa chaîne de prérequis : elle
+    /// pose d'abord ce qui manque, et attend ce qui est déjà en chantier.
+    #[test]
+    fn next_step_climbs_the_requirements() {
+        let (mut meshes, mut materials, mut images) = (Assets::default(), Assets::default(), Assets::default());
+        let worker = UnitType { name: "Ouvrier".into(), parts: Vec::new(), footprint_radius: 0.5, mass: 1.0, speed: 4.0, hover: None };
+        let units = UnitCatalog::new(vec![worker], &palette(), &mut meshes, &mut materials, &mut images);
+        // C demande B, qui demande A.
+        let a = BuildingType { name: "A".into(), footprint: UVec2::new(2, 2), ..default() };
+        let types = vec![a.clone(), BuildingType { requires: vec![0], ..a.clone() }, BuildingType { requires: vec![1], ..a }];
+        let catalog = BuildingCatalog::new(types, vec![WORKER], ConstructionStyle::WorkerStays, &units, &mut meshes, &mut materials);
+        let nothing_pending = |_| false;
+        assert_eq!(next_step(&catalog, &[false; 3], &nothing_pending, 2), Step::Build(0));
+        assert_eq!(next_step(&catalog, &[true, false, false], &nothing_pending, 2), Step::Build(1));
+        assert_eq!(next_step(&catalog, &[true, false, false], &|t| t == 1, 2), Step::Wait);
+        assert_eq!(next_step(&catalog, &[true, true, false], &nothing_pending, 2), Step::Build(2));
     }
 }

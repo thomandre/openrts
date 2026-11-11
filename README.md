@@ -88,8 +88,11 @@ ailleurs, son fantôme est rouge (« Doit être posé sur une source »).
 | A | Arbre-mère | 7 × 7 m | — | Cœur de base, dépôt, produit les Pousses (P), 15 de population |
 | S | Souche nourricière | 3 × 3 m | — | 8 de population |
 | C | Calice | 4 × 4 m | — (pile sur une source d'Éther libre) | Récolte de l'Éther |
-| R | Ronceraie | 5 × 5 m | Arbre-mère | Produit les Ronciers (R) ; Sourcier (S) et Lanceur de spores (L) grisés |
+| R | Ronceraie | 5 × 5 m | Arbre-mère | Produit les Ronciers (R), les Sourciers (S, avec une Fontaine de sève) et les Lanceurs de spores (L, avec une Champignonnière) |
 | E | Épineux | 2 × 2 m | Ronceraie | Défense fixe |
+| F | Fontaine de sève | 4 × 4 m | Ronceraie | Palier 2 : débloque le Sourcier (Ronceraie) et le Gardien (Érablière) |
+| H | Champignonnière | 4 × 4 m | Ronceraie | Palier 2 : débloque le Lanceur de spores (Ronceraie) |
+| L | Érablière | 6 × 6 m | Ronceraie | Palier 2 : produit les Samares (S) et les Gardiens (G, avec une Fontaine de sève) |
 
 Les Sylves construisent autrement : **la Pousse devient le bâtiment**. Avec
 des Pousses sélectionnées, B puis une lettre (ou la barre de boutons) ouvre
@@ -209,7 +212,7 @@ Deux niveaux de qualité (`GraphicsQuality`) :
 | `OPENRTS_STRESS=1` | Lance le test de charge (300 unités) au démarrage |
 | `OPENRTS_ZOOM=12` | Distance de départ de la caméra (10 à 70 m) |
 | `OPENRTS_DEMO=buildings` | Garde : scène de démonstration des bâtiments (les cinq bâtiments, un chantier en cours, un fantôme vert et un rouge, un groupe qui contourne la Caserne au bout de 11 s) |
-| `OPENRTS_FACTION=sylves OPENRTS_DEMO=buildings` | Sylves : les cinq bâtiments, un Calice et la ligne de Cristal récoltés par des Pousses, une Ronceraie en pleine croissance, un fantôme vert et un rouge, une Pousse sélectionnée qui part s'enraciner au bout de 10,5 s (emplacement promis en vert) |
+| `OPENRTS_FACTION=sylves OPENRTS_DEMO=buildings` | Sylves : les huit bâtiments (le palier 2 sur une rangée au fond de la base), un Calice et la ligne de Cristal récoltés par des Pousses, une Ronceraie en pleine croissance, un fantôme vert et un rouge, une Pousse sélectionnée qui part s'enraciner au bout de 10,5 s (emplacement promis en vert) |
 | `OPENRTS_FACTION=collectif OPENRTS_DEMO=buildings` | Collectif : les cinq bâtiments, les champs de résonance au sol, un Creuset et la ligne de Cristal récoltés par des Collecteurs, une Orfèvrerie en cours d'assemblage sous sa gemme, un fantôme vert dans un champ et un rouge hors champ, un Collecteur sélectionné qui part sertir un Aiguillon au bout de 10 s puis repart récolter |
 | `OPENRTS_FOCUS=x,z` | La caméra vise ce point du sol au démarrage |
 | `OPENRTS_DEMO=economy` | Garde : l'économie en marche (douze Techniciens sur la ligne de Cristal, trois à un Extracteur, Quartier général sélectionné avec trois Techniciens en file et son point de ralliement, compteurs) |
