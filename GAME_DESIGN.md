@@ -86,7 +86,25 @@ Des ouvriers récoltent et rapportent les ressources au bâtiment principal. Les
 
 À étudier : un contrôle de territoire (balises à capturer, comme dans MechCom) pour pousser à l’action tôt, sans faire du rush la seule stratégie viable.
 
-- [ ] Noms et thème des deux ressources
+- [ ] Noms et thème des deux ressources. *Noms provisoires (étape 4) : **Cristal** (principale : grappes de cristaux bleu glacier sur socles veinés de lumière) et **Éther** (rare : lueur violette d'une faille, récoltée par un Extracteur posé dessus). À remplacer dans `crates/rts_game/src/gisements.rs`.*
+
+Valeurs proposées à l'étape 4 (à ajuster en test) :
+
+| Sujet | Valeur |
+| --- | --- |
+| Base de départ | 8 gisements de Cristal 2 × 1 m en arc à 2–4 m derrière le Quartier général (900 près, 1 500 au fond), 2 sources d'Éther 4 × 4 m de 2 250 sur ses flancs |
+| Récolte | 5 Cristal par voyage en 2,8 s d'extraction ; 4 Éther en 2 s ; un seul ouvrier à la fois par gisement (saturation : 2 à 3 par gisement) |
+| Population fournie | Quartier général 15, Module d'habitat 8 ; plafond global réglable, 200 par défaut |
+| Temps de production | Technicien 12 s, Sentinelle 18 s, Longue-Vue 25 s, Lancier 22 s, Bastion 45 s, Faucon 25 s |
+| Stock de départ | 50 Cristal |
+| Annulation | Chantier et unité en file remboursés en entier (à revoir avec le combat : 75 % comme ailleurs ?) |
+
+Décisions prises à l'étape 4 :
+
+- Le coût d'une unité est payé et sa population réservée dès sa mise en file (5 unités au plus par bâtiment) ; si la limite baisse ensuite, la file s'arrête.
+- Les ouvriers rapportent au dépôt le plus proche (bâtiments marqués « dépôt » : le Quartier général).
+- Tous les ordres de joueur passent par une file unique, appliquée au pas de simulation suivant, après vérification (propriétaire, coût, prérequis) : fondement du lockstep.
+- Prérequis, stocks et population sont comptés par joueur (composant `Owner`), même s'il n'y a qu'un joueur humain pour l'instant.
 
 ## Unités, combat et lisibilité
 
@@ -155,7 +173,7 @@ Décision : pas de système de doctrine. Toutes les unités et améliorations so
 2. **Palier 2, la spécialisation** (demande une Caserne) : Armurerie (Longue-Vue et Lanciers à la Caserne, améliorations infanterie), Centre de propulsion (Faucons à la Caserne, amélioration de leur capacité), Usine (Bastions, demande l’Armurerie ; améliorations véhicules).
 3. **Palier 3, la puissance** : amélioration du Quartier général (débloque les améliorations de niveau 2 et 3, plus de PV, détection), puis un bâtiment dédié aux unités aériennes, plus tard.
 
-Construction de la Coalition : **l'ouvrier reste sur le chantier**. Le Technicien le plus proche (parmi la sélection) s'y rend ; le chantier est posé tout de suite (c'est déjà un obstacle, ses PV montent de 10 % à 100 %) et n'avance que tant qu'un Technicien le touche. Les autres factions pourront construire autrement (bâtiment qui pousse seul, ouvrier consommé…) : c'est l'asymétrie voulue, prévue dans le moteur (`ConstructionStyle`). Tailles retenues : Quartier général 7 × 7 m, Caserne 5 × 6, Extracteur 4 × 4, Module d'habitat 3 × 3, Tourelle 2 × 2 ; la Caserne demande le Quartier général, la Tourelle la Caserne. L'Extracteur se pose n'importe où tant que les gisements de ressource rare n'existent pas.
+Construction de la Coalition : **l'ouvrier reste sur le chantier**. Le Technicien le plus proche (parmi la sélection) s'y rend ; le chantier est posé tout de suite (c'est déjà un obstacle, ses PV montent de 10 % à 100 %) et n'avance que tant qu'un Technicien le touche. Les autres factions pourront construire autrement (bâtiment qui pousse seul, ouvrier consommé…) : c'est l'asymétrie voulue, prévue dans le moteur (`ConstructionStyle`). Tailles retenues : Quartier général 7 × 7 m, Caserne 5 × 6, Extracteur 4 × 4, Module d'habitat 3 × 3, Tourelle 2 × 2 ; la Caserne demande le Quartier général, la Tourelle la Caserne. L'Extracteur se pose exactement sur une source de ressource rare libre. Production : le Quartier général forme les Techniciens, la Caserne les Sentinelles (Longue-Vue et Lancier attendent l'Armurerie, le Faucon le Centre de propulsion : grisés en attendant).
 
 Améliorations par niveaux (armes 1 à 3, armure 1 à 3, séparées pour l’infanterie et les véhicules) : longues à rechercher et payées en ressource rare, impossibles à mener toutes en parallèle.
 
@@ -205,7 +223,14 @@ On avance par étapes courtes, chacune jouable et testée avant de passer à la 
    - les unités d'un même ordre et de même rayon partagent une seule recherche (un couloir commun qu'elles rejoignent et quittent en ligne droite), et un budget de cases explorées par pas étale le reste : 300 unités peuvent recevoir un ordre en même temps. Quand les groupes grossiront, des **flow fields** (un champ de directions par destination) remplaceront ce partage ;
    - les obstacles fixes repoussent les unités au sol (cercle contre rectangle), y compris celles sur lesquelles on pose un bâtiment.
 3. **Prototype iPad** : compilation iOS, gestes tactiles de base, test des 300 unités sur iPad.
-4. **Économie** : ouvriers, deux ressources, bâtiment principal, file de production, limite de population. *En cours : bâtiments décrits en données (empreinte, PV, temps, coût, prérequis, modèle), pose par la couche d'entrées (B puis une lettre, ou barre de boutons ; fantôme vert ou rouge aligné sur la grille), chantiers et construction. Reste : ressources et récolte, débit des coûts, file de production, population.*
+4. **Économie** : ouvriers, deux ressources, bâtiment principal, file de production, limite de population. *Fait pour la Coalition :*
+   - bâtiments décrits en données (empreinte, PV, temps, coût, prérequis, modèle, dépôt, population fournie, production), pose par la couche d'entrées (B puis une lettre, ou barre de boutons ; fantôme vert ou rouge aligné sur la grille), chantiers et construction ;
+   - joueurs propriétaires (`Owner`) et file unique des ordres appliquée au pas suivant (prête pour le lockstep) ;
+   - gisements de Cristal et sources d'Éther décrits en données de carte, Extracteur posé obligatoirement sur une source ;
+   - récolte déterministe (aller, attente de son tour, extraction, retour au dépôt, gisement voisin quand l'un s'épuise), charge visible ;
+   - coûts débités à la pose, chantiers annulables et remboursés ; files de production de 5 décrites en données, annulation remboursée, point de ralliement (sur un gisement : récolte directe) ; population par joueur avec plafond global réglable ;
+   - interface : compteurs en haut à droite, panneau de production (boutons et raccourcis par la même `GameAction`, file et progression), panneau de chantier, messages courts.
+   *Reste : économie des Sylves et du Collectif (autres façons de récolter), contrôle de territoire à étudier.*
 5. **Combat** : portée, dégâts, armure, ciblage automatique, attaque-déplacement, mort des unités.
 6. **Groupes de contrôle et interface** : barre de groupes, boutons d’ordres, raccourcis, minicarte.
 7. **Brouillard de guerre et IA adverse** basique qui construit et attaque par vagues.

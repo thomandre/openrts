@@ -122,7 +122,6 @@ pub(crate) fn apply_harvest_orders(
 }
 
 /// Fait avancer le cycle de récolte de chaque ouvrier d'un pas.
-#[allow(clippy::too_many_arguments)]
 pub(crate) fn harvest(
     mut commands: Commands,
     rules: Option<Res<EconomyRules>>,

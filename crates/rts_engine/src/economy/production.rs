@@ -134,7 +134,6 @@ pub(crate) fn count_population(
 }
 
 /// Applique les ordres de production, d'annulation et de ralliement.
-#[allow(clippy::too_many_arguments)]
 pub(crate) fn apply_production_orders(
     mut commands: Commands,
     tick: Res<TickCommands>,
@@ -213,7 +212,6 @@ pub(crate) fn apply_production_orders(
 
 /// Fait avancer la première unité de chaque file, et fait apparaître les
 /// unités terminées.
-#[allow(clippy::too_many_arguments)]
 pub(crate) fn progress_production(
     mut commands: Commands,
     rules: Option<Res<EconomyRules>>,

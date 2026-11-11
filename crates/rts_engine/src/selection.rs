@@ -95,7 +95,6 @@ fn pick_node(ground: Vec2, picked: Option<Entity>, nodes: &Query<(Entity, &Resou
         .map(|(entity, ..)| *entity)
 }
 
-#[allow(clippy::too_many_arguments)]
 fn handle_actions(
     mut commands: Commands,
     mut actions: MessageReader<GameAction>,

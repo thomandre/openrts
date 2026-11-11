@@ -11,6 +11,8 @@ use bevy::text::{FontSource, GenericFontFamily};
 use super::{completed_types, Building, BuildingBody, BuildingCatalog, SiteFrame, UnderConstruction};
 use super::placement::Placement;
 use crate::camera::RtsCamera;
+use crate::economy::ui::format_cost;
+use crate::economy::EconomyRules;
 use crate::input::{ActionButton, BlocksPointer, GameAction, Hotkey, InputContext};
 use crate::players::{LocalPlayer, Owner};
 use crate::selection::Selected;
@@ -40,16 +42,23 @@ pub(crate) struct ProgressBar {
 #[derive(Component, Debug)]
 pub(crate) struct ProgressFill;
 
-const PANEL: Color = Color::srgba(0.03, 0.05, 0.08, 0.86);
-const BORDER: Color = Color::srgb(0.18, 0.55, 0.62);
-const BUTTON: Color = Color::srgba(0.09, 0.13, 0.18, 0.95);
-const BUTTON_ACTIVE: Color = Color::srgba(0.12, 0.3, 0.36, 0.95);
-const TEXT: Color = Color::srgb(0.88, 0.92, 0.95);
-const KEY_TEXT: Color = Color::srgb(0.31, 0.82, 0.88);
-const DISABLED_TEXT: Color = Color::srgb(0.38, 0.4, 0.43);
+pub(crate) const PANEL: Color = Color::srgba(0.03, 0.05, 0.08, 0.86);
+pub(crate) const BORDER: Color = Color::srgb(0.18, 0.55, 0.62);
+pub(crate) const BUTTON: Color = Color::srgba(0.09, 0.13, 0.18, 0.95);
+pub(crate) const BUTTON_ACTIVE: Color = Color::srgba(0.12, 0.3, 0.36, 0.95);
+pub(crate) const TEXT: Color = Color::srgb(0.88, 0.92, 0.95);
+pub(crate) const KEY_TEXT: Color = Color::srgb(0.31, 0.82, 0.88);
+pub(crate) const DISABLED_TEXT: Color = Color::srgb(0.38, 0.4, 0.43);
+
+/// Police de l'interface, à la taille `size`. Police sans empattement du
+/// système : contrairement à la police intégrée de Bevy, elle a les lettres
+/// accentuées (« Quartier général »).
+pub(crate) fn ui_font(size: f32) -> TextFont {
+    TextFont { font: FontSource::Generic(GenericFontFamily::SansSerif), ..TextFont::from_font_size(size) }
+}
 
 /// Lettre affichée d'un raccourci.
-fn key_label(c: char) -> String {
+pub(crate) fn key_label(c: char) -> String {
     c.to_uppercase().collect()
 }
 
@@ -58,6 +67,7 @@ fn key_label(c: char) -> String {
 pub(crate) fn update_command_bar(
     mut commands: Commands,
     catalog: Option<Res<BuildingCatalog>>,
+    rules: Option<Res<EconomyRules>>,
     context: Res<InputContext>,
     placement: Res<Placement>,
     local: Res<LocalPlayer>,
@@ -70,7 +80,7 @@ pub(crate) fn update_command_bar(
 ) {
     let Some(catalog) = catalog else { return };
     let Ok(mut visibility) = bar.single_mut() else {
-        spawn_command_bar(&mut commands, &catalog);
+        spawn_command_bar(&mut commands, &catalog, rules.as_deref());
         return;
     };
     let has_builder = selected.iter().any(|(unit, owner)| catalog.builders.contains(&unit.type_index) && owner.0 == local.0);
@@ -110,13 +120,8 @@ pub(crate) fn update_command_bar(
     }
 }
 
-fn spawn_command_bar(commands: &mut Commands, catalog: &BuildingCatalog) {
-    // Police sans empattement du système : contrairement à la police intégrée
-    // de Bevy, elle a les lettres accentuées (« Quartier général »).
-    let font = |size: f32| TextFont {
-        font: FontSource::Generic(GenericFontFamily::SansSerif),
-        ..TextFont::from_font_size(size)
-    };
+fn spawn_command_bar(commands: &mut Commands, catalog: &BuildingCatalog, rules: Option<&EconomyRules>) {
+    let font = ui_font;
     // Conteneur pleine largeur (transparent, il ne bloque pas les clics) qui
     // centre le panneau en bas de l'écran.
     commands
@@ -152,10 +157,7 @@ fn spawn_command_bar(commands: &mut Commands, catalog: &BuildingCatalog) {
                     .spawn(Node { flex_direction: FlexDirection::Row, column_gap: Val::Px(6.0), ..default() })
                     .with_children(|row| {
                         for (type_index, building) in catalog.types.iter().enumerate() {
-                            let mut cost = format!("{} P", building.cost.primary);
-                            if building.cost.rare > 0 {
-                                cost += &format!(" + {} R", building.cost.rare);
-                            }
+                            let cost = format_cost(building.cost, rules);
                             row.spawn((
                                 BuildButton { type_index },
                                 ActionButton {

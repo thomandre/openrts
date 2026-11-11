@@ -23,7 +23,7 @@
 //! bâtiment qui monte du sol) ne font que de l'affichage et des demandes.
 
 pub mod placement;
-pub mod ui;
+pub(crate) mod ui;
 
 use bevy::asset::RenderAssetUsages;
 use bevy::light::NotShadowCaster;

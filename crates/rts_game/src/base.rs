@@ -1,7 +1,12 @@
-//! Base de départ de la Coalition, et scène de démonstration des bâtiments.
+//! Base de départ de la Coalition, et scènes de démonstration.
 //!
 //! Partie normale : un Quartier général déjà construit près du centre de la
-//! carte et quelques Techniciens devant lui, en plus de l'armée.
+//! carte, ses gisements et quatre Techniciens qui récoltent, en plus de l'armée.
+//!
+//! `OPENRTS_DEMO=economy` montre l'économie en marche : base de départ,
+//! douze Techniciens sur la ligne de Cristal et trois à l'Extracteur posé sur
+//! une source d'Éther, Quartier général sélectionné avec trois Techniciens en
+//! file et son point de ralliement sur un gisement.
 //!
 //! `OPENRTS_DEMO=buildings` met en scène au démarrage, pour vérifier le rendu
 //! d'un coup d'œil (et les captures) : les cinq bâtiments posés, un chantier
@@ -12,6 +17,8 @@
 use bevy::prelude::*;
 use rts_engine::camera::RtsCamera;
 use rts_engine::buildings::{BuildingCatalog, ConstructionStyle, ConstructionTask, PlacementGhost};
+use rts_engine::collision::StaticObstacle;
+use rts_engine::economy::ResourceNode;
 use rts_engine::navigation::GridFrame;
 use rts_engine::orders::{CommandQueue, PlayerCommand};
 use rts_engine::players::PlayerId;
@@ -161,7 +168,7 @@ pub fn focus_camera(mut cameras: Query<&mut RtsCamera, Added<RtsCamera>>) {
     }
 }
 
-/// Active la démonstration (`OPENRTS_DEMO=buildings`).
+/// Active la démonstration des bâtiments (`OPENRTS_DEMO=buildings`).
 pub struct DemoPlugin;
 
 impl Plugin for DemoPlugin {
@@ -170,7 +177,67 @@ impl Plugin for DemoPlugin {
     }
 }
 
-/// La démonstration est-elle demandée ?
-pub fn demo_requested() -> bool {
-    std::env::var("OPENRTS_DEMO").is_ok_and(|d| d.eq_ignore_ascii_case("buildings"))
+/// Les scènes de démonstration.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Demo {
+    Buildings,
+    Economy,
+}
+
+/// La démonstration demandée (`OPENRTS_DEMO=buildings` ou `economy`), s'il y en a une.
+pub fn demo_requested() -> Option<Demo> {
+    match std::env::var("OPENRTS_DEMO").map(|d| d.to_lowercase()).as_deref() {
+        Ok("buildings") => Some(Demo::Buildings),
+        Ok("economy") => Some(Demo::Economy),
+        _ => None,
+    }
+}
+
+/// La démonstration de l'économie (voir l'en-tête du module).
+pub fn spawn_economy_demo(
+    commands: &mut Commands,
+    buildings: &BuildingCatalog,
+    units: &UnitCatalog,
+    deposits: &DepositVisuals,
+    frame: GridFrame,
+) {
+    let hq = place(commands, buildings, frame, QUARTIER_GENERAL, START_HQ);
+    for x in [-8.5, 8.5] {
+        place(commands, buildings, frame, HABITAT, Vec2::new(x, -8.5));
+    }
+    place(commands, buildings, frame, CASERNE, Vec2::new(14.5, -4.0));
+    let layout = gisements::starting_base(START_HQ);
+    let (nodes, sources) = gisements::spawn_base(commands, deposits, frame, &layout);
+    // Un Extracteur terminé sur la source de gauche.
+    let extractor = place(commands, buildings, frame, EXTRACTEUR, layout.rare[0].0);
+    let source = sources[0];
+
+    let mut harvest = Vec::new();
+    // Douze Techniciens en rang derrière le Quartier général, répartis sur les gisements.
+    for i in 0..12 {
+        let worker = units.spawn_facing(commands, TECHNICIEN, START_HQ + Vec2::new(-8.25 + i as f32 * 1.5, -4.4), 0.0);
+        harvest.push((worker, nodes[(i * 5 + 2) % nodes.len()]));
+    }
+    // Trois à l'Extracteur.
+    for z in [-1.5, 0.0, 1.5] {
+        let worker = units.spawn_facing(commands, TECHNICIEN, START_HQ + Vec2::new(-6.5, z), 0.0);
+        harvest.push((worker, source));
+    }
+    commands.entity(hq).insert(Selected);
+    let rally_node = nodes[6];
+    commands.queue(move |world: &mut World| {
+        // L'Extracteur couvre sa source (sa pose normale passe par la simulation).
+        if let Some(mut node) = world.get_mut::<ResourceNode>(source) {
+            node.extractor = Some(extractor);
+        }
+        let rally = world.get::<StaticObstacle>(rally_node).map(|o| o.0.center()).unwrap_or_default();
+        let mut queue = world.resource_mut::<CommandQueue>();
+        for (worker, node) in harvest {
+            queue.push(HUMAN, PlayerCommand::Harvest { units: vec![worker], node });
+        }
+        queue.push(HUMAN, PlayerCommand::SetRally { buildings: vec![hq], point: rally, node: Some(rally_node) });
+        for _ in 0..3 {
+            queue.push(HUMAN, PlayerCommand::Train { building: hq, unit_type: TECHNICIEN });
+        }
+    });
 }

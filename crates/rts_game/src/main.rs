@@ -13,6 +13,7 @@
 //!   quelques secondes, affiche les FPS moyens, puis quitte ;
 //! - `OPENRTS_ZOOM=12` : distance de départ de la caméra, de 10 à 70 m ;
 //! - `OPENRTS_DEMO=buildings` : scène de démonstration des bâtiments (Coalition) ;
+//! - `OPENRTS_DEMO=economy` : l'économie en marche (récolte, production) ;
 //! - `OPENRTS_POP_MAX=100` : plafond global de population.
 
 mod base;
@@ -252,7 +253,7 @@ fn main() {
             actions.write(GameAction::SpawnStressTest);
         });
     }
-    if faction == Faction::Coalition && base::demo_requested() {
+    if faction == Faction::Coalition && base::demo_requested() == Some(base::Demo::Buildings) {
         app.add_plugins(base::DemoPlugin);
     }
     app.run();
@@ -295,25 +296,30 @@ fn spawn_units(
     let palette = faction.palette(coalition::SIGNAL_ORANGE);
     let catalog = UnitCatalog::new(faction.unit_types(), &palette, &mut meshes, &mut materials, &mut images);
 
-    // Bâtiments : la Coalition seulement pour l'instant (base de départ, ou
-    // scène de démonstration avec `OPENRTS_DEMO=buildings`).
+    // Bâtiments et économie : la Coalition seulement pour l'instant (base de
+    // départ, ou scènes de démonstration avec `OPENRTS_DEMO`).
     if *faction == Faction::Coalition {
         let buildings = base::building_catalog(&catalog, &mut meshes, &mut materials);
         let frame = GridFrame::new(bounds.0, &nav);
         let demo = base::demo_requested();
-        if demo {
-            base::spawn_demo(&mut commands, &buildings, &catalog, frame);
-        } else {
-            let deposits = gisements::DepositVisuals::new(&mut meshes, &mut materials);
-            base::spawn_start(&mut commands, &buildings, &catalog, &deposits, frame);
+        let deposits = gisements::DepositVisuals::new(&mut meshes, &mut materials);
+        // Le joueur commence avec 50 de ressource principale (valeur proposée) ;
+        // la démonstration de l'économie, avec de quoi remplir sa file.
+        let mut stock = Cost::new(50, 0);
+        match demo {
+            Some(base::Demo::Buildings) => base::spawn_demo(&mut commands, &buildings, &catalog, frame),
+            Some(base::Demo::Economy) => {
+                base::spawn_economy_demo(&mut commands, &buildings, &catalog, &deposits, frame);
+                stock = Cost::new(400, 0);
+            }
+            None => base::spawn_start(&mut commands, &buildings, &catalog, &deposits, frame),
         }
         commands.insert_resource(buildings);
         commands.insert_resource(coalition::economy_rules(gisements::resource_infos()));
-        // Le joueur commence avec 50 de ressource principale (valeur proposée).
         let mut players = Players::default();
-        players.get_mut(PlayerId(0)).stock = Cost::new(50, 0);
+        players.get_mut(PlayerId(0)).stock = stock;
         commands.insert_resource(players);
-        if demo {
+        if demo.is_some() {
             commands.insert_resource(catalog);
             return;
         }

@@ -282,8 +282,33 @@ impl Plugin for EconomyPlugin {
                     .in_set(SimSet::Orders),
             )
             .add_systems(FixedUpdate, production::progress_production.in_set(SimSet::Construction))
-            .add_systems(Update, (shrink_nodes, harvest::show_carried_loads))
-            .add_systems(Update, ui::handle_production_actions.in_set(crate::RtsSystems::Actions));
+            .add_systems(Update, (shrink_nodes, harvest::show_carried_loads));
+
+    }
+}
+
+/// L'interface de l'économie (compteurs, panneaux, messages, repère de
+/// ralliement) : séparée de [`EconomyPlugin`] pour que les tests de la
+/// simulation tournent sans rendu.
+pub struct EconomyUiPlugin;
+
+impl Plugin for EconomyUiPlugin {
+    fn build(&self, app: &mut App) {
+        app
+            .add_systems(
+                Update,
+                (
+                    ui::handle_production_actions,
+                    ui::spawn_economy_ui,
+                    ui::update_counters,
+                    ui::update_production_panel,
+                    ui::update_rally_marker,
+                    ui::update_site_panel,
+                    ui::show_notices,
+                )
+                    .chain()
+                    .in_set(crate::RtsSystems::Actions),
+            );
     }
 }
 

@@ -9,8 +9,8 @@ Le design du jeu est décrit dans [GAME_DESIGN.md](GAME_DESIGN.md).
 
 | Dossier | Rôle |
 | --- | --- |
-| `crates/rts_engine` | Le moteur générique : entrées, caméra, sélection, simulation, collisions, navigation (grille, A\*), bâtiments (pose, chantiers), rendu (`graphics`). Aucun contenu de jeu. |
-| `crates/rts_game` | Le jeu : unités, bâtiments, factions, cartes (`coalition.rs`, `sylves.rs`, `collectif.rs`, `map.rs`, `base.rs`). Utilise `rts_engine`. |
+| `crates/rts_engine` | Le moteur générique : entrées, caméra, sélection, joueurs (`players`), file des ordres (`orders`), simulation, collisions, navigation (grille, A\*), bâtiments (pose, chantiers), économie (`economy` : gisements, récolte, production, population, interface), rendu (`graphics`). Aucun contenu de jeu. |
+| `crates/rts_game` | Le jeu : unités, bâtiments, factions, cartes, gisements (`coalition.rs`, `sylves.rs`, `collectif.rs`, `map.rs`, `base.rs`, `gisements.rs`). Utilise `rts_engine`. |
 
 ## Compiler et lancer
 
@@ -32,6 +32,11 @@ Sous Linux, il faut aussi les dépendances système de Bevy
 | Sélection en rectangle | Glisser au clic gauche |
 | Ajouter / retirer de la sélection | Maj + clic ou Maj + rectangle |
 | Déplacer la sélection | Clic droit sur le sol |
+| Récolter (Techniciens sélectionnés) | Clic droit sur un gisement de Cristal ou sur un Extracteur terminé |
+| Point de ralliement (bâtiment producteur sélectionné) | Clic droit sur le sol, ou sur un gisement (les Techniciens produits y récoltent directement) |
+| Produire (Quartier général ou Caserne sélectionné) | Touche de l'unité ou bouton du panneau en bas : T (Technicien, QG) ; S (Sentinelle), V, L, F (Caserne, grisés tant que leur bâtiment n'existe pas) |
+| Annuler une unité en file | Clic sur sa case dans la file (remboursée) |
+| Annuler un chantier sélectionné | X ou bouton « Annuler » (remboursé) |
 | Faire défiler la caméra | Flèches ou souris au bord de l'écran |
 | Zoomer | Molette ou trackpad |
 | Test de charge (300 unités) | F3 |
@@ -57,7 +62,7 @@ passent au-dessus de tout et ne gênent que les autres volantes.
 | --- | --- | --- | --- |
 | Q | Quartier général | 7 × 7 m | — |
 | H | Module d'habitat | 3 × 3 m | — |
-| E | Extracteur | 4 × 4 m | — (posable partout tant qu'il n'y a pas de gisements) |
+| E | Extracteur | 4 × 4 m | — (pile sur une source d'Éther libre) |
 | C | Caserne | 5 × 6 m | Quartier général |
 | T | Tourelle | 2 × 2 m | Caserne |
 
@@ -65,9 +70,37 @@ Les raccourcis sont des lettres tapées : ils suivent ce qui est écrit sur les
 touches, en AZERTY comme en QWERTY. En mode pose, un fantôme suit le pointeur,
 aligné sur la grille : vert si l'emplacement est libre, rouge sinon. Le
 Technicien le plus proche se rend sur le chantier et y reste : le bâtiment
-monte du sol tant qu'il travaille. Les coûts sont affichés mais pas encore
-débités (pas d'économie pour l'instant). La partie démarre avec un Quartier
-général et quatre Techniciens.
+monte du sol tant qu'il travaille. Le coût est débité à la pose (refus et
+message « Ressources insuffisantes » sinon) et remboursé si l'on annule le
+chantier. L'Extracteur s'aimante sur la source d'Éther la plus proche ;
+ailleurs, son fantôme est rouge (« Doit être posé sur une source »).
+
+### Économie
+
+Deux ressources, aux noms **provisoires** : le **Cristal** (principale,
+grappes bleu glacier en ligne derrière le Quartier général) et l'**Éther**
+(rare, failles violettes sur les flancs, récoltées par un Extracteur). Les
+compteurs en haut à droite montrent les stocks et la population
+(utilisée / disponible).
+
+- Les Techniciens vont au gisement, extraient (2,8 s pour 5 Cristal, 2 s pour
+  4 Éther), portent leur charge (visible) au Quartier général le plus proche,
+  et recommencent. Un seul Technicien à la fois par gisement : les autres
+  attendent leur tour ou passent au voisin libre ; deux à trois par gisement
+  le saturent. Un gisement vidé disparaît, ses Techniciens passent au suivant.
+- Production : un bâtiment producteur sélectionné affiche ses boutons et sa
+  file (5 au plus, payée à la mise en file, progression de la première
+  unité). Les unités produites sortent vers le point de ralliement.
+- Population : chaque unité en occupe (1 à 4), le Quartier général en
+  fournit 15 et chaque Module d'habitat 8, dans la limite d'un plafond
+  global (200, réglable avec `OPENRTS_POP_MAX`). Au-delà : « Population maximale ».
+
+La partie démarre avec 50 Cristal, un Quartier général, deux Modules
+d'habitat, les gisements et quatre Techniciens qui récoltent déjà.
+
+Tous les ordres (déplacer, récolter, poser, produire, rallier, annuler)
+passent par une file appliquée au pas de simulation suivant : c'est la base
+du futur multijoueur en lockstep (voir `crates/rts_engine/src/orders.rs`).
 
 ## Rendu et réglages graphiques
 
@@ -95,11 +128,15 @@ Deux niveaux de qualité (`GraphicsQuality`) :
 | `OPENRTS_QUALITY=bas` | Qualité graphique Basse (`haut` par défaut) |
 | `OPENRTS_STRESS=1` | Lance le test de charge (300 unités) au démarrage |
 | `OPENRTS_ZOOM=12` | Distance de départ de la caméra (10 à 70 m) |
-| `OPENRTS_DEMO=buildings` | Coalition : scène de démonstration des bâtiments (les cinq bâtiments, un chantier en cours, un fantôme vert et un rouge, un groupe qui contourne la Caserne au bout de 11 s) ; avec `OPENRTS_FOCUS=x,z`, la caméra vise ce point du sol |
+| `OPENRTS_DEMO=buildings` | Coalition : scène de démonstration des bâtiments (les cinq bâtiments, un chantier en cours, un fantôme vert et un rouge, un groupe qui contourne la Caserne au bout de 11 s) |
+| `OPENRTS_FOCUS=x,z` | La caméra vise ce point du sol au démarrage |
+| `OPENRTS_DEMO=economy` | Coalition : l'économie en marche (douze Techniciens sur la ligne de Cristal, trois à un Extracteur, Quartier général sélectionné avec trois Techniciens en file et son point de ralliement, compteurs) |
+| `OPENRTS_POP_MAX=100` | Plafond global de population (200 par défaut) |
 | `OPENRTS_SCREENSHOT=capture.png` | Après 14 s : affiche les FPS moyens des 6 dernières secondes, enregistre une capture du rendu et quitte (synchronisation verticale coupée pour mesurer) |
 
 Exemples : `OPENRTS_WINDOWED=1 OPENRTS_STRESS=1 OPENRTS_SCREENSHOT=/tmp/charge.png cargo run --release`,
-`OPENRTS_WINDOWED=1 OPENRTS_DEMO=buildings OPENRTS_ZOOM=36 OPENRTS_SCREENSHOT=/tmp/batiments.png cargo run --release`.
+`OPENRTS_WINDOWED=1 OPENRTS_DEMO=buildings OPENRTS_ZOOM=36 OPENRTS_SCREENSHOT=/tmp/batiments.png cargo run --release`,
+`OPENRTS_WINDOWED=1 OPENRTS_DEMO=economy OPENRTS_ZOOM=34 OPENRTS_FOCUS=1,-11 OPENRTS_SCREENSHOT=/tmp/economie.png cargo run --release`.
 Pour mesurer les performances, compiler en `--release` : en mode debug, les
 vérifications internes de Bevy et de wgpu coûtent beaucoup d'images par seconde.
 
