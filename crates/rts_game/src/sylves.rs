@@ -1,4 +1,5 @@
-//! Les Sylves : palette, ambiance et unités (faction en exploration visuelle).
+//! Les Sylves : palette, ambiance, unités, bâtiments et économie (faction en
+//! exploration).
 //!
 //! Direction artistique : « écorce striée, feuillage sombre, poches de sève
 //! lumineuse ; une forêt consciente qui avance racine après racine ».
@@ -31,13 +32,20 @@
 //! | `Team` | couleur du joueur (feuilles, bourgeons, carapaces, ailes) |
 //! | `Glow` | spores (émissif turquoise) |
 //! | `Engine` | sève (émissif ambré) |
+//!
+//! Construction : **la Pousse devient le bâtiment**. Elle se rend à
+//! l'emplacement, s'y enracine et disparaît ; le chantier pousse ensuite seul
+//! (style `WorkerConsumed` du moteur, voir [`CONSTRUCTION`]).
 
 use std::f32::consts::{PI, TAU};
 
 use bevy::prelude::*;
+use rts_engine::buildings::{BuildingType, ConstructionStyle, Cost, PlacementRule};
+use rts_engine::economy::production::{ProductionOption, Requirement, UnitEconomy};
+use rts_engine::economy::{EconomyRules, ResourceInfo, ResourceKind};
 use rts_engine::graphics::{Ambiance, EnvironmentSettings, FogSettings, ParticleSettings, SceneLight};
 use rts_engine::units::{
-    HoverMotion, MaterialSlot, ModelBuilder, Palette, PartShape, Pulse, SurfaceDetail, SurfaceStyle, UnitType,
+    HoverMotion, MaterialSlot, ModelBuilder, Motion, Palette, PartShape, Pulse, SurfaceDetail, SurfaceStyle, UnitType,
 };
 
 use crate::map::GroundStyle;
@@ -472,6 +480,323 @@ fn samare() -> ModelBuilder {
     b
 }
 
+// ---------------------------------------------------------------------------
+// Les bâtiments (palier 1, propositions : voir GAME_DESIGN.md).
+// ---------------------------------------------------------------------------
+
+/// Façon de construire des Sylves : la Pousse se transforme en chantier, qui
+/// pousse seul ; annulé, il rend 75 % de son coût et la Pousse.
+pub const CONSTRUCTION: ConstructionStyle = ConstructionStyle::WorkerConsumed { refund_percent: 75 };
+
+/// Indices des bâtiments dans [`building_types`].
+pub mod building {
+    pub const ARBRE_MERE: usize = 0;
+    pub const SOUCHE: usize = 1;
+    pub const CALICE: usize = 2;
+    pub const RONCERAIE: usize = 3;
+    pub const EPINEUX: usize = 4;
+}
+
+/// Les bâtiments du palier 1, mêmes rôles que ceux de la Coalition :
+///
+/// - **Arbre-mère** (7 × 7 m) : le cœur de la base, dépôt des récoltes,
+///   produit les Pousses, 15 de population ;
+/// - **Souche nourricière** (3 × 3 m) : 8 de population ;
+/// - **Calice** (4 × 4 m) : fleur géante posée sur une source d'Éther, qui
+///   le boit ; les Pousses le récoltent à son pied ;
+/// - **Ronceraie** (5 × 5 m) : roncier en voûte où mûrissent les Ronciers ;
+/// - **Épineux** (2 × 2 m) : défense fixe, débloquée par la Ronceraie.
+///
+/// Chiffres proposés, à ajuster en test. Chaque bâtiment coûte aussi une
+/// Pousse (50 de Cristal et 12 s de production) : ses prix en Cristal sont
+/// donc un peu plus bas que ceux de la Coalition, dont l'ouvrier survit.
+pub fn building_types() -> Vec<BuildingType> {
+    use building::*;
+    vec![
+        BuildingType {
+            dropoff: true,
+            supply: 15,
+            production: vec![option(kind::POUSSE, 'p', &[])],
+            ..building_type("Arbre-mère", (7, 7), 1500.0, 75.0, (350, 0), &[], 'a', arbre_mere())
+        },
+        BuildingType { supply: 8, ..building_type("Souche nourricière", (3, 3), 350.0, 20.0, (75, 0), &[], 's', souche()) },
+        BuildingType {
+            placement: PlacementRule::OnResource(ResourceKind::Rare),
+            ..building_type("Calice", (4, 4), 450.0, 22.0, (50, 0), &[], 'c', calice())
+        },
+        // La Ronceraie fait mûrir les Ronciers ; Sourcier et Lanceur de
+        // spores attendent des bâtiments du palier 2 pas encore dans le jeu.
+        BuildingType {
+            production: vec![
+                option(kind::RONCIER, 'r', &[]),
+                option(kind::SOURCIER, 's', &["Fontaine de sève"]),
+                option(kind::LANCEUR, 'l', &["Champignonnière"]),
+            ],
+            ..building_type("Ronceraie", (5, 5), 1000.0, 45.0, (125, 0), &[ARBRE_MERE], 'r', ronceraie())
+        },
+        building_type("Épineux", (2, 2), 300.0, 22.0, (100, 0), &[RONCERAIE], 'e', epineux()),
+    ]
+}
+
+/// Règles économiques des Sylves : les Pousses récoltent, avec les mêmes
+/// cadences que les Techniciens pour l'instant (5 de Cristal en 2,8 s, 4
+/// d'Éther en 2 s, au pied du Calice). Coûts, temps de production (en
+/// secondes) et population proposés, à ajuster en test.
+pub fn economy_rules(resources: [ResourceInfo; 2]) -> EconomyRules {
+    // Dans l'ordre de `unit_types` : (Cristal, Éther), temps, population.
+    let units = [
+        ((50, 0), 12.0, 1), // Pousse
+        ((50, 0), 16.0, 1), // Roncier
+        ((75, 25), 22.0, 2), // Sourcier
+        ((125, 50), 30.0, 3), // Lanceur de spores
+        ((250, 150), 55.0, 6), // Gardien
+        ((75, 25), 20.0, 2), // Samare
+    ];
+    EconomyRules {
+        resources,
+        harvesters: vec![kind::POUSSE],
+        carry: [5, 4],
+        gather_time: [2.8, 2.0],
+        units: units
+            .iter()
+            .map(|&((primary, rare), train_time, population)| UnitEconomy { cost: Cost::new(primary, rare), train_time, population })
+            .collect(),
+    }
+}
+
+/// Une unité produite par un bâtiment ; `requires` : noms de bâtiments qui
+/// n'existent pas encore dans le jeu (l'option reste grisée).
+fn option(unit_type: usize, hotkey: char, requires: &[&str]) -> ProductionOption {
+    ProductionOption {
+        unit_type,
+        hotkey,
+        requires: requires.iter().map(|name| Requirement::NotYetAvailable((*name).into())).collect(),
+    }
+}
+
+/// `cost` : (Cristal, Éther).
+fn building_type(
+    name: &str,
+    footprint: (u32, u32),
+    max_health: f32,
+    build_time: f32,
+    cost: (u32, u32),
+    requires: &[usize],
+    hotkey: char,
+    model: ModelBuilder,
+) -> BuildingType {
+    BuildingType {
+        name: name.into(),
+        footprint: UVec2::new(footprint.0, footprint.1),
+        max_health,
+        build_time,
+        cost: Cost::new(cost.0, cost.1),
+        requires: requires.to_vec(),
+        hotkey,
+        parts: model.build(),
+        ..Default::default()
+    }
+}
+
+/// Épine ou pétale : un cône dont la base est en `base` et la pointe dans la
+/// direction `dir`, long de `length`.
+fn spike(b: &mut ModelBuilder, slot: MaterialSlot, radius: f32, length: f32, base: Vec3, dir: Vec3) {
+    let dir = dir.normalize();
+    // Le cône du moteur est centré sur son origine, pointe vers +y : on le
+    // tourne vers `dir` et on le recule d'une demi-longueur.
+    let transform = Transform::from_translation(base + dir * length / 2.0).with_rotation(Quat::from_rotation_arc(Vec3::Y, dir));
+    b.add(slot, PartShape::Frustum { radius_bottom: radius, radius_top: 0.0, height: length }, transform);
+}
+
+/// Racines qui rayonnent autour d'un pied : `count` racines de `from` (rayon
+/// au départ, hauteur) à `to` (rayon à l'arrivée, sous le sol).
+fn roots(b: &mut ModelBuilder, count: u32, from: (f32, f32), to: f32, thickness: f32, turn: f32) {
+    for i in 0..count {
+        let a = i as f32 * TAU / count as f32 + turn;
+        let (sin, cos) = a.sin_cos();
+        let at = |r: f32, y: f32| [cos * r, y, sin * r];
+        let mid = (from.0 + to) / 2.0;
+        b.branch(DARK_BARK, &[at(from.0, from.1), at(mid, from.1 * 0.55), at(to, -0.06)], thickness);
+    }
+}
+
+/// Champignon : pied de lichen et chapeau aux couleurs du joueur, posé en
+/// `at`, de taille `scale` (1 : chapeau de 60 cm de rayon).
+fn mushroom(b: &mut ModelBuilder, at: Vec3, scale: f32) {
+    b.group(Transform::from_translation(at).with_scale(Vec3::splat(scale)), |b| {
+        b.bulb(LICHEN, &[[0.0, 0.0], [0.16, 0.0], [0.12, 0.3], [0.13, 0.6], [0.0, 0.62]], Transform::IDENTITY);
+        // Chapeau : bord retroussé, dessus bombé.
+        b.bulb(TEAM, &[[0.0, 0.52], [0.5, 0.55], [0.62, 0.64], [0.5, 0.8], [0.25, 0.9], [0.0, 0.93]], Transform::IDENTITY);
+    });
+}
+
+/// Arbre-mère : le cœur de la base, le plus grand bâtiment (6,5 m de haut,
+/// assez bas pour ne pas cacher la ligne de Cristal derrière lui).
+/// Une butte d'humus tachée de mousse et sept grosses racines qui tiennent toute
+/// l'empreinte ; un tronc évasé creusé en façade d'une grande poche de sève
+/// (le dépôt, où les Pousses versent leur récolte), qui respire ; cinq
+/// branches maîtresses chargées de feuillage, des lanternes de spores
+/// pendues dessous, et au sommet une couronne de feuilles et cinq bourgeons
+/// aux couleurs du joueur. Vu de dessus : une étoile de racines sous un
+/// disque de feuillage cerclé de bourgeons d'équipe.
+fn arbre_mere() -> ModelBuilder {
+    let mut b = ModelBuilder::new();
+    b.blob(DARK_BARK, 1.9, 0.14, 1.6, Vec3::ZERO, v(1.0, 0.25, 1.0)); // butte d'humus
+    for (x, z) in [(1.6, 0.9), (-1.4, 1.3), (0.4, -1.9)] {
+        b.blob(MOSS, 0.5, 0.3, 2.2, v(x, 0.15, z), v(1.0, 0.45, 1.0)); // plaques de mousse
+    }
+    roots(&mut b, 7, (1.0, 1.1), 3.3, 0.34, 0.2);
+    // Le tronc : profil (rayon, hauteur), évasé au pied et à la fourche.
+    b.bulb(BARK, &[[1.55, 0.0], [1.3, 0.6], [1.0, 1.5], [0.85, 2.5], [0.9, 3.2], [1.15, 3.8], [0.6, 4.2], [0.0, 4.3]], Transform::IDENTITY);
+    // La poche de sève en façade (−z), dans un creux bordé d'écorce sombre.
+    b.pulsing(SAP_PULSE, |b| {
+        b.blob(SAP, 0.55, 0.06, 2.0, v(0.0, 1.55, -0.92), v(1.0, 1.35, 0.55));
+    });
+    b.branch(
+        DARK_BARK,
+        &[[-0.62, 0.85, -1.0], [-0.72, 1.6, -0.95], [-0.42, 2.3, -0.88], [0.0, 2.45, -0.86], [0.42, 2.3, -0.88], [0.72, 1.6, -0.95], [0.62, 0.85, -1.0]],
+        0.13,
+    );
+    // Veines de sève qui montent dans l'écorce.
+    b.branch(SAP, &[[0.95, 0.9, -0.7], [0.8, 1.9, -0.55], [0.75, 2.8, -0.45], [0.95, 3.6, -0.5]], 0.05);
+    b.branch(SAP, &[[-0.85, 1.4, 0.8], [-0.75, 2.4, 0.55], [-0.95, 3.4, 0.6]], 0.05);
+    // Cinq branches maîtresses, du feuillage au bout de chacune.
+    for i in 0..5 {
+        let a = i as f32 * TAU / 5.0 + 0.95;
+        let (sin, cos) = a.sin_cos();
+        let at = |r: f32, y: f32| v(cos * r, y, sin * r);
+        b.branch(BARK, &[at(0.5, 3.7).to_array(), at(1.4, 4.3).to_array(), at(2.2, 4.7).to_array(), at(2.6, 4.95).to_array()], 0.3);
+        b.leaves(LEAVES, at(2.55, 5.1), 1.2, 32);
+        b.blob(TEAM, 0.32, 0.25, 2.4, at(2.6, 5.85), Vec3::ONE); // bourgeon d'équipe
+        if i % 2 == 0 {
+            // Lanterne de spores pendue sous la branche.
+            b.branch(LICHEN, &[at(1.7, 4.55).to_array(), at(1.75, 3.95).to_array()], 0.025);
+            b.sphere(SPORE, 0.16, at(1.75, 3.8));
+        }
+    }
+    b.blob(MOSS, 0.65, 0.3, 2.2, v(0.75, 3.75, 0.55), Vec3::ONE); // mousse à la fourche
+    // Couronne aux couleurs du joueur, au sommet.
+    b.leaves(TEAM, v(0.0, 5.4, 0.0), 1.3, 44);
+    b.leaves(LEAVES, v(0.0, 4.8, 0.0), 1.6, 34);
+    b
+}
+
+/// Souche nourricière : une large souche coupée, évasée sur ses racines,
+/// au cerne pâle, coiffée de trois champignons aux couleurs du joueur ; une
+/// fente de sève lumineuse en façade. Vu de dessus : un disque et trois
+/// chapeaux d'équipe (rien à voir avec la couronne de l'Arbre-mère).
+fn souche() -> ModelBuilder {
+    let mut b = ModelBuilder::new();
+    roots(&mut b, 5, (1.05, 0.45), 1.55, 0.16, 0.4);
+    b.bulb(BARK, &[[1.3, 0.0], [1.2, 0.3], [0.98, 0.8], [0.92, 1.3], [0.98, 1.5], [0.86, 1.56], [0.0, 1.5]], Transform::IDENTITY);
+    b.cylinder(LICHEN, 0.84, 0.04, v(0.0, 1.53, 0.0), Vec3::ZERO); // cerne
+    b.cylinder(DARK_BARK, 0.5, 0.05, v(0.0, 1.545, 0.0), Vec3::ZERO);
+    mushroom(&mut b, v(0.18, 1.5, 0.15), 1.0);
+    mushroom(&mut b, v(-0.5, 1.5, -0.3), 0.68);
+    mushroom(&mut b, v(0.5, 1.5, -0.5), 0.48);
+    b.pulsing(SAP_PULSE, |b| {
+        b.blob(SAP, 0.2, 0.06, 2.0, v(0.0, 0.75, -1.0), v(0.8, 1.6, 0.5)); // fente de sève
+    });
+    b.blob(MOSS, 0.45, 0.3, 2.2, v(-0.9, 0.5, 0.55), v(1.0, 0.7, 1.0));
+    b
+}
+
+/// Calice : une fleur géante qui boit l'Éther de la source qu'elle couvre.
+/// Six racines plongent dans la faille, une tige trapue porte une grande
+/// coupe de mousse ouverte, pleine d'un nectar de spores qui palpite, et
+/// cerclée de sept grands pétales aux couleurs du joueur. Vu de dessus : un
+/// disque turquoise dans une étoile de pétales d'équipe.
+fn calice() -> ModelBuilder {
+    let mut b = ModelBuilder::new();
+    // Racines arquées par-dessus la margelle de la source, jusqu'au fond.
+    for i in 0..6 {
+        let a = i as f32 * TAU / 6.0 + 0.25;
+        let (sin, cos) = a.sin_cos();
+        let at = |r: f32, y: f32| [cos * r, y, sin * r];
+        b.branch(DARK_BARK, &[at(0.4, 1.2), at(1.3, 1.0), at(1.85, 0.5), at(1.95, -0.05)], 0.17);
+    }
+    b.bulb(BARK, &[[0.7, 0.5], [0.45, 0.9], [0.38, 1.5], [0.5, 2.0], [0.0, 2.05]], Transform::IDENTITY); // tige
+    // La coupe : le profil monte jusqu'au bord, puis redescend à l'intérieur.
+    b.bulb(
+        MOSS,
+        &[[0.0, 1.85], [0.55, 1.95], [1.05, 2.3], [1.38, 2.8], [1.48, 3.05], [1.35, 3.04], [1.0, 2.7], [0.5, 2.55], [0.0, 2.5]],
+        Transform::IDENTITY,
+    );
+    b.pulsing(SPORE_PULSE, |b| {
+        b.cylinder(SPORE, 1.02, 0.04, v(0.0, 2.68, 0.0), Vec3::ZERO); // nectar de spores
+    });
+    for i in 0..7 {
+        let a = i as f32 * TAU / 7.0;
+        let (sin, cos) = a.sin_cos();
+        let out = v(cos, 0.0, sin);
+        spike(&mut b, TEAM, 0.34, 1.15, out * 1.32 + v(0.0, 2.85, 0.0), out + v(0.0, 0.9, 0.0));
+    }
+    for (x, y, z) in [(0.3, 3.4, -0.2), (-0.35, 3.7, 0.15), (0.05, 4.0, 0.35)] {
+        b.sphere(SPORE, 0.08, v(x, y, z)); // spores qui s'envolent
+    }
+    b.leaves(LEAVES, v(0.0, 1.0, 0.0), 0.75, 14);
+    b
+}
+
+/// Ronceraie : trois grandes arches de ronces hérissées d'épines se croisent
+/// en voûte au-dessus d'une butte d'humus ; dessous mûrissent trois cocons
+/// aux couleurs du joueur (les Ronciers à naître) près d'une poche de sève.
+/// L'entrée, en façade, passe entre deux pieds d'arche. Vu de dessus : une
+/// étoile de ronces à six branches sur trois cocons d'équipe.
+fn ronceraie() -> ModelBuilder {
+    let mut b = ModelBuilder::new();
+    b.blob(DARK_BARK, 1.5, 0.16, 1.6, Vec3::ZERO, v(1.0, 0.3, 1.0)); // butte d'humus
+    b.blob(MOSS, 0.55, 0.3, 2.2, v(-1.0, 0.15, -0.6), v(1.0, 0.5, 1.0));
+    // Arches à 0°, 60° et 120° : leurs pieds encadrent l'entrée (vers −z).
+    for i in 0..3 {
+        let a = i as f32 * PI / 3.0;
+        let (sin, cos) = a.sin_cos();
+        let at = |r: f32, y: f32| v(cos * r, y, sin * r);
+        let profile = [(2.25, -0.05), (1.95, 1.4), (1.15, 2.6), (0.0, 3.0), (-1.15, 2.6), (-1.95, 1.4), (-2.25, -0.05)];
+        let points: Vec<[f32; 3]> = profile.iter().map(|&(r, y)| at(r, y).to_array()).collect();
+        b.branch(BARK, &points, 0.22);
+        // Épines tournées vers l'extérieur et vers le haut.
+        for &(r, y) in &[(1.9f32, 1.5), (1.2, 2.55), (-1.2, 2.55), (-1.9, 1.5)] {
+            let out = at(r.signum(), 0.0) + v(0.0, 0.9, 0.0);
+            spike(&mut b, DARK_BARK, 0.08, 0.5, at(r, y + 0.1), out);
+        }
+    }
+    b.leaves(LEAVES, v(0.0, 3.05, 0.0), 0.7, 18); // feuillage au faîte
+    // Trois cocons d'équipe sous la voûte, et la poche de sève qui les nourrit.
+    for (x, z, scale) in [(-0.75, 0.25, 1.0), (0.75, 0.3, 0.9), (0.0, 0.95, 1.1)] {
+        b.blob(TEAM, 0.45, 0.16, 2.2, v(x, 0.8, z), v(0.8 * scale, 1.15 * scale, 0.8 * scale));
+    }
+    b.pulsing(SAP_PULSE, |b| {
+        b.blob(SAP, 0.35, 0.06, 2.0, v(0.0, 0.55, 1.55), v(1.2, 0.8, 0.9));
+    });
+    b
+}
+
+/// Épineux : défense fixe. Un bulbe d'écorce sombre sur ses racines, et une
+/// tête qui balaie lentement l'horizon : couronne de longues épines de
+/// lichen, collerette de pétales aux couleurs du joueur, œil de spores et
+/// grand dard pointé vers l'avant.
+fn epineux() -> ModelBuilder {
+    let mut b = ModelBuilder::new();
+    roots(&mut b, 5, (0.45, 0.35), 0.95, 0.1, 0.0);
+    b.blob(DARK_BARK, 0.62, 0.15, 1.8, v(0.0, 0.5, 0.0), v(1.0, 0.85, 1.0));
+    b.bulb(BARK, &[[0.32, 0.9], [0.24, 1.3], [0.3, 1.5], [0.0, 1.55]], Transform::IDENTITY); // cou
+    let sweep = Motion::Swing { axis: Vec3::Y, amplitude: 0.6, frequency: 0.08 };
+    b.animated(Transform::from_xyz(0.0, 1.5, 0.0), sweep, |b| {
+        b.blob(BARK, 0.38, 0.12, 2.0, v(0.0, 0.15, 0.0), v(1.0, 0.75, 1.1)); // tête
+        for i in 0..6 {
+            let a = i as f32 * TAU / 6.0 + 0.3;
+            let (sin, cos) = a.sin_cos();
+            let out = v(cos, 0.0, sin);
+            spike(b, TEAM, 0.16, 0.5, out * 0.3 + v(0.0, 0.05, 0.0), out + v(0.0, 0.35, 0.0)); // collerette
+            spike(b, LICHEN, 0.06, 0.85, out * 0.22 + v(0.0, 0.3, 0.0), out * 0.6 + v(0.0, 1.0, 0.0)); // épines
+        }
+        spike(b, DARK_BARK, 0.1, 0.9, v(0.0, 0.15, -0.3), v(0.0, 0.05, -1.0)); // dard
+        b.sphere(SPORE, 0.12, v(0.0, 0.32, -0.3)); // œil
+    });
+    b
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -484,5 +809,33 @@ mod tests {
             println!("{} : {} sommets", unit.name, vertices);
             assert!(vertices < 14_000, "{} est trop lourd : {vertices} sommets", unit.name);
         }
+    }
+
+    /// Même garde-fou pour les bâtiments : ils sont peu nombreux mais grands.
+    #[test]
+    fn buildings_stay_light() {
+        for building in building_types() {
+            let vertices: usize = building.parts.iter().map(|p| p.shape.mesh().count_vertices()).sum();
+            println!("{} : {} sommets", building.name, vertices);
+            assert!(vertices < 14_000, "{} est trop lourd : {vertices} sommets", building.name);
+        }
+    }
+
+    /// Le palier 1 a les mêmes rôles que celui de la Coalition.
+    #[test]
+    fn tier_one_roles() {
+        use building::*;
+        let types = building_types();
+        assert!(types[ARBRE_MERE].dropoff && types[ARBRE_MERE].supply > 0);
+        assert_eq!(types[ARBRE_MERE].production[0].unit_type, kind::POUSSE);
+        assert!(types[SOUCHE].supply > 0);
+        assert_eq!(types[CALICE].placement, PlacementRule::OnResource(ResourceKind::Rare));
+        assert_eq!(types[RONCERAIE].production[0].unit_type, kind::RONCIER);
+        assert_eq!(types[EPINEUX].requires, vec![RONCERAIE]);
+        // Raccourcis distincts après « B ».
+        let mut keys: Vec<char> = types.iter().map(|t| t.hotkey).collect();
+        keys.sort_unstable();
+        keys.dedup();
+        assert_eq!(keys.len(), types.len());
     }
 }

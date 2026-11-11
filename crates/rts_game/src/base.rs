@@ -47,10 +47,10 @@ pub fn building_catalog(
 }
 
 /// Le joueur humain (le seul pour l'instant).
-const HUMAN: PlayerId = PlayerId(0);
+pub(crate) const HUMAN: PlayerId = PlayerId(0);
 
 /// Pose un bâtiment terminé centré au plus près du point (x, z).
-fn place(commands: &mut Commands, catalog: &BuildingCatalog, frame: GridFrame, type_index: usize, at: Vec2) -> Entity {
+pub(crate) fn place(commands: &mut Commands, catalog: &BuildingCatalog, frame: GridFrame, type_index: usize, at: Vec2) -> Entity {
     let min_cell = frame.min_cell_centered(at, catalog.types[type_index].footprint);
     catalog.spawn(commands, frame, HUMAN, type_index, min_cell, None)
 }
@@ -86,7 +86,7 @@ pub fn spawn_start(
 /// Donne des ordres de récolte au premier pas, par la file des ordres
 /// (`commands.queue` : une fonction exécutée plus tard avec tout le monde
 /// accessible, une fois les entités créées).
-fn harvest_at_start(commands: &mut Commands, orders: Vec<(Entity, Entity)>) {
+pub(crate) fn harvest_at_start(commands: &mut Commands, orders: Vec<(Entity, Entity)>) {
     commands.queue(move |world: &mut World| {
         let mut queue = world.resource_mut::<CommandQueue>();
         for (worker, node) in orders {
