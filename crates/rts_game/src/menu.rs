@@ -50,14 +50,42 @@ fn card(faction: Faction) -> (&'static str, Color, &'static str) {
     }
 }
 
-/// Un bouton du menu et ce qu'il fait.
+/// Nom, couleur et présentation de la carte « Aléatoire ».
+const RANDOM_CARD: (&str, Color, &str) = ("Aléatoire", Color::srgb(0.85, 0.85, 0.9), "La faction est tirée au sort au lancement de la partie.");
+
+/// Un bouton du menu et ce qu'il fait. `Option<Faction>` : une faction
+/// précise, ou `None` pour « Aléatoire ».
 #[derive(Component, Debug, Clone, Copy, PartialEq)]
 enum MenuButton {
     /// Choisir sa faction.
-    Player(Faction),
+    Player(Option<Faction>),
     /// Choisir celle de l'adversaire.
-    Enemy(Faction),
+    Enemy(Option<Faction>),
     Start,
+}
+
+/// Ce qui est choisi dans le menu (`None` : aléatoire).
+#[derive(Resource, Debug, Clone, Copy)]
+struct MenuChoice {
+    player: Option<Faction>,
+    enemy: Option<Faction>,
+}
+
+/// Une faction au hasard parmi celles du menu. Le hasard vient de l'horloge
+/// (les nanosecondes de l'heure) : il ne touche pas à la simulation, qui
+/// reste déterministe une fois la partie lancée. `salt` : un tirage différent
+/// pour le joueur et pour l'adversaire.
+fn random_faction(salt: u32) -> Faction {
+    let nanos = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.subsec_nanos());
+    pick(nanos, salt)
+}
+
+/// Le tirage lui-même, à partir d'un nombre quelconque (`nanos`).
+fn pick(nanos: u32, salt: u32) -> Faction {
+    // Un mélange de bits (multiplication par un grand nombre impair) pour que
+    // deux tirages proches ne donnent pas le même résultat.
+    let mixed = (nanos ^ salt.wrapping_mul(0x9E37_79B9)).wrapping_mul(0x85EB_CA6B) >> 16;
+    CHOICES[mixed as usize % CHOICES.len()]
 }
 
 /// Marqueur : la racine du menu (retirée au lancement).
@@ -74,7 +102,8 @@ impl Plugin for MenuPlugin {
     }
 }
 
-fn spawn_menu(mut commands: Commands) {
+fn spawn_menu(mut commands: Commands, faction: Res<Faction>, enemy: Res<EnemyFaction>) {
+    commands.insert_resource(MenuChoice { player: Some(*faction), enemy: Some(enemy.0) });
     // Une caméra 2D, le temps du menu : l'interface s'affiche par une caméra
     // (celle du jeu n'existe pas encore).
     commands.spawn((Name::new("Caméra du menu"), MenuRoot, Camera2d));
@@ -105,13 +134,14 @@ fn spawn_menu(mut commands: Commands) {
             for (title, player) in [("Ta faction", true), ("L'adversaire (IA)", false)] {
                 root.spawn((Text::new(title), font(20.0), TextColor(ACCENT)));
                 root.spawn(Node { flex_direction: FlexDirection::Row, column_gap: Val::Px(14.0), ..default() }).with_children(|row| {
-                    for faction in CHOICES {
-                        let (name, color, blurb) = card(faction);
+                    // Les trois factions, puis « Aléatoire ».
+                    for faction in CHOICES.map(Some).into_iter().chain([None]) {
+                        let (name, color, blurb) = faction.map_or(RANDOM_CARD, card);
                         let button = if player { MenuButton::Player(faction) } else { MenuButton::Enemy(faction) };
                         row.spawn((
                             button,
                             Node {
-                                width: Val::Px(250.0),
+                                width: Val::Px(220.0),
                                 flex_direction: FlexDirection::Column,
                                 padding: UiRect::all(Val::Px(14.0)),
                                 row_gap: Val::Px(6.0),
@@ -146,6 +176,7 @@ fn handle_menu(
     mouse: Res<ButtonInput<MouseButton>>,
     keys: Res<ButtonInput<KeyCode>>,
     buttons: Query<(&MenuButton, &ComputedNode, &UiGlobalTransform)>,
+    mut choice: ResMut<MenuChoice>,
     mut faction: ResMut<Faction>,
     mut enemy: ResMut<EnemyFaction>,
     mut next: ResMut<NextState<GameState>>,
@@ -164,27 +195,32 @@ fn handle_menu(
         // logiques (voir la couche d'entrées du moteur).
         let hit = buttons.iter().find(|(_, node, transform)| node.contains_point(**transform, pos / node.inverse_scale_factor()));
         match hit.map(|(button, ..)| *button) {
-            Some(MenuButton::Player(choice)) => *faction = choice,
-            Some(MenuButton::Enemy(choice)) => enemy.0 = choice,
+            Some(MenuButton::Player(picked)) => choice.player = picked,
+            Some(MenuButton::Enemy(picked)) => choice.enemy = picked,
             Some(MenuButton::Start) => start = true,
             None => {}
         }
     }
     if start {
+        // « Aléatoire » : le tirage a lieu maintenant, au lancement.
+        *faction = choice.player.unwrap_or_else(|| random_faction(1));
+        enemy.0 = choice.enemy.unwrap_or_else(|| random_faction(2));
+        info!("Partie : {:?} contre {:?}", *faction, enemy.0);
         next.set(GameState::Playing);
     }
 }
 
 /// Le cadre des factions choisies s'allume à leur couleur.
-fn highlight_choices(faction: Res<Faction>, enemy: Res<EnemyFaction>, mut buttons: Query<(&MenuButton, &mut BorderColor, &mut BackgroundColor)>) {
+fn highlight_choices(choice: Option<Res<MenuChoice>>, mut buttons: Query<(&MenuButton, &mut BorderColor, &mut BackgroundColor)>) {
+    let Some(choice) = choice else { return };
     for (button, mut border, mut background) in &mut buttons {
         let chosen = match *button {
-            MenuButton::Player(f) => Some((f == *faction, f)),
-            MenuButton::Enemy(f) => Some((f == enemy.0, f)),
+            MenuButton::Player(f) => Some((f == choice.player, f)),
+            MenuButton::Enemy(f) => Some((f == choice.enemy, f)),
             MenuButton::Start => None,
         };
         let Some((selected, f)) = chosen else { continue };
-        let color = if selected { card(f).1 } else { BORDER.with_alpha(0.35) };
+        let color = if selected { f.map_or(RANDOM_CARD, card).1 } else { BORDER.with_alpha(0.35) };
         border.set_if_neq(BorderColor::all(color));
         background.set_if_neq(BackgroundColor(if selected { Color::srgba(0.08, 0.12, 0.16, 0.98) } else { PANEL }));
     }
@@ -193,5 +229,20 @@ fn highlight_choices(faction: Res<Faction>, enemy: Res<EnemyFaction>, mut button
 fn despawn_menu(mut commands: Commands, roots: Query<Entity, With<MenuRoot>>) {
     for root in &roots {
         commands.entity(root).despawn();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_draw_can_give_every_faction() {
+        for salt in [1, 2] {
+            let drawn: Vec<Faction> = (0..1000u32).map(|n| pick(n * 7919, salt)).collect();
+            for faction in CHOICES {
+                assert!(drawn.contains(&faction), "{faction:?} n'est jamais tirée");
+            }
+        }
     }
 }

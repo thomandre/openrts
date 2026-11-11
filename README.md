@@ -23,7 +23,8 @@ cargo run
 La première compilation de Bevy prend plusieurs minutes ; les suivantes sont rapides.
 
 Le jeu s'ouvre sur un **menu** : on choisit sa faction et celle de
-l'adversaire (tenu par l'IA), puis « Lancer la partie » (ou Entrée). Les
+l'adversaire (tenu par l'IA), ou « Aléatoire » (tirage au lancement), puis
+« Lancer la partie » (ou Entrée). Les
 variables de développement `OPENRTS_FACTION`, `OPENRTS_ENEMY`,
 `OPENRTS_DEMO` et `OPENRTS_SCREENSHOT` sautent le menu ; `OPENRTS_MENU=1`
 le force, `OPENRTS_MENU=start` le valide tout seul au bout de 2 s.
