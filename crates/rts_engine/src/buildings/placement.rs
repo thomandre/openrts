@@ -17,7 +17,8 @@ use crate::economy::{Notice, ResourceNode};
 use crate::input::{GameAction, InputContext};
 use crate::navigation::NavGrid;
 use crate::orders::{CommandQueue, PlayerCommand};
-use crate::players::{LocalPlayer, Owner};
+use crate::economy::NoticeKind;
+use crate::players::{LocalPlayer, Owner, Players};
 use crate::selection::Selected;
 use crate::units::Unit;
 
@@ -57,6 +58,7 @@ pub(crate) fn handle_build_actions(
     mut orders: ResMut<CommandQueue>,
     mut context: ResMut<InputContext>,
     mut notices: MessageWriter<Notice>,
+    players: Res<Players>,
 ) {
     let Some(catalog) = catalog else {
         actions.clear();
@@ -70,7 +72,12 @@ pub(crate) fn handle_build_actions(
         match *action {
             GameAction::ChooseBuilding { type_index } => {
                 if type_index < catalog.types.len() && !builders.is_empty() && catalog.requirements_met(type_index, &completed) {
-                    placement.active = Some(type_index);
+                    // Trop cher : on le dit tout de suite, sans entrer en mode pose.
+                    if players.get(local.0).stock.covers(catalog.types[type_index].cost) {
+                        placement.active = Some(type_index);
+                    } else {
+                        notices.write(Notice { player: local.0, kind: NoticeKind::NotEnoughResources });
+                    }
                 }
             }
             GameAction::PlaceBuildingAt { screen_pos, keep_placing } => {
@@ -81,6 +88,10 @@ pub(crate) fn handle_build_actions(
                 // (le fantôme est rouge). La simulation revérifiera de toute façon.
                 if let Err(kind) = catalog.check_placement(type_index, min_cell, grid, &completed, nodes.iter()) {
                     notices.write(Notice { player: local.0, kind });
+                    continue;
+                }
+                if !players.get(local.0).stock.covers(catalog.types[type_index].cost) {
+                    notices.write(Notice { player: local.0, kind: NoticeKind::NotEnoughResources });
                     continue;
                 }
                 orders.push(local.0, PlayerCommand::Build { type_index, min_cell, builders: builders.clone() });

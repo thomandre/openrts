@@ -38,6 +38,13 @@ pub enum GameAction {
     PlaceBuildingAt { screen_pos: Vec2, keep_placing: bool },
     /// Quitter le mode pose sans rien poser.
     CancelPlacement,
+    /// Produire une unité de ce type (indice du catalogue d'unités) dans un
+    /// des bâtiments producteurs sélectionnés (celui dont la file est la plus courte).
+    Train { unit_type: usize },
+    /// Annuler l'élément `slot` de la file du bâtiment producteur affiché.
+    CancelQueued { slot: usize },
+    /// Annuler les chantiers sélectionnés (remboursés).
+    CancelConstruction,
 }
 
 /// Raccourci clavier d'un [`ActionButton`] : une touche, éventuellement

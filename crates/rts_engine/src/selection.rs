@@ -9,6 +9,7 @@ use bevy::prelude::*;
 
 use crate::camera::{ray_at_height, screen_ray, screen_to_ground};
 use crate::collision::StaticObstacle;
+use crate::economy::production::ProductionQueue;
 use crate::economy::{EconomyRules, ResourceNode};
 use crate::input::{GameAction, SelectionDrag};
 use crate::orders::{CommandQueue, PlayerCommand};
@@ -106,6 +107,7 @@ fn handle_actions(
     owners: Query<&Owner>,
     unit_types: Query<&Unit>,
     nodes: Query<(Entity, &ResourceNode, &StaticObstacle)>,
+    queues: Query<(), With<ProductionQueue>>,
     rules: Option<Res<EconomyRules>>,
     local: Res<LocalPlayer>,
     mut orders: ResMut<CommandQueue>,
@@ -189,6 +191,16 @@ fn handle_actions(
                 if !movers.is_empty() {
                     orders.push(local.0, PlayerCommand::Move { units: movers, target: target.xz() });
                 }
+                // Les bâtiments producteurs sélectionnés y mettent leur point de ralliement.
+                let mut producers: Vec<Entity> = selected
+                    .iter()
+                    .filter(|&e| queues.contains(e) && owners.get(e).is_ok_and(|o| o.0 == local.0))
+                    .collect();
+                producers.sort_unstable();
+                if !producers.is_empty() {
+                    let point = node.and_then(|n| nodes.get(n).ok()).map_or(target.xz(), |(_, _, o)| o.0.center());
+                    orders.push(local.0, PlayerCommand::SetRally { buildings: producers, point, node });
+                }
             }
 
             GameAction::SpawnStressTest => {
@@ -196,8 +208,14 @@ fn handle_actions(
                     spawn_stress_test(&mut commands, catalog);
                 }
             }
-            // Actions de construction : voir le module `buildings`.
-            GameAction::ChooseBuilding { .. } | GameAction::PlaceBuildingAt { .. } | GameAction::CancelPlacement => {}
+            // Actions de construction et de production : voir les modules
+            // `buildings` et `economy`.
+            GameAction::ChooseBuilding { .. }
+            | GameAction::PlaceBuildingAt { .. }
+            | GameAction::CancelPlacement
+            | GameAction::Train { .. }
+            | GameAction::CancelQueued { .. }
+            | GameAction::CancelConstruction => {}
         }
     }
 }

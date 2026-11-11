@@ -12,7 +12,8 @@
 //! - `OPENRTS_SCREENSHOT=/chemin/capture.png` : enregistre une capture après
 //!   quelques secondes, affiche les FPS moyens, puis quitte ;
 //! - `OPENRTS_ZOOM=12` : distance de départ de la caméra, de 10 à 70 m ;
-//! - `OPENRTS_DEMO=buildings` : scène de démonstration des bâtiments (Coalition).
+//! - `OPENRTS_DEMO=buildings` : scène de démonstration des bâtiments (Coalition) ;
+//! - `OPENRTS_POP_MAX=100` : plafond global de population.
 
 mod base;
 mod coalition;
@@ -31,6 +32,9 @@ use rts_engine::camera::RtsCamera;
 use rts_engine::collision::MapBounds;
 use rts_engine::cursor::CursorCaptureSettings;
 use rts_engine::devtools::AutoScreenshot;
+use rts_engine::economy::production::PopulationSettings;
+use rts_engine::economy::Cost;
+use rts_engine::players::{PlayerId, Players};
 use rts_engine::graphics::{Ambiance, GraphicsQuality, ReflectionPanels};
 use rts_engine::input::GameAction;
 use rts_engine::navigation::{GridFrame, NavSettings};
@@ -231,6 +235,11 @@ fn main() {
     .add_systems(Startup, (setup_world, spawn_units))
     .add_systems(Update, base::focus_camera);
 
+    // `OPENRTS_POP_MAX=100` : plafond global de population (200 par défaut),
+    // pour adapter le nombre d'unités à l'appareil.
+    if let Some(max) = std::env::var("OPENRTS_POP_MAX").ok().and_then(|m| m.parse().ok()) {
+        app.insert_resource(PopulationSettings { max });
+    }
     if let Some(panels) = faction.reflection_panels() {
         app.insert_resource(panels);
     }
@@ -300,6 +309,10 @@ fn spawn_units(
         }
         commands.insert_resource(buildings);
         commands.insert_resource(coalition::economy_rules(gisements::resource_infos()));
+        // Le joueur commence avec 50 de ressource principale (valeur proposée).
+        let mut players = Players::default();
+        players.get_mut(PlayerId(0)).stock = Cost::new(50, 0);
+        commands.insert_resource(players);
         if demo {
             commands.insert_resource(catalog);
             return;

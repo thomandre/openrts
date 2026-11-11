@@ -21,6 +21,7 @@ use std::f32::consts::{FRAC_PI_2, PI};
 
 use bevy::prelude::*;
 use rts_engine::buildings::{BuildingType, Cost, PlacementRule};
+use rts_engine::economy::production::{ProductionOption, Requirement, UnitEconomy};
 use rts_engine::economy::{EconomyRules, ResourceInfo, ResourceKind};
 use rts_engine::graphics::{Ambiance, EnvironmentSettings, FogSettings, ParticleSettings, SceneLight};
 use rts_engine::units::{
@@ -452,17 +453,30 @@ pub mod building {
 pub fn building_types() -> Vec<BuildingType> {
     use building::*;
     vec![
-        // Le Quartier général est le dépôt où les Techniciens rapportent la récolte.
+        // Le Quartier général est le dépôt où les Techniciens rapportent la
+        // récolte ; il fournit 15 de population et produit les Techniciens.
         BuildingType {
             dropoff: true,
+            supply: 15,
+            production: vec![option(kind::TECHNICIEN, 't', &[])],
             ..building_type("Quartier général", (7, 7), 1500.0, 70.0, (400, 0), &[], 'q', quartier_general())
         },
-        building_type("Module d'habitat", (3, 3), 400.0, 20.0, (100, 0), &[], 'h', habitat()),
+        BuildingType { supply: 8, ..building_type("Module d'habitat", (3, 3), 400.0, 20.0, (100, 0), &[], 'h', habitat()) },
         BuildingType {
             placement: PlacementRule::OnResource(ResourceKind::Rare),
             ..building_type("Extracteur", (4, 4), 500.0, 22.0, (75, 0), &[], 'e', extracteur())
         },
-        building_type("Caserne", (5, 6), 1000.0, 45.0, (150, 0), &[QUARTIER_GENERAL], 'c', caserne()),
+        // La Caserne forme les Sentinelles ; Longue-Vue, Lancier et Faucon
+        // attendent des bâtiments du palier 2 pas encore dans le jeu.
+        BuildingType {
+            production: vec![
+                option(kind::SENTINELLE, 's', &[]),
+                option(kind::LONGUE_VUE, 'v', &["Armurerie"]),
+                option(kind::LANCIER, 'l', &["Armurerie"]),
+                option(kind::FAUCON, 'f', &["Centre de propulsion"]),
+            ],
+            ..building_type("Caserne", (5, 6), 1000.0, 45.0, (150, 0), &[QUARTIER_GENERAL], 'c', caserne())
+        },
         building_type("Tourelle", (2, 2), 250.0, 18.0, (100, 0), &[CASERNE], 't', tourelle()),
     ]
 }
@@ -474,8 +488,39 @@ pub fn building_types() -> Vec<BuildingType> {
 /// Règles économiques : les Techniciens récoltent ; 5 de ressource
 /// principale par voyage (2,8 s d'extraction), 4 de ressource rare (2 s).
 /// `resources` : noms et couleurs des deux ressources (voir `gisements`).
+///
+/// Coûts et population : tableau de GAME_DESIGN.md. Temps de production
+/// (en secondes) proposés, inspirés des ratios de SC2.
 pub fn economy_rules(resources: [ResourceInfo; 2]) -> EconomyRules {
-    EconomyRules { resources, harvesters: vec![kind::TECHNICIEN], carry: [5, 4], gather_time: [2.8, 2.0] }
+    // Dans l'ordre de `unit_types` : (principale, rare), temps, population.
+    let units = [
+        ((50, 0), 12.0, 1), // Technicien
+        ((50, 0), 18.0, 1), // Sentinelle
+        ((100, 0), 25.0, 2), // Longue-Vue
+        ((100, 25), 22.0, 2), // Lancier
+        ((150, 100), 45.0, 4), // Bastion
+        ((75, 25), 25.0, 2), // Faucon
+    ];
+    EconomyRules {
+        resources,
+        harvesters: vec![kind::TECHNICIEN],
+        carry: [5, 4],
+        gather_time: [2.8, 2.0],
+        units: units
+            .iter()
+            .map(|&((primary, rare), train_time, population)| UnitEconomy { cost: Cost::new(primary, rare), train_time, population })
+            .collect(),
+    }
+}
+
+/// Une unité produite par un bâtiment ; `requires` : noms de bâtiments qui
+/// n'existent pas encore dans le jeu (l'option reste grisée).
+fn option(unit_type: usize, hotkey: char, requires: &[&str]) -> ProductionOption {
+    ProductionOption {
+        unit_type,
+        hotkey,
+        requires: requires.iter().map(|name| Requirement::NotYetAvailable((*name).into())).collect(),
+    }
 }
 
 /// `cost` : (ressource principale, ressource rare).

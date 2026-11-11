@@ -43,7 +43,9 @@ use crate::RtsSystems;
 // sous le nom `buildings::Cost`.
 pub use crate::economy::Cost;
 use crate::economy::harvest::Harvesting;
+use crate::economy::production::ProductionQueue;
 use crate::economy::{Notice, NoticeKind, ResourceKind, ResourceNode};
+use crate::players::Players;
 
 /// Où un bâtiment peut se poser.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -82,6 +84,49 @@ pub struct BuildingType {
     pub placement: PlacementRule,
     /// Dépôt : les ouvriers y rapportent leur récolte (bâtiment principal).
     pub dropoff: bool,
+    /// Population fournie une fois terminé (voir `economy::production`).
+    pub supply: u32,
+    /// Les unités qu'il produit, dans l'ordre des boutons.
+    pub production: Vec<ProductionOption>,
+}
+
+/// Une unité qu'un bâtiment sait produire.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ProductionOption {
+    /// Type d'unité (indice du catalogue d'unités).
+    pub unit_type: usize,
+    /// Touche du raccourci (sans menu : le bâtiment sélectionné suffit).
+    pub hotkey: char,
+    /// Ce qu'il faut posséder pour la produire.
+    pub requires: Vec<Requirement>,
+}
+
+/// Un prérequis de production.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Requirement {
+    /// Un bâtiment terminé de ce type (indice du catalogue des bâtiments).
+    Building(usize),
+    /// Un bâtiment qui n'existe pas encore dans le jeu (son nom, pour
+    /// l'afficher) : l'option reste grisée.
+    NotYetAvailable(String),
+}
+
+impl Requirement {
+    /// Le prérequis est-il rempli (`completed` : voir [`completed_types`]) ?
+    pub fn met(&self, completed: &[bool]) -> bool {
+        match self {
+            Requirement::Building(index) => completed.get(*index).copied().unwrap_or(false),
+            Requirement::NotYetAvailable(_) => false,
+        }
+    }
+
+    /// Le nom de ce qu'il faut posséder.
+    pub fn label(&self, catalog: &BuildingCatalog) -> String {
+        match self {
+            Requirement::Building(index) => catalog.types.get(*index).map_or_else(String::new, |t| t.name.clone()),
+            Requirement::NotYetAvailable(name) => name.clone(),
+        }
+    }
 }
 
 /// Façon de construire d'une faction.
@@ -287,6 +332,9 @@ impl BuildingCatalog {
         ));
         if let Some(progress) = progress {
             entity.insert(UnderConstruction { progress: progress.clamp(0.0, 1.0) });
+        }
+        if !building.production.is_empty() {
+            entity.insert(ProductionQueue::default());
         }
         entity.with_children(|parent| {
             parent.spawn((
@@ -546,6 +594,7 @@ pub(crate) fn apply_build_orders(
     buildings: Query<(&Building, &Owner, Has<UnderConstruction>)>,
     mut builders: Query<(Entity, &Owner, &SimPosition, Option<&mut ConstructionTask>), With<Unit>>,
     mut nodes: Query<(Entity, &mut ResourceNode, &Footprint)>,
+    mut players: ResMut<Players>,
     mut notices: MessageWriter<Notice>,
 ) {
     // Pas encore de grille (tout premier pas) ou pas de bâtiments dans ce jeu.
@@ -585,6 +634,11 @@ pub(crate) fn apply_build_orders(
             .collect();
         candidates.sort_by(|a, b| a.0.cmp(&b.0).then(a.1.total_cmp(&b.1)).then(a.2.cmp(&b.2)));
         let Some(&(_, _, builder)) = candidates.first() else { continue };
+        // Le coût est débité à la pose (remboursé si le chantier est annulé).
+        if !players.get_mut(player).stock.try_pay(building.cost) {
+            notices.write(Notice { player, kind: NoticeKind::NotEnoughResources });
+            continue;
+        }
 
         let site = catalog.spawn(&mut commands, grid.frame(), player, type_index, min_cell, Some(0.0));
         placed.push(rect);

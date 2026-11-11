@@ -45,6 +45,15 @@ pub enum PlayerCommand {
     Harvest { units: Vec<Entity>, node: Entity },
     /// Poser un chantier ; l'ouvrier le plus proche parmi `builders` s'en charge.
     Build { type_index: usize, min_cell: IVec2, builders: Vec<Entity> },
+    /// Annuler un chantier (remboursé).
+    CancelConstruction { building: Entity },
+    /// Ajouter une unité à la file de production d'un bâtiment (payée tout de suite).
+    Train { building: Entity, unit_type: usize },
+    /// Retirer l'élément `slot` de la file de production (remboursé).
+    CancelTrain { building: Entity, slot: usize },
+    /// Point de ralliement des unités produites : un point du sol, ou un
+    /// gisement (les ouvriers produits vont alors directement le récolter).
+    SetRally { buildings: Vec<Entity>, point: Vec2, node: Option<Entity> },
 }
 
 /// Un ordre et le joueur qui l'a donné.

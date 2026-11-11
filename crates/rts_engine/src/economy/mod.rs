@@ -16,6 +16,8 @@
 //! visuels ne font que refléter cet état.
 
 pub mod harvest;
+pub mod production;
+pub mod ui;
 
 use std::ops::{Add, AddAssign};
 
@@ -132,9 +134,17 @@ pub struct EconomyRules {
     pub carry: [u32; 2],
     /// Temps d'extraction d'une charge, en secondes, par ressource.
     pub gather_time: [f32; 2],
+    /// Coût, temps de production et population de chaque type d'unité
+    /// (dans l'ordre du catalogue d'unités).
+    pub units: Vec<production::UnitEconomy>,
 }
 
 impl EconomyRules {
+    /// Les données économiques d'un type d'unité (tout à zéro s'il en manque).
+    pub fn unit(&self, unit_type: usize) -> production::UnitEconomy {
+        self.units.get(unit_type).copied().unwrap_or_default()
+    }
+
     pub fn resource(&self, kind: ResourceKind) -> &ResourceInfo {
         &self.resources[kind.index()]
     }
@@ -255,6 +265,7 @@ impl Plugin for EconomyPlugin {
         // bâtiments (un ouvrier envoyé construire quitte sa récolte), puis
         // le cycle de récolte lui-même.
         app.add_message::<Notice>()
+            .init_resource::<production::PopulationSettings>()
             .add_systems(
                 FixedUpdate,
                 (
@@ -263,10 +274,16 @@ impl Plugin for EconomyPlugin {
                         .after(crate::orders::apply_unit_orders)
                         .before(crate::buildings::apply_build_orders),
                     harvest::harvest.after(crate::buildings::apply_build_orders),
+                    // La population est comptée avant les ordres de production.
+                    (production::count_population, production::apply_production_orders)
+                        .chain()
+                        .after(crate::buildings::apply_build_orders),
                 )
                     .in_set(SimSet::Orders),
             )
-            .add_systems(Update, (shrink_nodes, harvest::show_carried_loads));
+            .add_systems(FixedUpdate, production::progress_production.in_set(SimSet::Construction))
+            .add_systems(Update, (shrink_nodes, harvest::show_carried_loads))
+            .add_systems(Update, ui::handle_production_actions.in_set(crate::RtsSystems::Actions));
     }
 }
 

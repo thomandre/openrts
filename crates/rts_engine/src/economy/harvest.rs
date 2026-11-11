@@ -465,6 +465,7 @@ mod tests {
                 harvesters: vec![0],
                 carry: [5, 4],
                 gather_time: [2.0, 1.5],
+                units: Vec::new(),
             });
         let (mut meshes, mut materials, mut images) = (Assets::default(), Assets::default(), Assets::default());
         let units = UnitCatalog::new(Vec::new(), &palette(), &mut meshes, &mut materials, &mut images);

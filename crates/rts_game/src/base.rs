@@ -51,8 +51,8 @@ fn place(commands: &mut Commands, catalog: &BuildingCatalog, frame: GridFrame, t
 /// Centre du Quartier général de départ (les gisements se placent autour).
 pub const START_HQ: Vec2 = Vec2::new(0.0, -13.0);
 
-/// Partie normale : le Quartier général, ses gisements et quatre
-/// Techniciens, entre les deux, qui se mettent tout de suite à récolter.
+/// Partie normale : le Quartier général, deux Modules d'habitat, les
+/// gisements et quatre Techniciens qui se mettent tout de suite à récolter.
 pub fn spawn_start(
     commands: &mut Commands,
     buildings: &BuildingCatalog,
@@ -61,6 +61,11 @@ pub fn spawn_start(
     frame: GridFrame,
 ) {
     place(commands, buildings, frame, QUARTIER_GENERAL, START_HQ);
+    // Deux Modules d'habitat : l'armée de présentation occupe déjà plus que
+    // les 15 de population du Quartier général.
+    for x in [-8.5, 8.5] {
+        place(commands, buildings, frame, HABITAT, Vec2::new(x, -8.5));
+    }
     let (nodes, _) = gisements::spawn_base(commands, deposits, frame, &gisements::starting_base(START_HQ));
     let mut orders = Vec::new();
     for (i, x) in [-3.0, -1.0, 1.0, 3.0].into_iter().enumerate() {
