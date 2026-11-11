@@ -11,7 +11,7 @@ below are given as they appear in the game.
 
 | Folder | Role |
 | --- | --- |
-| `crates/rts_engine` | The generic engine: input, camera, selection, control groups (`control_groups`), minimap (`minimap`), players (`players`), order queue (`orders`), simulation, collisions, navigation (grid, A\*), buildings (placement, construction sites), economy (`economy`: resource nodes, harvesting, production, supply, UI), combat (`combat`: weapons, targeting, orders, damage, order bar, effects), enemy AI (`ai`), fog of war (`vision`), end of game (`outcome`), rendering (`graphics`). No game content. |
+| `crates/rts_engine` | The generic engine: input, camera, selection, control groups (`control_groups`), minimap (`minimap`), players (`players`), order queue (`orders`), simulation, collisions, navigation (grid, A\*), buildings (placement, construction sites), economy (`economy`: resource nodes, harvesting, production, supply, UI), combat (`combat`: weapons, targeting, orders, damage, order bar, effects), enemy AI (`ai`), fog of war (`vision`), terrain relief (`terrain`), end of game (`outcome`), rendering (`graphics`). No game content. |
 | `crates/rts_game` | The game: units, buildings, factions, maps, resource nodes (`garde.rs`, `sylves.rs`, `collectif.rs`, `map.rs`, `base.rs`, `base_sylves.rs`, `base_collectif.rs`, `gisements.rs`, `combat.rs`: combat stats, `battle.rs`: battle demo, `menu.rs`: start menu, `side.rs`: player sides). Uses `rts_engine`. |
 
 ## Building and running
@@ -190,6 +190,18 @@ its spot again. The AI only knows what its player sees and the buildings it
 has spotted; it assumes the enemy base is opposite its own (the map is
 symmetric) and scouts if it finds nothing there. `OPENRTS_FOG=0` turns the fog off.
 
+### Relief
+
+The normal match map has relief, StarCraft 2 style: each base sits on a
+plateau along its map edge and goes down to the middle by a single ramp; two
+mesas in the center, each with its own ramp, overlook the plain. Cliffs
+cannot be crossed (units go around through the ramps, flyers pass over them)
+and nothing is built on a ramp. **You cannot see higher than yourself**: a
+ground unit does not see what stands on a higher level, so it cannot shoot
+at it either; climb up, or send a flyer. The AI builds on its own plateau.
+Demos and the battle stay on flat ground; `OPENRTS_RELIEF=0` flattens the
+map.
+
 ### Economy
 
 Two resources, with **provisional** names: **Cristal** (primary, ice-blue
@@ -280,6 +292,7 @@ Two quality levels (`GraphicsQuality`):
 | `OPENRTS_AI=0` | The opponent does not play (by default a basic AI controls it in a normal game) |
 | `OPENRTS_AI_ATTACK=60` | Delay before the AI's first wave (150 s by default) |
 | `OPENRTS_SPEED=8` | Speeds up game time (to watch the AI) |
+| `OPENRTS_RELIEF=0` | Flat map (no plateaus, ramps or cliffs) in a normal game |
 | `OPENRTS_FOG=0` | No fog of war (everything visible). Demos (`OPENRTS_DEMO`) do without it by default; `OPENRTS_FOG=1` turns it back on |
 | `OPENRTS_SCREENSHOT=capture.png` | After 14 s: prints the average FPS of the last 6 seconds, saves a screenshot of the render and quits (vsync off to measure); skips the menu |
 | `OPENRTS_SCREENSHOT_DELAY=30` | Time of the automatic screenshot (14 s by default) |

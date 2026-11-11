@@ -13,6 +13,7 @@ use bevy::ui::UiGlobalTransform;
 use bevy::window::PrimaryWindow;
 
 use crate::camera::screen_to_ground;
+use crate::terrain::Terrain;
 use crate::control_groups::GROUP_COUNT;
 use crate::cursor::Pointer;
 use crate::minimap::MinimapSurface;
@@ -248,6 +249,7 @@ fn mouse_keyboard_backend(
     mut actions: MessageWriter<GameAction>,
     buttons: Query<(&ComputedNode, &UiGlobalTransform, &InheritedVisibility, Option<&ActionButton>), Or<(With<ActionButton>, With<BlocksPointer>)>>,
     minimap: Query<(&ComputedNode, &UiGlobalTransform, &InheritedVisibility, &MinimapSurface)>,
+    terrain: Res<Terrain>,
     // `Local` : une variable qui survit d'une image à l'autre, privée à ce système.
     mut press: Local<LeftPress>,
 ) {
@@ -474,7 +476,7 @@ fn mouse_keyboard_backend(
     // --- Sélection : clic gauche ou rectangle ---
     if mouse.just_pressed(MouseButton::Left) {
         press.start_screen = cursor;
-        press.start_ground = cursor.and_then(|pos| screen_to_ground(camera, camera_transform, pos));
+        press.start_ground = cursor.and_then(|pos| screen_to_ground(camera, camera_transform, pos, &terrain));
     }
     // Où se trouve aujourd'hui, à l'écran, le point du sol cliqué au départ.
     let start = press

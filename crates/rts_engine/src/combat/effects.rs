@@ -24,6 +24,7 @@ use crate::selection::{pick, Pickable, Selectable, Selected};
 use crate::vision::display::FogHidden;
 use crate::vision::FogOfWar;
 use crate::simulation::{MoveTarget, SimPosition};
+use crate::terrain::Terrain;
 use crate::units::{MaterialSlot, Unit, UnitCatalog};
 use crate::RtsSystems;
 
@@ -218,7 +219,7 @@ fn spawn_deaths(
     assets: Res<EffectAssets>,
     units: Option<Res<UnitCatalog>>,
     buildings: Option<Res<BuildingCatalog>>,
-    (fog, local): (Option<Res<FogOfWar>>, Res<LocalPlayer>),
+    (fog, local, terrain): (Option<Res<FogOfWar>>, Res<LocalPlayer>, Res<Terrain>),
 ) {
     for event in events.read() {
         let CombatEvent::Died { position, owner, kind, yaw, .. } = *event else { continue };
@@ -240,15 +241,17 @@ fn spawn_deaths(
             }
         };
         if let Some(wreck) = wreck {
-            let rest = Transform::from_xyz(position.x, 0.0, position.y).with_rotation(Quat::from_rotation_y(yaw));
-            let rest = if matches!(kind, CombatKind::Building(_)) { Transform::from_xyz(position.x, 0.0, position.y) } else { rest };
+            // Posée sur le relief (elle s'y enfonce ensuite).
+            let ground = terrain.height_at(position);
+            let rest = Transform::from_xyz(position.x, ground, position.y).with_rotation(Quat::from_rotation_y(yaw));
+            let rest = if matches!(kind, CombatKind::Building(_)) { Transform::from_xyz(position.x, ground, position.y) } else { rest };
             commands.entity(wreck).insert(Wreck { age: 0.0, duration, tilt, depth, rest });
         }
         commands.spawn((
             Flash { age: 0.0, duration: 0.45, from: Vec3::splat(size * 0.3), to: Vec3::splat(size) },
             Mesh3d(assets.sphere.clone()),
             MeshMaterial3d(assets.flash.clone()),
-            Transform::from_xyz(position.x, size * 0.5, position.y).with_scale(Vec3::splat(size * 0.3)),
+            Transform::from_xyz(position.x, terrain.height_at(position) + size * 0.5, position.y).with_scale(Vec3::splat(size * 0.3)),
             NotShadowCaster,
         ));
     }
@@ -256,14 +259,14 @@ fn spawn_deaths(
 
 /// Repère au sol d'un ordre du joueur : un anneau rouge (attaque) ou vert
 /// (déplacement) qui se resserre.
-fn spawn_order_markers(mut commands: Commands, mut markers: MessageReader<OrderMarker>, assets: Res<EffectAssets>) {
+fn spawn_order_markers(mut commands: Commands, mut markers: MessageReader<OrderMarker>, assets: Res<EffectAssets>, terrain: Res<Terrain>) {
     for marker in markers.read() {
         let material = if marker.attack { assets.marker_attack.clone() } else { assets.marker_move.clone() };
         commands.spawn((
             Flash { age: 0.0, duration: 0.6, from: Vec3::splat(1.3), to: Vec3::splat(0.25) },
             Mesh3d(assets.ring.clone()),
             MeshMaterial3d(material),
-            Transform::from_xyz(marker.point.x, 0.06, marker.point.y)
+            Transform::from_xyz(marker.point.x, terrain.height_at(marker.point) + 0.06, marker.point.y)
                 .with_rotation(Quat::from_rotation_x(-std::f32::consts::FRAC_PI_2))
                 .with_scale(Vec3::splat(1.3)),
             NotShadowCaster,

@@ -30,6 +30,7 @@ use crate::collision::{MapBounds, StaticObstacle};
 use crate::players::{LocalPlayer, Owner, PlayerId};
 use crate::selection::Selected;
 use crate::simulation::SimPosition;
+use crate::terrain::{ring_mesh, Terrain};
 use crate::units::Unit;
 use crate::RtsSystems;
 
@@ -178,11 +179,16 @@ fn update_fog_layer(
     mut images: ResMut<Assets<Image>>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
-    mut planes: Query<&mut Visibility, With<FogPlane>>,
+    mut planes: Query<(&mut Visibility, &mut Mesh3d), With<FogPlane>>,
+    terrain: Res<Terrain>,
 ) {
     let Some(fog) = fog else { return };
-    for mut visibility in &mut planes {
+    for (mut visibility, mut mesh) in &mut planes {
         visibility.set_if_neq(if fog.is_enabled() { Visibility::Inherited } else { Visibility::Hidden });
+        // Nouveau relief : le calque en épouse la forme.
+        if terrain.is_changed() {
+            mesh.0 = meshes.add(fog_mesh(&terrain, bounds.0.inflate(PLANE_MARGIN)));
+        }
     }
     let cells = fog.cells(local.0);
     if !fog.is_enabled() || cells.is_empty() {
@@ -191,7 +197,7 @@ fn update_fog_layer(
     let size = fog.size();
     let (columns, rows) = (size.x as usize, size.y as usize);
     let Some(mut layer) = layer else {
-        let layer = spawn_layer(&mut commands, &mut images, &mut meshes, &mut materials, &fog, bounds.0);
+        let layer = spawn_layer(&mut commands, &mut images, &mut meshes, &mut materials, &fog, bounds.0, &terrain);
         commands.insert_resource(layer);
         return;
     };
@@ -264,6 +270,18 @@ fn blur(source: &[f32], out: &mut Vec<f32>, width: usize, height: usize) {
     }
 }
 
+/// Le calque du brouillard : le relief soulevé de [`PLANE_HEIGHT`], et un
+/// anneau plat tout autour jusqu'au bord de `plane_rect`. Coordonnées de
+/// texture de 0 à 1 sur `plane_rect`, comme un grand plan.
+fn fog_mesh(terrain: &Terrain, plane_rect: Rect) -> Mesh {
+    let mut mesh = terrain.mesh(PLANE_HEIGHT, plane_rect, false);
+    // `merge` ajoute les sommets et triangles d'un autre maillage.
+    if let Err(error) = mesh.merge(&ring_mesh(terrain.mesh_rect(), plane_rect, PLANE_HEIGHT, plane_rect)) {
+        warn!("Calque du brouillard incomplet : {error}");
+    }
+    mesh
+}
+
 /// Crée la texture du brouillard et le plan qui la porte.
 fn spawn_layer(
     commands: &mut Commands,
@@ -272,6 +290,7 @@ fn spawn_layer(
     materials: &mut Assets<StandardMaterial>,
     fog: &FogOfWar,
     bounds: Rect,
+    terrain: &Terrain,
 ) -> FogLayer {
     let size = fog.size();
     let (width, height) = (size.x as usize + 2, size.y as usize + 2);
@@ -314,13 +333,12 @@ fn spawn_layer(
         unlit: true,
         ..default()
     });
-    let center = plane_rect.center();
     commands.spawn((
         Name::new("Brouillard de guerre"),
         FogPlane,
-        Mesh3d(meshes.add(Plane3d::default().mesh().size(plane_rect.width(), plane_rect.height()))),
+        Mesh3d(meshes.add(fog_mesh(terrain, plane_rect))),
         MeshMaterial3d(material),
-        Transform::from_xyz(center.x, PLANE_HEIGHT, center.y),
+        Transform::IDENTITY,
         NotShadowCaster,
         NotShadowReceiver,
     ));

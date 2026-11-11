@@ -13,6 +13,7 @@ use bevy::prelude::*;
 use super::field::{ConstructionFields, FieldBuildings};
 use super::{completed_types, Building, BuildingCatalog, Footprint, GhostPiece, PlacementGhost, UnderConstruction};
 use crate::camera::{screen_to_ground, RtsCamera};
+use crate::terrain::Terrain;
 use crate::cursor::Pointer;
 use crate::economy::{Notice, ResourceNode};
 use crate::input::{GameAction, InputContext};
@@ -60,7 +61,7 @@ pub(crate) fn handle_build_actions(
     mut orders: ResMut<CommandQueue>,
     mut context: ResMut<InputContext>,
     mut notices: MessageWriter<Notice>,
-    players: Res<Players>,
+    (players, terrain): (Res<Players>, Res<Terrain>),
 ) {
     let Some(catalog) = catalog else {
         actions.clear();
@@ -84,7 +85,7 @@ pub(crate) fn handle_build_actions(
             }
             GameAction::PlaceBuildingAt { screen_pos, keep_placing } => {
                 let (Some(type_index), Some(grid)) = (placement.active, grid.as_deref()) else { continue };
-                let Some(ground) = screen_to_ground(camera, camera_transform, screen_pos) else { continue };
+                let Some(ground) = screen_to_ground(camera, camera_transform, screen_pos, &terrain) else { continue };
                 let min_cell = catalog.snap_min_cell(type_index, ground.xz(), grid.frame(), nodes.iter());
                 let fields = ConstructionFields::of_player(&catalog, grid.frame(), local.0, field_buildings.iter());
                 // Emplacement interdit : on le dit, et on reste en mode pose
@@ -123,6 +124,7 @@ pub(crate) fn update_pointer_ghost(
     grid: Option<Res<NavGrid>>,
     nodes: Query<(Entity, &ResourceNode, &Footprint)>,
     mut ghosts: Query<(Entity, &mut PlacementGhost, &mut Visibility)>,
+    terrain: Res<Terrain>,
 ) {
     let (Some(catalog), Some(grid)) = (catalog, grid) else { return };
     let (camera, camera_transform) = camera.into_inner();
@@ -133,7 +135,7 @@ pub(crate) fn update_pointer_ghost(
         }
         return;
     };
-    let ground = pointer.position.and_then(|pos| screen_to_ground(camera, camera_transform, pos));
+    let ground = pointer.position.and_then(|pos| screen_to_ground(camera, camera_transform, pos, &terrain));
     let min_cell = ground.map(|g| catalog.snap_min_cell(type_index, g.xz(), grid.frame(), nodes.iter()));
     match current {
         Some((_, mut ghost, mut visibility)) if ghost.type_index == type_index => {

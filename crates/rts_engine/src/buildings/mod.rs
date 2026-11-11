@@ -48,6 +48,7 @@ use bevy::mesh::{Indices, PrimitiveTopology};
 use bevy::prelude::*;
 
 use crate::collision::{Collider, StaticObstacle};
+use crate::terrain::OnTerrain;
 use crate::navigation::{GridFrame, MoveGroup, NavGrid, NavPath};
 use crate::orders::{owned_units, PlayerCommand, TickCommands};
 use crate::players::{Owner, PlayerId};
@@ -634,6 +635,7 @@ impl BuildingCatalog {
             .spawn((
                 Name::new("Fantôme"),
                 ghost,
+                OnTerrain,
                 Transform::from_xyz(center.x, 0.0, center.y).with_rotation(Quat::from_rotation_y(self.facing)),
                 Visibility::default(),
             ))
@@ -699,6 +701,7 @@ impl BuildingCatalog {
         let root = commands
             .spawn((
                 Name::new("Souvenir de bâtiment"),
+                OnTerrain,
                 Transform::from_xyz(center.x, 0.0, center.y).with_rotation(Quat::from_rotation_y(self.facing)),
                 Visibility::default(),
             ))
@@ -727,6 +730,7 @@ impl BuildingCatalog {
         commands
             .spawn((
                 Name::new("Emplacement promis"),
+                OnTerrain,
                 PlannedMarker { worker, plan },
                 Mesh3d(self.site_frames[plan.type_index].clone()),
                 MeshMaterial3d(self.ghost_materials[0].clone()),

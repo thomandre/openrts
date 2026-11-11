@@ -26,3 +26,6 @@ opt-level = 1
 
 [profile.dev.package."*"]
 opt-level = 3
+# Pas d'informations de débogage pour les dépendances : on ne débogue pas
+# Bevy, et elles font gonfler le dossier `target` de plusieurs dizaines de Go.
+debug = false

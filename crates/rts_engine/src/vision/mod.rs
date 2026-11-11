@@ -16,6 +16,9 @@
 //!   le reste, voir [`display`]) ;
 //! - l'IA ne connaît que ce que voit son joueur, plus les bâtiments ennemis
 //!   déjà aperçus (voir [`crate::ai`]) ;
+//! - **relief** : on ne voit pas plus haut que soi. Une source au sol ne
+//!   marque pas les cases d'un niveau supérieur au sien (voir
+//!   [`crate::terrain`]) ; les volants voient tous les niveaux ;
 //! - **souvenir** : chaque joueur retient les bâtiments ennemis aperçus, tels
 //!   qu'au dernier aperçu ([`RememberedBuilding`]). Il ne les oublie qu'en
 //!   revoyant leur emplacement vide (détruits entre-temps).
@@ -47,11 +50,12 @@ use std::collections::BTreeMap;
 use bevy::prelude::*;
 
 use crate::buildings::{Building, UnderConstruction};
-use crate::collision::{Collider, MapBounds, StaticObstacle};
+use crate::collision::{Collider, CollisionLayer, MapBounds, StaticObstacle};
 use crate::combat::{CombatKind, CombatRules, DEFAULT_SIGHT};
 use crate::navigation::GridFrame;
 use crate::players::{Owner, PlayerId};
 use crate::simulation::{SimPosition, SimSet};
+use crate::terrain::Terrain;
 use crate::units::Unit;
 
 /// Côté d'une case de la grille de vision, en mètres.
@@ -111,6 +115,8 @@ pub struct VisionSource {
     pub player: PlayerId,
     pub area: Rect,
     pub radius: f32,
+    /// Niveau du relief d'où l'on regarde (`None` : en vol, on voit tout).
+    pub level: Option<u8>,
 }
 
 /// Ce que sait un joueur : l'état de chaque case et ses souvenirs.
@@ -162,7 +168,7 @@ impl Layout {
     /// Marque visibles toutes les cases dont le centre est à moins de
     /// `source.radius` de sa zone : un disque autour d'un point, un
     /// rectangle aux coins arrondis autour d'une empreinte.
-    fn stamp(&self, cells: &mut [CellVision], source: &VisionSource) {
+    fn stamp(&self, cells: &mut [CellVision], levels: &[u8], source: &VisionSource) {
         let (area, r) = (source.area, source.radius.max(0.0));
         // Coordonnée (en cases) du centre de la case `i` : `i + 0,5`.
         let first = |from: f32, origin: f32| ((from - origin) / CELL_SIZE - 0.5).ceil() as i32;
@@ -184,8 +190,20 @@ impl Layout {
                 continue;
             }
             let row = self.index(IVec2::new(0, y));
-            // `fill` remplit d'un coup une tranche (`[a..=b]`) du tableau.
-            cells[row + x_min as usize..=row + x_max as usize].fill(CellVision::Visible);
+            let span = row + x_min as usize..=row + x_max as usize;
+            match source.level {
+                // Au sol, sur une carte en relief : case par case, sauf
+                // celles qui sont plus hautes que la source.
+                Some(level) if !levels.is_empty() => {
+                    for i in span {
+                        if levels[i] <= level {
+                            cells[i] = CellVision::Visible;
+                        }
+                    }
+                }
+                // `fill` remplit d'un coup une tranche (`[a..=b]`) du tableau.
+                _ => cells[span].fill(CellVision::Visible),
+            }
         }
     }
 }
@@ -200,6 +218,8 @@ pub struct FogOfWar {
     layout: Layout,
     /// Rangés par numéro de joueur.
     players: Vec<PlayerVision>,
+    /// Niveau du relief de chaque case (vide sur une carte plate).
+    levels: Vec<u8>,
     version: u64,
 }
 
@@ -212,8 +232,23 @@ impl FogOfWar {
             bounds,
             layout: Layout { origin: bounds.min, columns: size.x, rows: size.y },
             players: Vec::new(),
+            levels: Vec::new(),
             version: 0,
         }
+    }
+
+    /// Prend le relief en compte : niveau de chaque case (on ne voit pas
+    /// plus haut que soi).
+    pub fn set_terrain(&mut self, terrain: &Terrain) {
+        self.levels = if terrain.is_flat() {
+            Vec::new()
+        } else {
+            let layout = self.layout;
+            (0..layout.rows)
+                .flat_map(|y| (0..layout.columns).map(move |x| layout.origin + (Vec2::new(x as f32, y as f32) + 0.5) * CELL_SIZE))
+                .map(|center| terrain.level_at(center))
+                .collect()
+        };
     }
 
     /// Le brouillard est-il actif ? Sinon, tout est visible.
@@ -339,7 +374,7 @@ impl FogOfWar {
             }
         }
         for source in sources {
-            layout.stamp(&mut self.players[usize::from(source.player.0)].cells, source);
+            layout.stamp(&mut self.players[usize::from(source.player.0)].cells, &self.levels, source);
         }
         for (p, vision) in self.players.iter_mut().enumerate() {
             let player = PlayerId(p as u8);
@@ -369,7 +404,7 @@ pub struct VisionPlugin;
 
 impl Plugin for VisionPlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<VisionSettings>().init_resource::<FogOfWar>().add_systems(
+        app.init_resource::<VisionSettings>().init_resource::<FogOfWar>().init_resource::<Terrain>().add_systems(
             FixedUpdate,
             // Après les déplacements et les chantiers (positions finales du
             // pas), avant le combat, qui ne vise que ce qui est visible.
@@ -384,6 +419,7 @@ fn update_vision(
     settings: Res<VisionSettings>,
     bounds: Res<MapBounds>,
     rules: Option<Res<CombatRules>>,
+    terrain: Res<Terrain>,
     mut fog: ResMut<FogOfWar>,
     units: Query<(&Unit, &Owner, &SimPosition, Option<&Collider>)>,
     buildings: Query<(Entity, &Building, &Owner, &StaticObstacle, Option<&UnderConstruction>)>,
@@ -393,6 +429,9 @@ fn update_vision(
     let fresh = fog.bounds != bounds.0;
     if fresh {
         *fog = FogOfWar { enabled: settings.enabled, ..FogOfWar::new(bounds.0) };
+    }
+    if fresh || terrain.is_changed() {
+        fog.set_terrain(&terrain);
     }
     let tick = *ticks;
     *ticks = ticks.wrapping_add(1);
@@ -407,6 +446,10 @@ fn update_vision(
             player: owner.0,
             area: Rect::from_center_size(position.current, Vec2::ZERO),
             radius: sight(CombatKind::Unit(unit.type_index)) + collider.map_or(0.0, |c| c.radius),
+            level: match collider.map(|c| c.layer) {
+                Some(CollisionLayer::Air) => None,
+                _ => Some(terrain.level_at(position.current)),
+            },
         })
         .collect();
     let mut list: Vec<(Entity, RememberedBuilding)> = buildings
@@ -426,6 +469,7 @@ fn update_vision(
         player: b.owner,
         area: b.rect,
         radius: sight(CombatKind::Building(b.type_index)),
+        level: Some(terrain.level_at(b.rect.center())),
     }));
     fog.update(&sources, &list);
 }

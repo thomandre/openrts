@@ -34,6 +34,7 @@ use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
 use crate::buildings::ui::{BORDER, PANEL};
 use crate::camera::{ray_at_height, screen_ray};
 use crate::collision::{MapBounds, StaticObstacle};
+use crate::terrain::Terrain;
 use crate::economy::{EconomyRules, ResourceNode};
 use crate::input::BlocksPointer;
 use crate::players::{LocalPlayer, Owner, PlayerId};
@@ -54,6 +55,7 @@ const VIEW_LINE: f32 = 1.5;
 const GROUND: [u8; 4] = [22, 28, 32, 255];
 const GRID: [u8; 4] = [30, 38, 43, 255];
 const EDGE: [u8; 4] = [46, 120, 132, 255];
+const CLIFF: [u8; 4] = [10, 12, 14, 255];
 /// Couleur d'une entité dont on ne connaît pas l'équipe.
 const NEUTRAL: Color = Color::srgb(0.7, 0.7, 0.7);
 
@@ -141,8 +143,9 @@ impl Plugin for MinimapPlugin {
     }
 }
 
-/// Dessine le fond : sol, quadrillage tous les 10 m, bord de la carte.
-fn background(size: UVec2, surface: &MinimapSurface) -> Vec<u8> {
+/// Dessine le fond : sol (plus clair à chaque niveau du relief, falaises
+/// sombres), quadrillage tous les 10 m, bord de la carte.
+fn background(size: UVec2, surface: &MinimapSurface, terrain: &Terrain) -> Vec<u8> {
     let (w, h) = (size.x as usize, size.y as usize);
     let mut data = Vec::with_capacity(w * h * 4);
     // Mètres par pixel d'image, sur chaque axe.
@@ -155,10 +158,12 @@ fn background(size: UVec2, surface: &MinimapSurface) -> Vec<u8> {
             let on_grid = |v: f32, s: f32| (v - (v / 10.0).round() * 10.0).abs() < s / 2.0;
             let pixel = if x == 0 || y == 0 || x + 1 == w || y + 1 == h {
                 EDGE
-            } else if on_grid(world.x, step.x) || on_grid(world.y, step.y) {
-                GRID
+            } else if terrain.is_cliff(world) {
+                CLIFF
             } else {
-                GROUND
+                let base = if on_grid(world.x, step.x) || on_grid(world.y, step.y) { GRID } else { GROUND };
+                let lift = 13 * terrain.level_at(world).min(4);
+                [base[0] + lift, base[1] + lift, base[2] + lift, 255]
             };
             data.extend_from_slice(&pixel);
         }
@@ -188,10 +193,10 @@ fn rect_pixels(surface: &MinimapSurface, size: UVec2, center: Vec2, half: Vec2, 
     ((c - half_px).round().as_ivec2(), (c + half_px).round().as_ivec2())
 }
 
-fn spawn_minimap(mut commands: Commands, bounds: Res<MapBounds>, mut images: ResMut<Assets<Image>>) {
+fn spawn_minimap(mut commands: Commands, bounds: Res<MapBounds>, terrain: Res<Terrain>, mut images: ResMut<Assets<Image>>) {
     let surface = MinimapSurface { bounds: bounds.0 };
     let size = minimap_size(bounds.0);
-    let background = background(size, &surface);
+    let background = background(size, &surface, &terrain);
     let mut image = Image::new_fill(
         Extent3d { width: size.x, height: size.y, depth_or_array_layers: 1 },
         TextureDimension::D2,
@@ -250,7 +255,8 @@ fn spawn_minimap(mut commands: Commands, bounds: Res<MapBounds>, mut images: Res
 fn draw_minimap(
     time: Res<Time<Real>>,
     mut since: Local<Option<f32>>,
-    canvas: Option<Res<MinimapCanvas>>,
+    canvas: Option<ResMut<MinimapCanvas>>,
+    terrain: Res<Terrain>,
     mut images: ResMut<Assets<Image>>,
     vision: LocalVision,
     units: Option<Res<UnitCatalog>>,
@@ -258,7 +264,11 @@ fn draw_minimap(
     nodes: Query<(Entity, &ResourceNode, &StaticObstacle)>,
     entities: Query<(Entity, &GlobalTransform, &Owner, &Selectable)>,
 ) {
-    let Some(canvas) = canvas else { return };
+    let Some(mut canvas) = canvas else { return };
+    // Nouveau relief : on redessine le fond.
+    if terrain.is_changed() {
+        canvas.background = background(canvas.size, &canvas.surface, &terrain);
+    }
     let now = time.elapsed_secs();
     if since.is_some_and(|last| now - last < REFRESH_SECS) {
         return;

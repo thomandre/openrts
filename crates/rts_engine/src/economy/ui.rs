@@ -16,6 +16,7 @@ use crate::input::{ActionButton, BlocksPointer, GameAction, Hotkey};
 use crate::orders::{CommandQueue, PlayerCommand};
 use crate::players::{LocalPlayer, Owner, Players};
 use crate::selection::Selected;
+use crate::terrain::Terrain;
 use crate::units::{Unit, UnitCatalog};
 
 /// Les bâtiments producteurs terminés du joueur local dans la sélection,
@@ -505,14 +506,17 @@ pub(crate) fn update_rally_marker(
     producers: Query<(Entity, &Owner, &ProductionQueue, &GlobalTransform, Option<&RallyPoint>), With<Selected>>,
     mut marker: Query<(&mut Transform, &mut Visibility), With<RallyMarker>>,
     mut gizmos: Gizmos,
+    terrain: Res<Terrain>,
 ) {
     let Ok((mut transform, mut visibility)) = marker.single_mut() else { return };
     let shown = selected_producers(*local, producers.iter().map(|(e, o, q, ..)| (e, o, q))).first().copied();
     match shown.and_then(|e| producers.get(e).ok()).and_then(|(.., t, rally)| rally.map(|r| (t, r))) {
         Some((building, rally)) => {
-            transform.translation = Vec3::new(rally.point.x, 0.0, rally.point.y);
+            transform.translation = Vec3::new(rally.point.x, terrain.height_at(rally.point), rally.point.y);
             visibility.set_if_neq(Visibility::Inherited);
-            gizmos.line(building.translation().with_y(0.15), transform.translation.with_y(0.15), KEY_TEXT.with_alpha(0.7));
+            let from = building.translation();
+            let from = from.with_y(terrain.height_at(from.xz()) + 0.15);
+            gizmos.line(from, transform.translation + Vec3::Y * 0.15, KEY_TEXT.with_alpha(0.7));
         }
         None => {
             visibility.set_if_neq(Visibility::Hidden);

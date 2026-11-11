@@ -20,7 +20,7 @@ const THEM: PlayerId = PlayerId(1);
 
 /// Une source de vision ponctuelle.
 fn eye(player: PlayerId, at: Vec2, radius: f32) -> VisionSource {
-    VisionSource { player, area: Rect::from_center_size(at, Vec2::ZERO), radius }
+    VisionSource { player, area: Rect::from_center_size(at, Vec2::ZERO), radius, level: None }
 }
 
 fn small_map() -> FogOfWar {
@@ -49,10 +49,31 @@ fn cells_go_from_unexplored_to_visible_then_explored() {
 }
 
 #[test]
+fn nobody_sees_higher_than_their_level() {
+    use crate::terrain::{Plateau, Terrain, DEFAULT_LEVEL_HEIGHT};
+    let bounds = Rect::new(-20.0, -20.0, 20.0, 20.0);
+    // Un plateau de niveau 1 au nord (z > 0).
+    let plateau = Plateau::new(1, [Vec2::new(-30.0, 0.0), Vec2::new(30.0, 0.0), Vec2::new(30.0, 30.0), Vec2::new(-30.0, 30.0)]);
+    let terrain = Terrain::new(bounds, DEFAULT_LEVEL_HEIGHT, vec![plateau], Vec::new());
+    let mut fog = small_map();
+    fog.set_terrain(&terrain);
+    let low = VisionSource { level: Some(0), ..eye(ME, Vec2::new(0.5, -1.5), 6.0) };
+    let high = VisionSource { level: Some(1), ..eye(THEM, Vec2::new(0.5, 1.5), 6.0) };
+    fog.update(&[low, high], &[]);
+    // En bas, on ne voit pas le haut ; en haut, on voit le bas.
+    assert!(fog.is_visible(ME, Vec2::new(0.5, -4.5)));
+    assert!(!fog.is_visible(ME, Vec2::new(0.5, 0.5)));
+    assert!(fog.is_visible(THEM, Vec2::new(0.5, -2.5)));
+    // Un volant voit tout.
+    fog.update(&[eye(ME, Vec2::new(0.5, -1.5), 6.0)], &[]);
+    assert!(fog.is_visible(ME, Vec2::new(0.5, 2.5)));
+}
+
+#[test]
 fn a_building_sees_around_its_whole_footprint() {
     let mut fog = small_map();
     let rect = Rect::new(-2.0, -2.0, 2.0, 2.0);
-    fog.update(&[VisionSource { player: ME, area: rect, radius: 3.0 }], &[]);
+    fog.update(&[VisionSource { player: ME, area: rect, radius: 3.0, level: None }], &[]);
     assert!(fog.is_visible(ME, Vec2::new(4.5, 1.5)), "3 m à droite du bord");
     assert!(fog.is_visible(ME, Vec2::new(-1.5, -4.5)), "3 m sous le bord");
     assert!(!fog.is_visible(ME, Vec2::new(5.5, 0.0)));
@@ -231,7 +252,7 @@ fn vision_cost_300_against_300() {
         let owner = if i < 20 { ME } else { THEM };
         let building = RememberedBuilding { owner, type_index: 0, rect: Rect::from_center_size(at, Vec2::splat(4.0)), progress: None };
         buildings.push((Entity::from_raw_u32(1000 + i).unwrap(), building));
-        sources.push(VisionSource { player: owner, area: building.rect, radius: 8.0 });
+        sources.push(VisionSource { player: owner, area: building.rect, radius: 8.0, level: None });
     }
     let runs = 2000;
     let start = std::time::Instant::now();

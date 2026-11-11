@@ -5,7 +5,7 @@
 //! ordres des joueurs (`orders`), les joueurs (`players`), la navigation
 //! (grille, A*), les bâtiments (pose, chantiers), l'économie, le combat, une IA
 //! adverse basique (`ai`), le brouillard de guerre (`vision`), la fin de
-//! partie (`outcome`), les groupes de contrôle, la minicarte et le rendu
+//! partie (`outcome`), le relief (`terrain`), les groupes de contrôle, la minicarte et le rendu
 //! (module `graphics`). Le contenu (unités, bâtiments, cartes…) vit
 //! dans la crate `rts_game`.
 
@@ -28,6 +28,7 @@ pub mod players;
 pub mod selection;
 pub mod selection_info;
 pub mod simulation;
+pub mod terrain;
 pub mod units;
 pub mod vision;
 
@@ -78,6 +79,7 @@ impl Plugin for RtsEnginePlugin {
                 vision::VisionPlugin,
                 vision::display::FogDisplayPlugin,
                 selection_info::SelectionInfoPlugin,
+                terrain::TerrainPlugin,
             ));
     }
 }

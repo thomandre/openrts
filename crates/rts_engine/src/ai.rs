@@ -599,8 +599,9 @@ impl Plan<'_> {
     }
 
     /// Un emplacement libre pour le type `type_index`, sur des cercles de
-    /// plus en plus grands autour de la base, à l'écart des gisements et
-    /// avec une case libre tout autour (pour que les unités circulent).
+    /// plus en plus grands autour de la base, au niveau de la base (même
+    /// plateau), à l'écart des gisements et avec une case libre tout autour
+    /// (pour que les unités circulent).
     fn find_spot(&self, type_index: usize, hq: Vec2) -> Option<IVec2> {
         let view = &self.view;
         let footprint = view.catalog.types[type_index].footprint;
@@ -608,6 +609,7 @@ impl Plan<'_> {
         // Les gisements sont d'un côté de la base : on construit de l'autre.
         let away = deposits.iter().filter(|d| d.distance(hq) < 16.0).fold(Vec2::ZERO, |sum, d| sum + (hq - *d)).normalize_or(Vec2::Y);
         let start = away.to_angle();
+        let base_level = view.grid.level(view.grid.cell_of(hq));
         for radius in 7..26 {
             let steps = 8 + radius * 2;
             for step in 0..steps {
@@ -622,7 +624,9 @@ impl Plan<'_> {
                 let min_cell = view.frame.min_cell_centered(point, footprint);
                 let rect = view.frame.rect(min_cell, footprint);
                 let margin = Rect::from_corners(rect.min - 1.0, rect.max + 1.0);
-                if self.planned.iter().any(|(_, r)| !r.intersect(margin).is_empty())
+                // Sur le plateau de la base (pas en contrebas d'une falaise).
+                if view.grid.level(min_cell) != base_level
+                    || self.planned.iter().any(|(_, r)| !r.intersect(margin).is_empty())
                     || view.buildings.iter().any(|b| !b.rect.intersect(margin).is_empty())
                     || !view.grid.area_free(min_cell - IVec2::ONE, footprint + UVec2::splat(2))
                 {

@@ -17,6 +17,7 @@ use crate::input::{GameAction, SelectionDrag, TargetedOrder};
 use crate::orders::{CommandQueue, PlayerCommand};
 use crate::players::{are_enemies, LocalPlayer, Owner};
 use crate::simulation::MoveSpeed;
+use crate::terrain::Terrain;
 use crate::units::{Unit, UnitCatalog};
 use crate::vision::display::FogHidden;
 use crate::RtsSystems;
@@ -117,10 +118,11 @@ fn handle_actions(
     unit_types: Query<&Unit>,
     nodes: Query<(Entity, &ResourceNode, &StaticObstacle)>,
     // Un n-uplet compte pour un seul paramètre (Bevy en accepte 16 au plus).
-    (queues, sites, buildings): (
+    (queues, sites, buildings, terrain): (
         Query<(), With<ProductionQueue>>,
         Query<&Building, With<UnderConstruction>>,
         Option<Res<BuildingCatalog>>,
+        Res<Terrain>,
     ),
     rules: Option<Res<EconomyRules>>,
     local: Res<LocalPlayer>,
@@ -201,7 +203,7 @@ fn handle_actions(
             GameAction::CommandAt { .. } | GameAction::CommandAtPoint { .. } => {
                 let (target, picked) = match *action {
                     GameAction::CommandAt { screen_pos } => {
-                        let Some(target) = screen_to_ground(camera, camera_transform, screen_pos) else { continue };
+                        let Some(target) = screen_to_ground(camera, camera_transform, screen_pos, &terrain) else { continue };
                         (target.xz(), screen_ray(camera, camera_transform, screen_pos).and_then(|ray| pick(ray, &units)))
                     }
                     GameAction::CommandAtPoint { point } => (point, None),
@@ -283,7 +285,7 @@ fn handle_actions(
             GameAction::OrderAt { .. } | GameAction::OrderAtPoint { .. } => {
                 let (order, target, picked) = match *action {
                     GameAction::OrderAt { order, screen_pos, .. } => {
-                        let Some(target) = screen_to_ground(camera, camera_transform, screen_pos) else { continue };
+                        let Some(target) = screen_to_ground(camera, camera_transform, screen_pos, &terrain) else { continue };
                         (order, target.xz(), screen_ray(camera, camera_transform, screen_pos).and_then(|ray| pick(ray, &units)))
                     }
                     GameAction::OrderAtPoint { order, point, .. } => (order, point, None),

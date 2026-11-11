@@ -7,6 +7,7 @@
 use bevy::prelude::*;
 
 use crate::input::{CameraControl, GameAction};
+use crate::terrain::Terrain;
 use crate::RtsSystems;
 
 /// Composant à placer sur l'entité caméra pour la piloter comme dans un RTS.
@@ -56,7 +57,7 @@ impl RtsCamera {
     /// suit à la prochaine mise à jour de la caméra.
     pub fn look_at(&mut self, point: Vec2) {
         let point = point.clamp(self.bounds.min, self.bounds.max);
-        self.focus = Vec3::new(point.x, 0.0, point.y);
+        self.focus = Vec3::new(point.x, self.focus.y, point.y);
     }
 }
 
@@ -73,9 +74,10 @@ pub fn ray_at_height(ray: Ray3d, height: f32) -> Option<Vec3> {
     Some(ray.get_point(distance))
 }
 
-/// Point du sol (y = 0) qui se trouve sous ce point de l'écran.
-pub fn screen_to_ground(camera: &Camera, camera_transform: &GlobalTransform, screen_pos: Vec2) -> Option<Vec3> {
-    ray_at_height(screen_ray(camera, camera_transform, screen_pos)?, 0.0)
+/// Point du sol (relief compris, voir [`Terrain::ray_hit`]) qui se trouve
+/// sous ce point de l'écran.
+pub fn screen_to_ground(camera: &Camera, camera_transform: &GlobalTransform, screen_pos: Vec2, terrain: &Terrain) -> Option<Vec3> {
+    terrain.ray_hit(screen_ray(camera, camera_transform, screen_pos)?)
 }
 
 pub struct RtsCameraPlugin;
@@ -100,6 +102,7 @@ fn handle_look_at(mut actions: MessageReader<GameAction>, mut cameras: Query<&mu
 fn apply_camera_control(
     control: Res<CameraControl>,
     time: Res<Time>,
+    terrain: Res<Terrain>,
     mut cameras: Query<(&mut RtsCamera, &mut Transform)>,
 ) {
     // `iter_mut` parcourt toutes les entités qui ont *à la fois* RtsCamera et Transform.
@@ -113,9 +116,15 @@ fn apply_camera_control(
         let delta = Vec3::new(control.pan.x, 0.0, -control.pan.y) * speed;
         let bounds = cam.bounds;
         cam.focus = (cam.focus + delta).clamp(
-            Vec3::new(bounds.min.x, 0.0, bounds.min.y),
-            Vec3::new(bounds.max.x, 0.0, bounds.max.y),
+            Vec3::new(bounds.min.x, f32::MIN, bounds.min.y),
+            Vec3::new(bounds.max.x, f32::MAX, bounds.max.y),
         );
+        // Le point visé suit en douceur la hauteur du sol (un plateau, une
+        // vallée), moyennée autour de lui pour ne pas sauter au bord d'une falaise.
+        let around = [Vec2::ZERO, Vec2::X, Vec2::NEG_X, Vec2::Y, Vec2::NEG_Y].map(|d| terrain.height_at(cam.focus.xz() + d * 4.0));
+        let ground = around.iter().sum::<f32>() / around.len() as f32;
+        let blend = 1.0 - (-4.0 * time.delta_secs()).exp();
+        cam.focus.y += (ground - cam.focus.y) * blend;
 
         *transform = cam.transform();
     }

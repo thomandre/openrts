@@ -63,6 +63,8 @@ impl Plugin for SimulationPlugin {
     fn build(&self, app: &mut App) {
         app.insert_resource(Time::<Fixed>::from_hz(TICKS_PER_SECOND))
             .init_resource::<MapBounds>()
+            // Sol plat par défaut (voir `terrain`) : la navigation le lit.
+            .init_resource::<crate::terrain::Terrain>()
             .init_resource::<CollisionSettings>()
             .init_resource::<NavSettings>()
             .init_resource::<PathQueue>()

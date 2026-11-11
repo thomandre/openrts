@@ -64,6 +64,7 @@ use rts_engine::players::{PlayerId, Players};
 use rts_engine::graphics::{Ambiance, GraphicsQuality, ReflectionPanels};
 use rts_engine::input::GameAction;
 use rts_engine::navigation::{GridFrame, NavSettings};
+use rts_engine::terrain::{Terrain, DEFAULT_LEVEL_HEIGHT};
 use rts_engine::units::{Palette, UnitCatalog, UnitType};
 use rts_engine::vision::VisionSettings;
 use rts_engine::RtsEnginePlugin;
@@ -444,14 +445,19 @@ fn setup_world(
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut images: ResMut<Assets<Image>>,
 ) {
+    // Le relief : en partie normale seulement (les démonstrations et la
+    // bataille restent sur un sol plat). `OPENRTS_RELIEF=0` l'enlève.
+    let half = MAP_SIZE / 2.0;
+    let bounds = Rect::new(-half, -half, half, half);
+    let relief = base::demo_requested().is_none() && !battle::requested() && std::env::var("OPENRTS_RELIEF").as_deref() != Ok("0");
+    let terrain = if relief { map::match_terrain(bounds) } else { Terrain::new(bounds, DEFAULT_LEVEL_HEIGHT, Vec::new(), Vec::new()) };
     let ground = faction.ground();
-    map::spawn_ground(&mut commands, &mut meshes, &mut materials, &mut images, MAP_SIZE, &ground, faction.ground_pattern());
+    map::spawn_ground(&mut commands, &mut meshes, &mut materials, &mut images, MAP_SIZE, &ground, faction.ground_pattern(), &terrain);
 
     // La caméra RTS. Le moteur lui ajoute HDR, tone mapping, bloom, brouillard
     // et IBL selon la qualité graphique et l'ambiance.
-    let half = MAP_SIZE / 2.0;
     let mut rts_camera = RtsCamera {
-        bounds: Rect::new(-half, -half, half, half),
+        bounds,
         ..default()
     };
     // `OPENRTS_ZOOM=12` : distance de départ de la caméra (pratique pour les captures).
@@ -461,9 +467,10 @@ fn setup_world(
     // Partie normale : la caméra regarde la base du joueur et son armée.
     if base::demo_requested().is_none() && !battle::requested() {
         let focus = side::match_focus();
-        rts_camera.focus = Vec3::new(focus.x, 0.0, focus.y);
+        rts_camera.focus = Vec3::new(focus.x, terrain.height_at(focus), focus.y);
     }
     commands.spawn((Camera3d::default(), rts_camera.transform(), rts_camera));
+    commands.insert_resource(terrain);
 }
 
 fn spawn_units(

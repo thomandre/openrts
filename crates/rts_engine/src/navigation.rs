@@ -40,6 +40,7 @@ use bevy::prelude::*;
 
 use crate::collision::{Collider, CollisionLayer, MapBounds, StaticObstacle};
 use crate::simulation::{MoveTarget, SimPosition};
+use crate::terrain::Terrain;
 
 /// Réglages de la navigation.
 #[derive(Resource, Debug, Clone)]
@@ -115,6 +116,10 @@ pub struct NavGrid {
     columns: i32,
     rows: i32,
     blocked: Vec<bool>,
+    /// Cases où l'on ne construit pas (rampes), en plus des cases bloquées.
+    unbuildable: Vec<bool>,
+    /// Niveau du relief de chaque case (voir [`Terrain`]).
+    levels: Vec<u8>,
     /// Distance (mètres) du centre de chaque case à l'obstacle le plus proche
     /// ou au bord de la carte, plafonnée à `MAX_CLEARANCE`. 0 pour une case bloquée.
     clearance: Vec<f32>,
@@ -145,6 +150,8 @@ impl NavGrid {
             columns,
             rows,
             blocked: vec![false; count],
+            unbuildable: vec![false; count],
+            levels: vec![0; count],
             clearance: vec![0.0; count],
             slack: 0.25 * cell_size,
             version: 0,
@@ -172,6 +179,22 @@ impl NavGrid {
 
     pub fn frame(&self) -> GridFrame {
         GridFrame { origin: self.origin, cell_size: self.cell_size }
+    }
+
+    /// Recopie du relief ce qui ne bouge pas : les rampes (non
+    /// constructibles) et le niveau de chaque case. Les falaises, elles,
+    /// sont des obstacles comme les autres.
+    pub fn set_terrain(&mut self, terrain: &Terrain) {
+        for index in 0..self.blocked.len() {
+            let center = self.cell_center(self.cell_at(index));
+            self.unbuildable[index] = terrain.is_ramp(center);
+            self.levels[index] = terrain.level_at(center);
+        }
+    }
+
+    /// Niveau du relief de la case (0 hors de la grille).
+    pub fn level(&self, cell: IVec2) -> u8 {
+        if self.in_bounds(cell) { self.levels[self.index(cell)] } else { 0 }
     }
 
     /// Recalcule les cases bloquées et le dégagement à partir des obstacles.
@@ -273,10 +296,15 @@ impl NavGrid {
         }
     }
 
-    /// Toutes les cases du bloc sont-elles dans la carte et libres ?
-    /// (Sert à la pose des bâtiments.)
+    /// Toutes les cases du bloc sont-elles dans la carte, libres et
+    /// constructibles (pas sur une rampe) ? (Sert à la pose des bâtiments.)
     pub fn area_free(&self, min_cell: IVec2, size: UVec2) -> bool {
-        (0..size.y as i32).all(|dy| (0..size.x as i32).all(|dx| !self.is_blocked(min_cell + IVec2::new(dx, dy))))
+        (0..size.y as i32).all(|dy| {
+            (0..size.x as i32).all(|dx| {
+                let cell = min_cell + IVec2::new(dx, dy);
+                !self.is_blocked(cell) && !self.unbuildable[self.index(cell)]
+            })
+        })
     }
 
     /// Case praticable (pour `radius`) la plus proche de `cell`, en distance
@@ -773,15 +801,19 @@ pub(crate) fn rebuild_grid(
     obstacles: Query<&StaticObstacle>,
     changed: Query<(), Changed<StaticObstacle>>,
     mut removed: RemovedComponents<StaticObstacle>,
+    terrain: Res<Terrain>,
 ) {
     let removed_any = removed.read().count() > 0;
     match grid {
         Some(mut grid) => {
-            if changed.is_empty() && !removed_any && !bounds.is_changed() {
+            if changed.is_empty() && !removed_any && !bounds.is_changed() && !terrain.is_changed() {
                 return;
             }
             if bounds.is_changed() || grid.cell_size != settings.cell_size {
                 *grid = NavGrid::new(bounds.0, settings.cell_size);
+            }
+            if terrain.is_changed() || bounds.is_changed() {
+                grid.set_terrain(&terrain);
             }
             // L'ordre des obstacles n'importe pas : une case est bloquée dès
             // qu'un seul la recouvre.
@@ -789,6 +821,7 @@ pub(crate) fn rebuild_grid(
         }
         None => {
             let mut grid = NavGrid::new(bounds.0, settings.cell_size);
+            grid.set_terrain(&terrain);
             grid.set_obstacles(obstacles.iter().map(|o| o.0));
             commands.insert_resource(grid);
         }
