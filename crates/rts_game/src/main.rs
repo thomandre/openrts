@@ -15,10 +15,13 @@
 //! - `OPENRTS_DEMO=buildings` : scène de démonstration des bâtiments
 //!   (Garde, ou Sylves avec `OPENRTS_FACTION=sylves`) ;
 //! - `OPENRTS_DEMO=economy` : l'économie en marche (récolte, production) ;
+//! - `OPENRTS_DEMO=battle` : deux armées qui s'affrontent (300 contre 300
+//!   avec `OPENRTS_STRESS=1`) ;
 //! - `OPENRTS_POP_MAX=100` : plafond global de population.
 
 mod base;
 mod base_sylves;
+mod battle;
 mod combat;
 mod garde;
 mod collectif;
@@ -272,7 +275,10 @@ fn main() {
         app.insert_resource(AutoScreenshot { path, delay_secs: 14.0 })
             .add_plugins((FrameTimeDiagnosticsPlugin::default(), LogDiagnosticsPlugin::default()));
     }
-    if stress {
+    if battle::requested() {
+        // La bataille fait elle-même son test de charge (300 contre 300).
+        app.add_plugins(battle::BattlePlugin);
+    } else if stress {
         app.add_systems(Startup, |mut actions: MessageWriter<GameAction>| {
             actions.write(GameAction::SpawnStressTest);
         });
@@ -328,6 +334,23 @@ fn spawn_units(
     let palette = faction.palette(garde::SIGNAL_ORANGE);
     let mut catalog = UnitCatalog::new(faction.unit_types(), &palette, &mut meshes, &mut materials, &mut images);
     catalog.set_team_colors(&TEAM_COLORS, &mut materials, &mut images);
+
+    // `OPENRTS_DEMO=battle` : deux armées face à face (voir `battle`).
+    if battle::requested() {
+        let frame = GridFrame::new(bounds.0, &nav);
+        let buildings = match *faction {
+            Faction::Garde => Some(base::building_catalog(&catalog, &mut meshes, &mut materials)),
+            Faction::Sylves => Some(base_sylves::building_catalog(&catalog, &mut meshes, &mut materials)),
+            Faction::Collectif | Faction::CollectifOrRose => None,
+        };
+        let stress = std::env::var_os("OPENRTS_STRESS").is_some();
+        battle::spawn(&mut commands, *faction, &catalog, buildings.as_ref(), frame, stress);
+        if let Some(buildings) = buildings {
+            commands.insert_resource(buildings);
+        }
+        commands.insert_resource(catalog);
+        return;
+    }
 
     // Bâtiments et économie : la Garde et les Sylves pour l'instant (base
     // de départ, ou scènes de démonstration avec `OPENRTS_DEMO`).

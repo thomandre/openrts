@@ -9,8 +9,8 @@ Le design du jeu est décrit dans [GAME_DESIGN.md](GAME_DESIGN.md).
 
 | Dossier | Rôle |
 | --- | --- |
-| `crates/rts_engine` | Le moteur générique : entrées, caméra, sélection, joueurs (`players`), file des ordres (`orders`), simulation, collisions, navigation (grille, A\*), bâtiments (pose, chantiers), économie (`economy` : gisements, récolte, production, population, interface), rendu (`graphics`). Aucun contenu de jeu. |
-| `crates/rts_game` | Le jeu : unités, bâtiments, factions, cartes, gisements (`garde.rs`, `sylves.rs`, `collectif.rs`, `map.rs`, `base.rs`, `base_sylves.rs`, `gisements.rs`). Utilise `rts_engine`. |
+| `crates/rts_engine` | Le moteur générique : entrées, caméra, sélection, joueurs (`players`), file des ordres (`orders`), simulation, collisions, navigation (grille, A\*), bâtiments (pose, chantiers), économie (`economy` : gisements, récolte, production, population, interface), combat (`combat` : armes, ciblage, ordres, dégâts, barre d'ordres, effets), rendu (`graphics`). Aucun contenu de jeu. |
+| `crates/rts_game` | Le jeu : unités, bâtiments, factions, cartes, gisements (`garde.rs`, `sylves.rs`, `collectif.rs`, `map.rs`, `base.rs`, `base_sylves.rs`, `gisements.rs`, `combat.rs` : fiches de combat, `battle.rs` : démonstration de bataille). Utilise `rts_engine`. |
 
 ## Compiler et lancer
 
@@ -31,7 +31,13 @@ Sous Linux, il faut aussi les dépendances système de Bevy
 | Sélectionner une unité | Clic gauche |
 | Sélection en rectangle | Glisser au clic gauche |
 | Ajouter / retirer de la sélection | Maj + clic ou Maj + rectangle |
-| Déplacer la sélection | Clic droit sur le sol |
+| Attaque-déplacement (par défaut) | Clic droit sur le sol : les unités armées y vont en combattant ce qu'elles croisent ; ouvriers et unités sans arme s'y déplacent simplement |
+| Attaquer un ennemi | Clic droit sur une unité ou un bâtiment adverse |
+| Attaque-déplacement (ouvriers compris) | A puis clic gauche (sur un ennemi : l'attaquer), ou bouton « Attaquer » de la barre d'ordres |
+| Déplacement simple (ignore les ennemis, pour battre en retraite) | M puis clic gauche, ou bouton « Déplacer » |
+| Stop / Tenir la position | S / H, ou boutons de la barre d'ordres (en bas à gauche, visible avec des unités sélectionnées) |
+| Quitter le mode visée | Clic droit ou Échap (Maj + clic : donner l'ordre sans quitter le mode) |
+| Voir une unité adverse | Clic gauche dessus (anneau rouge ; pas d'ordre possible) |
 | Récolter (Techniciens ou Pousses sélectionnés) | Clic droit sur un gisement de Cristal, ou sur un Extracteur (Calice chez les Sylves) terminé |
 | Point de ralliement (bâtiment producteur sélectionné) | Clic droit sur le sol, ou sur un gisement (les Techniciens produits y récoltent directement) |
 | Produire (Quartier général ou Caserne sélectionné) | Touche de l'unité ou bouton du panneau en bas : T (Technicien, QG) ; S (Sentinelle), V, L, F (Caserne, grisés tant que leur bâtiment n'existe pas) |
@@ -96,6 +102,24 @@ Donner un autre ordre à la Pousse avant qu'elle arrive annule la promesse,
 remboursée en entier ; annuler un chantier qui pousse (X) rend 75 % du coût
 et la Pousse ressort de terre.
 
+### Combat
+
+Chaque unité et chaque bâtiment a des points de vie, une armure et des
+catégories (infanterie, blindé, aérien, mêlée, distance, ouvrier, géant,
+bâtiment) ; les unités armées et les défenses fixes (Tourelle, Épineux)
+ont une arme : dégâts, portée, cadence, sol et/ou air, bonus contre
+certaines catégories, dégâts de zone. Un coup fait les dégâts de l'arme,
+plus son bonus, moins l'armure de la cible (au moins 0,5).
+
+- Une unité au repos repère seule les ennemis proches et leur tire dessus :
+  d'abord ce qui attaque, puis le plus proche. Attaquée, elle riposte
+  toujours ; elle poursuit sans s'éloigner de plus de quelques mètres, puis
+  revient à sa place. Un ouvrier qui récolte ou construit ne combat pas.
+- Barres de vie au-dessus des unités sélectionnées, blessées ou survolées ;
+  traits de tir aux couleurs d'équipe, éclats, épaves qui s'effondrent.
+- Une unité tuée libère sa population ; un bâtiment détruit libère sa place
+  (les unités passent à nouveau) et la population qu'il fournissait.
+
 ### Économie
 
 Deux ressources, aux noms **provisoires** : le **Cristal** (principale,
@@ -155,13 +179,18 @@ Deux niveaux de qualité (`GraphicsQuality`) :
 | `OPENRTS_FACTION=sylves OPENRTS_DEMO=buildings` | Sylves : les cinq bâtiments, un Calice et la ligne de Cristal récoltés par des Pousses, une Ronceraie en pleine croissance, un fantôme vert et un rouge, une Pousse sélectionnée qui part s'enraciner au bout de 10,5 s (emplacement promis en vert) |
 | `OPENRTS_FOCUS=x,z` | La caméra vise ce point du sol au démarrage |
 | `OPENRTS_DEMO=economy` | Garde : l'économie en marche (douze Techniciens sur la ligne de Cristal, trois à un Extracteur, Quartier général sélectionné avec trois Techniciens en file et son point de ralliement, compteurs) |
+| `OPENRTS_DEMO=battle` | Deux armées de la même faction (joueur 1 orange au sud, joueur 2 bleu au nord), chacune devant deux défenses fixes (Tourelles, Épineux ; le Collectif n'a pas encore de bâtiments), qui partent à l'attaque-déplacement au bout de 8 s et se rencontrent au milieu. `OPENRTS_FACTION` choisit la faction, `OPENRTS_STRESS=1` donne 300 contre 300 |
 | `OPENRTS_POP_MAX=100` | Plafond global de population (200 par défaut) |
 | `OPENRTS_SCREENSHOT=capture.png` | Après 14 s : affiche les FPS moyens des 6 dernières secondes, enregistre une capture du rendu et quitte (synchronisation verticale coupée pour mesurer) |
 
 Exemples : `OPENRTS_WINDOWED=1 OPENRTS_STRESS=1 OPENRTS_SCREENSHOT=/tmp/charge.png cargo run --release`,
 `OPENRTS_WINDOWED=1 OPENRTS_DEMO=buildings OPENRTS_ZOOM=36 OPENRTS_SCREENSHOT=/tmp/batiments.png cargo run --release`,
 `OPENRTS_FACTION=sylves OPENRTS_WINDOWED=1 OPENRTS_DEMO=buildings OPENRTS_ZOOM=40 OPENRTS_FOCUS=0,-5 OPENRTS_SCREENSHOT=/tmp/sylves.png cargo run --release`,
-`OPENRTS_WINDOWED=1 OPENRTS_DEMO=economy OPENRTS_ZOOM=34 OPENRTS_FOCUS=1,-11 OPENRTS_SCREENSHOT=/tmp/economie.png cargo run --release`.
+`OPENRTS_WINDOWED=1 OPENRTS_DEMO=economy OPENRTS_ZOOM=34 OPENRTS_FOCUS=1,-11 OPENRTS_SCREENSHOT=/tmp/economie.png cargo run --release`,
+`OPENRTS_WINDOWED=1 OPENRTS_DEMO=battle OPENRTS_ZOOM=18 OPENRTS_FOCUS=0,1 OPENRTS_SCREENSHOT=/tmp/bataille.png cargo run --release`,
+`OPENRTS_WINDOWED=1 OPENRTS_DEMO=battle OPENRTS_STRESS=1 OPENRTS_ZOOM=70 OPENRTS_SCREENSHOT=/tmp/charge.png cargo run --release`.
+Coût d'un pas de simulation pendant une bataille de 300 contre 300 (sans fenêtre) :
+`cargo test --release -p rts_engine -- --ignored --nocapture battle_300`.
 Pour mesurer les performances, compiler en `--release` : en mode debug, les
 vérifications internes de Bevy et de wgpu coûtent beaucoup d'images par seconde.
 

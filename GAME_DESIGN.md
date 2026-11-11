@@ -142,6 +142,54 @@ Combat :
 - Portée, dégâts, armure, ciblage automatique des ennemis à portée.
 - Attaque-déplacement par défaut : une unité attaquée riposte toujours.
 
+**Interprétation de « attaque-déplacement par défaut » (étape 5).** L'ordre par défaut — clic droit, ou tap sur le sol — est une **attaque-déplacement** pour les unités armées : elles vont au point visé en combattant tout ennemi qu'elles croisent, puis s'y mettent au repos. C'est l'option la plus fidèle au texte, et la meilleure au doigt (pilier n° 1) : l'ordre le plus fréquent d'une armée ne demande qu'un tap. Le **déplacement simple**, qui ignore les ennemis, sert à battre en retraite ou à contourner : touche M puis clic, ou bouton « Déplacer » de la barre d'ordres (deux taps, moins fréquent). A puis clic donne explicitement une attaque-déplacement (ouvriers compris), comme dans SC2 ; sur un ennemi, A puis clic ou clic droit l'attaque. Exceptions : les ouvriers et les unités sans arme font un déplacement simple au clic droit (pour qu'un ouvrier envoyé à l'expansion ne parte pas se battre). « Une unité attaquée riposte toujours » vaut pour toute unité au repos, en attaque-déplacement ou qui tient la position (si l'attaquant est à portée) ; elle ne vaut pas pendant un déplacement simple (une retraite) ni pour un ouvrier occupé à récolter ou construire. À revoir en test sur iPad.
+
+Règles retenues à l'étape 5 (moteur, module `combat`) :
+
+- Dégâts d'un coup : dégâts de l'arme + bonus contre une catégorie de la cible − armure de la cible, au moins 0,5 (comme l'armure plate de SC2). Arme de zone : tous les ennemis à portée de zone autour de la cible prennent les mêmes dégâts (moins leur armure), pas de tir ami.
+- Catégories : infanterie, blindé, aérien, mêlée, distance, ouvrier, géant, bâtiment (tous les bâtiments sont aussi « blindés »). « Aérien » est une donnée de combat, indépendante de la couche de collision : le Faucon flotte mais reste une cible au sol (fantassin à réacteurs).
+- Portée mesurée de bord à bord (cercles au sol, rectangle d'un bâtiment). Portée d'acquisition : plus longue portée + 3 m, au moins 6 m. Laisse : 5 m de plus, mesurés depuis la position de repos ; après le combat, l'unité y revient.
+- Priorité de cible : ce qui attaque (a une cible), puis les autres unités, puis les bâtiments qui ne tirent pas ; à égalité le plus proche, puis le plus petit identifiant. Recherche complète un pas sur huit (en décalé), riposte immédiate.
+- Tirs instantanés, dégâts appliqués au pas du tir, tous ensemble (deux unités peuvent s'entretuer). Les défenses fixes tirent comme une unité qui tient la position, pas en chantier.
+- Mort : l'entité disparaît. Population, grille de navigation, récolte, chantiers, ralliement et cibles revérifient leurs références ; un ouvrier tué en route vers un emplacement promis est remboursé ; les unités en file d'un bâtiment détruit sont perdues.
+
+Valeurs de combat (Garde : PV, dégâts et portées du tableau ci-dessous ; **le reste est proposé**, à ajuster en test). Arme : dégâts / portée en m / secondes entre deux coups / cibles.
+
+| Garde | PV | Armure | Catégories | Arme |
+| --- | --- | --- | --- | --- |
+| Technicien | 40 | 0 | infanterie, ouvrier, mêlée | 5 / contact / 1,5 / sol |
+| Sentinelle | 50 | 0 | infanterie, distance | 6 / 5 / 0,6 / sol et air |
+| Longue-Vue | 40 | 0 | infanterie, distance | 18 / 9 / 2,0 / sol |
+| Lancier | 70 | 1 | infanterie, distance | 10 (+25 blindés) / 6 / 1,5 / sol et air |
+| Bastion | 300 | 2 | blindé, distance | 30 en zone de 1,6 m / 6 / 2,2 / sol |
+| Faucon | 45 | 0 | infanterie, distance | 8 / 4 / 0,8 / sol |
+| Tourelle | 250 | 1 | bâtiment | 12 / 7 / 0,9 / sol et air |
+
+| Sylves (proposé) | PV | Armure | Catégories | Arme |
+| --- | --- | --- | --- | --- |
+| Pousse | 40 | 0 | infanterie, ouvrier, mêlée | 5 / contact / 1,5 / sol |
+| Roncier | 60 | 1 | infanterie, mêlée | 7 / contact / 0,8 / sol |
+| Sourcier | 70 | 0 | infanterie, distance | 5 / 4 / 1,2 / sol et air (le soin viendra plus tard) |
+| Lanceur de spores | 110 | 0 | blindé, distance | 20 en zone de 2 m / 8 / 3,0 / sol |
+| Gardien | 500 | 3 | blindé, géant, mêlée | 35 (+20 bâtiments) / 1 / 2,0 / sol |
+| Samare | 50 | 0 | aérien, distance | 6 (+6 ouvriers) / 3 / 1,0 / sol et air |
+| Épineux | 300 | 1 | bâtiment | 15 / 7 / 1,2 / sol et air |
+
+| Collectif (proposé) | PV | Armure | Catégories | Arme |
+| --- | --- | --- | --- | --- |
+| Collecteur | 45 | 0 | aérien, ouvrier | 5 / 0,5 / 1,5 / sol |
+| Automate | 90 | 1 | infanterie, distance | 9 / 6 / 0,9 / sol et air |
+| Perceur | 130 | 1 | blindé, mêlée | 12 (+20 blindés) / 1,5 / 1,2 / sol |
+| Essaim | 60 | 0 | aérien, mêlée | 4 / 1,5 / 0,4 / sol et air |
+| Essaimeur | 350 | 2 | aérien, blindé, géant | 8 / 8 / 0,5 / sol et air (provisoire : représente ses drones) |
+| Titan | 600 | 3 | blindé, géant, distance | 40 en zone de 1,8 m (+10 bâtiments) / 9 / 2,8 / sol |
+
+Autres bâtiments : leurs PV de l'étape 4, armure 1, sans arme (ceux du Collectif, à venir, prennent cette valeur par défaut).
+
+- [ ] Une partie à deux factions différentes : un catalogue d'unités par joueur (aujourd'hui un seul catalogue par partie ; chaque joueur a déjà sa couleur d'équipe).
+- [ ] Projectiles simulés (temps de vol, esquive) si le jeu en a besoin ; tirs instantanés pour l'instant.
+- [ ] Soin du Sourcier, drones de l'Essaimeur, capacités du Faucon.
+
 Visuels : modèles procéduraux assemblés de pièces simples, décrits en données (voir « Direction artistique »), puis éventuellement modèles 3D originaux (Blender, packs libres).
 
 ### Unités de la Garde
@@ -252,7 +300,13 @@ On avance par étapes courtes, chacune jouable et testée avant de passer à la 
    - interface : compteurs en haut à droite, panneau de production (boutons et raccourcis par la même `GameAction`, file et progression), panneau de chantier, messages courts.
    - *Fait pour les Sylves (propositions) :* style de construction « la Pousse devient le bâtiment » (générique dans le moteur), cinq bâtiments du palier 1, économie de base, partie de départ (`OPENRTS_FACTION=sylves`) et démonstration (`OPENRTS_DEMO=buildings`).
    *Reste : économie du Collectif, récolte propre aux Sylves, contrôle de territoire à étudier.*
-5. **Combat** : portée, dégâts, armure, ciblage automatique, attaque-déplacement, mort des unités.
+5. **Combat** : portée, dégâts, armure, ciblage automatique, attaque-déplacement, mort des unités. *Fait (valeurs proposées, voir « Unités, combat et lisibilité ») :*
+   - un joueur adverse (sans IA) avec sa couleur d'équipe (bleu froid) : seuls les matériaux de couleur d'équipe sont recréés par joueur ; le rectangle ne sélectionne que ses propres entités, un clic sur un ennemi le montre (anneau rouge) sans pouvoir lui donner d'ordre ;
+   - fiches de combat en données (PV, armure, catégories, armes, bonus, zone) pour les trois factions, défenses fixes armées ; ciblage automatique dans une grille spatiale, riposte, laisse ; ordres attaquer, attaque-déplacement, stop, tenir la position par la file des ordres, barre d'ordres (A, M, S, H) et mode visée jouables au doigt ;
+   - tirs instantanés déterministes, morts et destructions qui libèrent population, grille, gisements ; tests sans fenêtre (duel, armure et bonus, riposte, attaque-déplacement, priorité, air/sol, déterminisme au bit près, ouvrier tué en récolte, bâtiment détruit) ;
+   - lisibilité : barres de vie (sélection, blessés, survol ; agrandies en dézoom), traits de tir aux couleurs d'équipe, éclats, épaves et ruines qui s'effondrent, repères d'ordres rouges ou verts ;
+   - démonstration `OPENRTS_DEMO=battle` (300 contre 300 avec `OPENRTS_STRESS=1`) : un pas de simulation de 300 contre 300 coûte environ 0,6 ms en moyenne (2 ms au pire) en mode optimisé.
+   *Reste : catalogue par joueur pour deux factions différentes, projectiles simulés, soin et capacités, équilibrage en test.*
 6. **Groupes de contrôle et interface** : barre de groupes, boutons d’ordres, raccourcis, minicarte.
 7. **Brouillard de guerre et IA adverse** basique qui construit et attaque par vagues.
 8. **Première faction complète** : arbre technologique, unités distinctes, vrais modèles 3D.
