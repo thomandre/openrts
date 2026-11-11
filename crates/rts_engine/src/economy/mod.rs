@@ -15,6 +15,8 @@
 //! simulation à pas fixe ; les messages à l'écran ([`Notice`]) et les
 //! visuels ne font que refléter cet état.
 
+pub mod harvest;
+
 use std::ops::{Add, AddAssign};
 
 use bevy::prelude::*;
@@ -124,6 +126,12 @@ pub struct ResourceInfo {
 pub struct EconomyRules {
     /// Les deux ressources, dans l'ordre de [`ResourceKind::index`].
     pub resources: [ResourceInfo; 2],
+    /// Types d'unités (indices du catalogue d'unités) qui récoltent.
+    pub harvesters: Vec<usize>,
+    /// Charge rapportée à chaque voyage, par ressource.
+    pub carry: [u32; 2],
+    /// Temps d'extraction d'une charge, en secondes, par ressource.
+    pub gather_time: [f32; 2],
 }
 
 impl EconomyRules {
@@ -146,6 +154,9 @@ pub struct ResourceNode {
     pub needs_extractor: bool,
     /// Le bâtiment d'extraction posé dessus, s'il y en a un.
     pub extractor: Option<Entity>,
+    /// L'ouvrier qui extrait en ce moment (un seul à la fois : les autres
+    /// attendent leur tour, voir [`harvest`]).
+    pub occupant: Option<Entity>,
 }
 
 impl ResourceNode {
@@ -174,7 +185,7 @@ pub fn spawn_resource_node(
     commands
         .spawn((
             Name::new("Gisement"),
-            ResourceNode { kind, amount, initial: amount, needs_extractor, extractor: None },
+            ResourceNode { kind, amount, initial: amount, needs_extractor, extractor: None, occupant: None },
             Footprint { min_cell, size },
             StaticObstacle(rect),
             Transform::from_xyz(center.x, 0.0, center.y),
@@ -240,9 +251,22 @@ pub struct EconomyPlugin;
 
 impl Plugin for EconomyPlugin {
     fn build(&self, app: &mut App) {
+        // Ordre dans le pas : déplacements, ordres de récolte, poses de
+        // bâtiments (un ouvrier envoyé construire quitte sa récolte), puis
+        // le cycle de récolte lui-même.
         app.add_message::<Notice>()
-            .add_systems(FixedUpdate, release_lost_extractors.in_set(SimSet::Orders))
-            .add_systems(Update, shrink_nodes);
+            .add_systems(
+                FixedUpdate,
+                (
+                    release_lost_extractors.before(harvest::harvest),
+                    harvest::apply_harvest_orders
+                        .after(crate::orders::apply_unit_orders)
+                        .before(crate::buildings::apply_build_orders),
+                    harvest::harvest.after(crate::buildings::apply_build_orders),
+                )
+                    .in_set(SimSet::Orders),
+            )
+            .add_systems(Update, (shrink_nodes, harvest::show_carried_loads));
     }
 }
 

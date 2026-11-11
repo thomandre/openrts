@@ -26,6 +26,7 @@
 use bevy::prelude::*;
 
 use crate::buildings::ConstructionTask;
+use crate::economy::harvest::Harvesting;
 use crate::navigation::MoveGroupCounter;
 use crate::players::{Owner, PlayerId};
 use crate::selection::{formation, Selectable};
@@ -39,6 +40,9 @@ use crate::simulation::{MoveSpeed, MoveTarget, SimSet};
 pub enum PlayerCommand {
     /// Aller au point visé, en formation.
     Move { units: Vec<Entity>, target: Vec2 },
+    /// Récolter ce gisement (pour une source de ressource rare : par le
+    /// bâtiment d'extraction posé dessus).
+    Harvest { units: Vec<Entity>, node: Entity },
     /// Poser un chantier ; l'ouvrier le plus proche parmi `builders` s'en charge.
     Build { type_index: usize, min_cell: IVec2, builders: Vec<Entity> },
 }
@@ -99,7 +103,8 @@ pub(crate) fn owned_units(units: &[Entity], player: PlayerId, owner: impl Fn(Ent
 /// Applique les ordres de déplacement.
 ///
 /// Un ordre donné à la main remplace ce que faisait l'unité : elle quitte son
-/// chantier ([`ConstructionTask`]).
+/// chantier ([`ConstructionTask`]) et sa récolte ([`Harvesting`]). Les ordres
+/// de récolte sont appliqués par `economy::harvest`.
 pub(crate) fn apply_unit_orders(
     mut commands: Commands,
     tick: Res<TickCommands>,
@@ -120,7 +125,7 @@ pub(crate) fn apply_unit_orders(
             commands
                 .entity(entity)
                 .insert((MoveTarget(slot), group))
-                .remove::<ConstructionTask>();
+                .remove::<(ConstructionTask, Harvesting)>();
         }
     }
 }

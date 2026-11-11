@@ -19,6 +19,7 @@ use rts_engine::selection::Selected;
 use rts_engine::units::UnitCatalog;
 
 use crate::coalition::{self, building::*, kind::*};
+use crate::gisements::{self, DepositVisuals};
 
 /// Le catalogue des bâtiments de la Coalition. Ils partagent les matériaux
 /// (et donc la couleur d'équipe) du catalogue d'unités `units`.
@@ -50,12 +51,36 @@ fn place(commands: &mut Commands, catalog: &BuildingCatalog, frame: GridFrame, t
 /// Centre du Quartier général de départ (les gisements se placent autour).
 pub const START_HQ: Vec2 = Vec2::new(0.0, -13.0);
 
-/// Partie normale : le Quartier général et quatre Techniciens.
-pub fn spawn_start(commands: &mut Commands, buildings: &BuildingCatalog, units: &UnitCatalog, frame: GridFrame) {
+/// Partie normale : le Quartier général, ses gisements et quatre
+/// Techniciens, entre les deux, qui se mettent tout de suite à récolter.
+pub fn spawn_start(
+    commands: &mut Commands,
+    buildings: &BuildingCatalog,
+    units: &UnitCatalog,
+    deposits: &DepositVisuals,
+    frame: GridFrame,
+) {
     place(commands, buildings, frame, QUARTIER_GENERAL, START_HQ);
-    for x in [-3.0, -1.0, 1.0, 3.0] {
-        units.spawn_facing(commands, TECHNICIEN, Vec2::new(x, -7.8), std::f32::consts::PI);
+    let (nodes, _) = gisements::spawn_base(commands, deposits, frame, &gisements::starting_base(START_HQ));
+    let mut orders = Vec::new();
+    for (i, x) in [-3.0, -1.0, 1.0, 3.0].into_iter().enumerate() {
+        let worker = units.spawn_facing(commands, TECHNICIEN, START_HQ + Vec2::new(x, -4.6), 0.0);
+        // Chacun son gisement, au milieu de la ligne.
+        orders.push((worker, nodes[2 + i]));
     }
+    harvest_at_start(commands, orders);
+}
+
+/// Donne des ordres de récolte au premier pas, par la file des ordres
+/// (`commands.queue` : une fonction exécutée plus tard avec tout le monde
+/// accessible, une fois les entités créées).
+fn harvest_at_start(commands: &mut Commands, orders: Vec<(Entity, Entity)>) {
+    commands.queue(move |world: &mut World| {
+        let mut queue = world.resource_mut::<CommandQueue>();
+        for (worker, node) in orders {
+            queue.push(HUMAN, PlayerCommand::Harvest { units: vec![worker], node });
+        }
+    });
 }
 
 /// Marqueur : les unités de la démonstration qui contourneront la Caserne.

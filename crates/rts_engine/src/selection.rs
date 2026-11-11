@@ -8,11 +8,13 @@
 use bevy::prelude::*;
 
 use crate::camera::{ray_at_height, screen_ray, screen_to_ground};
+use crate::collision::StaticObstacle;
+use crate::economy::{EconomyRules, ResourceNode};
 use crate::input::{GameAction, SelectionDrag};
 use crate::orders::{CommandQueue, PlayerCommand};
 use crate::players::{LocalPlayer, Owner};
 use crate::simulation::MoveSpeed;
-use crate::units::UnitCatalog;
+use crate::units::{Unit, UnitCatalog};
 use crate::RtsSystems;
 
 /// Une entité qu'on peut sélectionner.
@@ -64,6 +66,35 @@ impl Plugin for SelectionPlugin {
     }
 }
 
+/// L'entité sélectionnable sous le rayon `ray`, la plus proche de la caméra.
+///
+/// Pour chaque entité, on regarde où le rayon traverse le plan horizontal
+/// passant par son centre : si c'est dans sa zone cliquable, elle est touchée.
+fn pick(ray: Ray3d, units: &Query<(Entity, &GlobalTransform, &Selectable)>) -> Option<Entity> {
+    units
+        .iter()
+        .filter_map(|(entity, transform, selectable)| {
+            let center = transform.translation();
+            let point = ray_at_height(ray, center.y)?;
+            selectable.contains(center.xz(), point.xz()).then(|| (entity, point.distance(ray.origin)))
+        })
+        .min_by(|a, b| a.1.total_cmp(&b.1))
+        .map(|(entity, _)| entity)
+}
+
+/// Le gisement visé par un clic : celui sous le point du sol `ground`
+/// (un peu agrandi, les cristaux dépassent du sol), ou la source couverte par
+/// le bâtiment `picked` (un Extracteur).
+fn pick_node(ground: Vec2, picked: Option<Entity>, nodes: &Query<(Entity, &ResourceNode, &StaticObstacle)>) -> Option<Entity> {
+    let mut list: Vec<(Entity, &ResourceNode, &StaticObstacle)> = nodes.iter().collect();
+    list.sort_unstable_by_key(|n| n.0);
+    list.iter()
+        .find(|(_, node, _)| picked.is_some() && node.extractor == picked)
+        .or_else(|| list.iter().find(|(.., obstacle)| obstacle.0.inflate(0.5).contains(ground)))
+        .map(|(entity, ..)| *entity)
+}
+
+#[allow(clippy::too_many_arguments)]
 fn handle_actions(
     mut commands: Commands,
     mut actions: MessageReader<GameAction>,
@@ -73,6 +104,9 @@ fn handle_actions(
     // Seules les entités qui peuvent bouger (pas les bâtiments) reçoivent les ordres de déplacement.
     mobile: Query<(), With<MoveSpeed>>,
     owners: Query<&Owner>,
+    unit_types: Query<&Unit>,
+    nodes: Query<(Entity, &ResourceNode, &StaticObstacle)>,
+    rules: Option<Res<EconomyRules>>,
     local: Res<LocalPlayer>,
     mut orders: ResMut<CommandQueue>,
     catalog: Option<Res<UnitCatalog>>,
@@ -87,17 +121,7 @@ fn handle_actions(
                 // Pour chaque unité, on regarde où le rayon traverse le plan horizontal
                 // passant par son centre : si c'est dans son rayon, elle est touchée.
                 // On garde la plus proche de la caméra.
-                let hit = units
-                    .iter()
-                    .filter_map(|(entity, transform, selectable)| {
-                        let center = transform.translation();
-                        let point = ray_at_height(ray, center.y)?;
-                        selectable
-                            .contains(center.xz(), point.xz())
-                            .then(|| (entity, point.distance(ray.origin)))
-                    })
-                    .min_by(|a, b| a.1.total_cmp(&b.1))
-                    .map(|(entity, _)| entity);
+                let hit = pick(ray, &units);
 
                 if !additive {
                     clear_selection(&mut commands, &selected);
@@ -139,6 +163,10 @@ fn handle_actions(
 
             GameAction::CommandAt { screen_pos } => {
                 let Some(target) = screen_to_ground(camera, camera_transform, screen_pos) else { continue };
+                // Ordre contextuel : sur un gisement (ou un Extracteur), les
+                // ouvriers récoltent et les autres unités s'y rendent.
+                let picked = screen_ray(camera, camera_transform, screen_pos).and_then(|ray| pick(ray, &units));
+                let node = pick_node(target.xz(), picked, &nodes);
                 // Les unités sélectionnées qui peuvent bouger et que l'on commande.
                 let mut movers: Vec<Entity> = selected
                     .iter()
@@ -146,6 +174,18 @@ fn handle_actions(
                     .collect();
                 // Ordre fixe (la sélection est parcourue dans un ordre quelconque).
                 movers.sort_unstable();
+                let is_harvester = |e: &Entity| {
+                    let unit = unit_types.get(*e).ok();
+                    rules.as_ref().zip(unit).is_some_and(|(r, u)| r.harvesters.contains(&u.type_index))
+                };
+                if let Some(node) = node {
+                    // `partition` sépare une liste en deux selon un critère.
+                    let (harvesters, others): (Vec<Entity>, Vec<Entity>) = movers.into_iter().partition(is_harvester);
+                    if !harvesters.is_empty() {
+                        orders.push(local.0, PlayerCommand::Harvest { units: harvesters, node });
+                    }
+                    movers = others;
+                }
                 if !movers.is_empty() {
                     orders.push(local.0, PlayerCommand::Move { units: movers, target: target.xz() });
                 }

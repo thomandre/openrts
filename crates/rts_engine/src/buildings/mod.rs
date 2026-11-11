@@ -42,6 +42,7 @@ use crate::RtsSystems;
 // `pub use` : le type `Cost` (défini dans `economy`) est aussi accessible
 // sous le nom `buildings::Cost`.
 pub use crate::economy::Cost;
+use crate::economy::harvest::Harvesting;
 use crate::economy::{Notice, NoticeKind, ResourceKind, ResourceNode};
 
 /// Où un bâtiment peut se poser.
@@ -79,6 +80,8 @@ pub struct BuildingType {
     pub parts: Vec<Part>,
     /// Où il peut se poser.
     pub placement: PlacementRule,
+    /// Dépôt : les ouvriers y rapportent leur récolte (bâtiment principal).
+    pub dropoff: bool,
 }
 
 /// Façon de construire d'une faction.
@@ -478,7 +481,7 @@ pub struct PlacementGhost {
 pub(crate) struct GhostPiece;
 
 /// Distance (en plus de son rayon) sous laquelle un ouvrier touche son chantier.
-const CONTACT_MARGIN: f32 = 0.35;
+pub(crate) const CONTACT_MARGIN: f32 = 0.35;
 
 pub struct BuildingsPlugin;
 
@@ -535,7 +538,7 @@ pub fn completed_types<'a>(
 
 /// Applique les ordres de pose du pas : vérifie l'emplacement et les
 /// prérequis du joueur, crée le chantier et le confie à l'ouvrier le plus proche.
-fn apply_build_orders(
+pub(crate) fn apply_build_orders(
     mut commands: Commands,
     tick: Res<TickCommands>,
     catalog: Option<Res<BuildingCatalog>>,
@@ -598,6 +601,8 @@ fn apply_build_orders(
     }
     for (builder, sites) in assigned {
         let Ok((_, _, _, task)) = builders.get_mut(builder) else { continue };
+        // Un ouvrier envoyé construire abandonne sa récolte.
+        commands.entity(builder).remove::<Harvesting>();
         match task {
             Some(mut task) => task.sites.extend(sites),
             None => {
@@ -608,14 +613,14 @@ fn apply_build_orders(
 }
 
 /// Distance d'un point à un rectangle (0 à l'intérieur).
-fn distance_to_rect(point: Vec2, rect: Rect) -> f32 {
+pub(crate) fn distance_to_rect(point: Vec2, rect: Rect) -> f32 {
     point.distance(point.clamp(rect.min, rect.max))
 }
 
 /// Point où un ouvrier de rayon `radius` doit se tenir pour toucher le
 /// chantier `rect` : le point praticable du pourtour (agrandi de son rayon)
 /// le plus proche de lui.
-fn approach_point(grid: &NavGrid, position: Vec2, radius: f32, rect: Rect) -> Vec2 {
+pub(crate) fn approach_point(grid: &NavGrid, position: Vec2, radius: f32, rect: Rect) -> Vec2 {
     let ring = rect.inflate(radius + 0.15);
     // On échantillonne le pourtour tous les 25 cm, dans un ordre fixe.
     let size = ring.size();
@@ -633,8 +638,15 @@ fn approach_point(grid: &NavGrid, position: Vec2, radius: f32, rect: Rect) -> Ve
             Vec2::new(ring.min.x, ring.max.y - (d - 2.0 * size.x - size.y))
         }
     };
+    // Aux coins, le pourtour est arrondi : un point du coin du rectangle
+    // agrandi serait trop loin (diagonale) pour toucher le bâtiment.
+    let gap = radius + 0.15;
+    let round = |p: Vec2| {
+        let closest = p.clamp(rect.min, rect.max);
+        closest + (p - closest).normalize_or_zero() * gap
+    };
     (0..steps)
-        .map(|i| point_at(i as f32 * perimeter / steps as f32))
+        .map(|i| round(point_at(i as f32 * perimeter / steps as f32)))
         .filter(|p| grid.passable(grid.cell_of(*p), radius))
         .fold(None, |best: Option<(f32, Vec2)>, p| {
             let d = p.distance_squared(position);

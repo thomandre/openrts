@@ -21,7 +21,7 @@ use std::f32::consts::{FRAC_PI_2, PI};
 
 use bevy::prelude::*;
 use rts_engine::buildings::{BuildingType, Cost, PlacementRule};
-use rts_engine::economy::ResourceKind;
+use rts_engine::economy::{EconomyRules, ResourceInfo, ResourceKind};
 use rts_engine::graphics::{Ambiance, EnvironmentSettings, FogSettings, ParticleSettings, SceneLight};
 use rts_engine::units::{
     HoverMotion, MaterialSlot, ModelBuilder, Motion, Palette, PartShape, Pulse, SurfaceDetail, SurfaceStyle, UnitType,
@@ -452,7 +452,11 @@ pub mod building {
 pub fn building_types() -> Vec<BuildingType> {
     use building::*;
     vec![
-        building_type("Quartier général", (7, 7), 1500.0, 70.0, (400, 0), &[], 'q', quartier_general()),
+        // Le Quartier général est le dépôt où les Techniciens rapportent la récolte.
+        BuildingType {
+            dropoff: true,
+            ..building_type("Quartier général", (7, 7), 1500.0, 70.0, (400, 0), &[], 'q', quartier_general())
+        },
         building_type("Module d'habitat", (3, 3), 400.0, 20.0, (100, 0), &[], 'h', habitat()),
         BuildingType {
             placement: PlacementRule::OnResource(ResourceKind::Rare),
@@ -461,6 +465,17 @@ pub fn building_types() -> Vec<BuildingType> {
         building_type("Caserne", (5, 6), 1000.0, 45.0, (150, 0), &[QUARTIER_GENERAL], 'c', caserne()),
         building_type("Tourelle", (2, 2), 250.0, 18.0, (100, 0), &[CASERNE], 't', tourelle()),
     ]
+}
+
+// ---------------------------------------------------------------------------
+// Économie de la Coalition (valeurs proposées, à ajuster en test).
+// ---------------------------------------------------------------------------
+
+/// Règles économiques : les Techniciens récoltent ; 5 de ressource
+/// principale par voyage (2,8 s d'extraction), 4 de ressource rare (2 s).
+/// `resources` : noms et couleurs des deux ressources (voir `gisements`).
+pub fn economy_rules(resources: [ResourceInfo; 2]) -> EconomyRules {
+    EconomyRules { resources, harvesters: vec![kind::TECHNICIEN], carry: [5, 4], gather_time: [2.8, 2.0] }
 }
 
 /// `cost` : (ressource principale, ressource rare).

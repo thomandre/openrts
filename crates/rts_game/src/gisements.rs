@@ -208,11 +208,19 @@ impl DepositVisuals {
     }
 }
 
-/// Fait apparaître les gisements d'une base.
-pub fn spawn_base(commands: &mut Commands, visuals: &DepositVisuals, frame: GridFrame, layout: &BaseLayout) {
+/// Fait apparaître les gisements d'une base. Renvoie les gisements de
+/// ressource principale puis les sources, dans l'ordre de `layout`.
+pub fn spawn_base(
+    commands: &mut Commands,
+    visuals: &DepositVisuals,
+    frame: GridFrame,
+    layout: &BaseLayout,
+) -> (Vec<Entity>, Vec<Entity>) {
+    let (mut primary, mut rare) = (Vec::new(), Vec::new());
     for (i, &(center, amount)) in layout.primary.iter().enumerate() {
         let min_cell = frame.min_cell_centered(center, PRIMARY_SIZE);
         let node = spawn_resource_node(commands, frame, ResourceKind::Primary, min_cell, PRIMARY_SIZE, amount, false);
+        primary.push(node);
         commands.entity(node).insert(Name::new("Gisement de Cristal")).with_children(|parent| {
             parent.spawn((Mesh3d(visuals.rock.clone()), MeshMaterial3d(visuals.rock_material.clone())));
             parent.spawn((Mesh3d(visuals.veins.clone()), MeshMaterial3d(visuals.vein_material.clone()), NotShadowCaster));
@@ -228,6 +236,7 @@ pub fn spawn_base(commands: &mut Commands, visuals: &DepositVisuals, frame: Grid
     for &(center, amount) in &layout.rare {
         let min_cell = frame.min_cell_centered(center, RARE_SIZE);
         let node = spawn_resource_node(commands, frame, ResourceKind::Rare, min_cell, RARE_SIZE, amount, true);
+        rare.push(node);
         commands.entity(node).insert(Name::new("Source d'Éther")).with_children(|parent| {
             parent.spawn((Mesh3d(visuals.vent.clone()), MeshMaterial3d(visuals.rock_material.clone())));
             parent.spawn((
@@ -240,4 +249,5 @@ pub fn spawn_base(commands: &mut Commands, visuals: &DepositVisuals, frame: Grid
             parent.spawn((Mesh3d(visuals.shards.clone()), MeshMaterial3d(visuals.ether_material.clone()), NotShadowCaster));
         });
     }
+    (primary, rare)
 }
