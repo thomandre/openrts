@@ -66,7 +66,7 @@ Bâtiments et économie des Sylves (**propositions**, étape 4, à valider et aj
 | Arbre-mère | Cœur de base : dépôt, produit les Pousses, 15 de population | 7 × 7 m | 1 500 | 75 s | 350 P | — | A | Grand arbre de 6,5 m sur sept racines, poche de sève en façade (le dépôt), couronne de feuilles et bourgeons d'équipe |
 | Souche nourricière | Population (+8) | 3 × 3 m | 350 | 20 s | 75 P | — | S | Large souche coupée, cerne pâle, trois champignons aux chapeaux d'équipe |
 | Calice | Ressource rare : posé sur une source, il boit l'Éther | 4 × 4 m | 450 | 22 s | 50 P | — (sur une source libre) | C | Fleur-coupe sur six racines plongées dans la faille, nectar de spores, sept pétales d'équipe |
-| Ronceraie | Infanterie : Ronciers (Sourcier, Lanceur de spores grisés) | 5 × 5 m | 1 000 | 45 s | 125 P | Arbre-mère | R | Trois arches de ronces épineuses en voûte, trois cocons d'équipe dessous |
+| Ronceraie | Infanterie : Ronciers ; Sourciers et Lanceurs de spores avec le palier 2 | 5 × 5 m | 1 000 | 45 s | 125 P | Arbre-mère | R | Trois arches de ronces épineuses en voûte, trois cocons d'équipe dessous |
 | Épineux | Défense fixe | 2 × 2 m | 300 | 22 s | 100 P | Ronceraie | E | Bulbe d'écorce, tête qui balaie : couronne d'épines, collerette d'équipe, dard |
 
 Construction des Sylves : **la Pousse devient le bâtiment** (`ConstructionStyle::WorkerConsumed` dans le moteur). À la pose, le coût est payé et l'emplacement promis à la Pousse libre la plus proche ; elle s'y rend, s'enracine et disparaît (sa population est libérée) ; le chantier pousse ensuite seul pendant le temps de construction, sans ouvrier. C'est l'asymétrie voulue face à la Garde, dont le Technicien reste sur le chantier : les Sylves ne perdent pas de temps d'ouvrier mais perdent l'ouvrier, d'où des prix en Cristal un peu plus bas. Règles proposées :
@@ -74,10 +74,21 @@ Construction des Sylves : **la Pousse devient le bâtiment** (`ConstructionStyle
 - Une Pousse ne fait qu'un bâtiment : sans Pousse libre dans la sélection, la pose est refusée (« Aucun ouvrier libre »).
 - Un autre ordre donné à la Pousse avant qu'elle arrive annule la promesse, remboursée en entier. Si l'emplacement est pris entre-temps, la promesse est remboursée et la Pousse s'arrête.
 - Annuler un chantier qui pousse rend **75 %** de son coût et **la Pousse**, qui ressort de terre (même au-delà de la limite de population : la production attend alors qu'il y ait de la place).
-- Économie : les Pousses récoltent le Cristal et l'Éther (au pied d'un Calice terminé) avec les mêmes cadences que les Techniciens (5 Cristal en 2,8 s, 4 Éther en 2 s) et rapportent à l'Arbre-mère. Coûts (P = Cristal, R = Éther), temps et population : Pousse 50 P, 12 s, 1 ; Roncier 50 P, 16 s, 1 ; Sourcier 75 P + 25 R, 22 s, 2 ; Lanceur de spores 125 P + 50 R, 30 s, 3 ; Gardien 250 P + 150 R, 55 s, 6 ; Samare 75 P + 25 R, 20 s, 2. Le Sourcier attend la « Fontaine de sève », le Lanceur la « Champignonnière » (palier 2, à concevoir) ; Gardien et Samare n'ont pas encore de bâtiment.
+- Économie : les Pousses récoltent le Cristal et l'Éther (au pied d'un Calice terminé) avec les mêmes cadences que les Techniciens (5 Cristal en 2,8 s, 4 Éther en 2 s) et rapportent à l'Arbre-mère. Coûts (P = Cristal, R = Éther), temps et population : Pousse 50 P, 12 s, 1 ; Roncier 50 P, 16 s, 1 ; Sourcier 75 P + 25 R, 22 s, 2 ; Lanceur de spores 125 P + 50 R, 30 s, 3 ; Gardien 250 P + 150 R, 55 s, 6 ; Samare 75 P + 25 R, 20 s, 2.
+
+Palier 2 des Sylves (**propositions**, à ajuster en test), la spécialisation : chacun demande une Ronceraie. En miroir de la Garde, deux bâtiments débloquent sans produire (comme l'Armurerie et le Centre de propulsion) et un second bâtiment de production sort les grosses unités (comme l'Usine). Différence voulue : la Samare, éclaireur volant, ne demande qu'un bâtiment (l'Érablière), alors que le Faucon demande le Centre de propulsion ; le Gardien, lui, demande l'Érablière et la Fontaine de sève, comme le Bastion l'Usine et l'Armurerie.
+
+| Bâtiment | Rôle | Empreinte | PV | Temps | Coût | Prérequis | Touche (après B) | Silhouette |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| Fontaine de sève | Débloque le Sourcier (Ronceraie) et le Gardien (Érablière) | 4 × 4 m | 800 | 40 s | 125 P + 50 R | Ronceraie | F | Vasque d'écorce bordée de mousse, bassin de sève ambrée où flottent quatre feuilles de nénuphar d'équipe ; au centre, un tronc tors porte une grosse poche de sève dont trois becs reversent les gouttes |
+| Champignonnière | Débloque le Lanceur de spores (Ronceraie) | 4 × 4 m | 750 | 45 s | 125 P + 75 R | Ronceraie | H | Champignon géant de 3,8 m au grand chapeau d'équipe tacheté de lichen, lamelles de spores lumineuses, deux petits champignons, tronc couché à consoles de lichen, vesses de spores |
+| Érablière | Production : Samares ; Gardiens avec une Fontaine de sève | 6 × 6 m | 1 250 | 55 s | 150 P + 75 R | Ronceraie | L | Quatre érables qui s'écartent en gobelet depuis une même butte ; au centre, sur un nid de racines, une grande samare aux ailes d'équipe |
+
+Unités, bâtiments et prérequis : Arbre-mère → Pousse ; Ronceraie → Roncier, Sourcier (Fontaine de sève), Lanceur de spores (Champignonnière) ; Érablière → Samare, Gardien (Fontaine de sève). Les nouveaux bâtiments n'ont pas d'arme (armure 1, comme les autres).
 
 - [ ] Asymétrie de récolte des Sylves (pour l'instant identique à la Garde)
-- [ ] Palier 2 des Sylves (Fontaine de sève, Champignonnière…)
+- [x] Palier 2 des Sylves : Fontaine de sève, Champignonnière, Érablière
+- [ ] Améliorations des Sylves (armes, armure, capacités) dans les bâtiments du palier 2
 
 Également en exploration visuelle : **le Collectif**, une joaillerie mécanique à silhouette vivante (`OPENRTS_FACTION=collectif`). Il porte l'idée du grand vaisseau porte-drones (l'Essaimeur). Ce n'est pas non plus une décision : le choix de la seconde faction, entre le Collectif, les Sylves ou une autre, reste ouvert. Rôles provisoires, pensés en contraste avec les deux autres (beaucoup d'unités volantes, nuées de petites machines, peu d'unités au sol mais chères et solides) :
 
@@ -338,7 +349,7 @@ On avance par étapes courtes, chacune jouable et testée avant de passer à la 
    - récolte déterministe (aller, attente de son tour, extraction, retour au dépôt, gisement voisin quand l'un s'épuise), charge visible ;
    - coûts débités à la pose, chantiers annulables et remboursés ; files de production de 5 décrites en données, annulation remboursée, point de ralliement (sur un gisement : récolte directe) ; population par joueur avec plafond global réglable ;
    - interface : compteurs en haut à droite, panneau de production (boutons et raccourcis par la même `GameAction`, file et progression), panneau de chantier, messages courts.
-   - *Fait pour les Sylves (propositions) :* style de construction « la Pousse devient le bâtiment » (générique dans le moteur), cinq bâtiments du palier 1, économie de base, partie de départ (`OPENRTS_FACTION=sylves`) et démonstration (`OPENRTS_DEMO=buildings`).
+   - *Fait pour les Sylves (propositions) :* style de construction « la Pousse devient le bâtiment » (générique dans le moteur), cinq bâtiments du palier 1 et trois du palier 2 (toutes les unités produisibles), économie de base, partie de départ (`OPENRTS_FACTION=sylves`) et démonstration (`OPENRTS_DEMO=buildings`).
    - *Fait pour le Collectif (propositions) :* style de construction « sertissage à distance » et champs de construction (génériques dans le moteur), cinq bâtiments du palier 1 et trois du palier 2 (Lapidaire, Volière, Fonderie), économie de base avec un ouvrier volant, partie de départ (`OPENRTS_FACTION=collectif`) et démonstration (`OPENRTS_DEMO=buildings`).
    *Reste : récolte propre aux Sylves et au Collectif, contrôle de territoire à étudier.*
 5. **Combat** : portée, dégâts, armure, ciblage automatique, attaque-déplacement, mort des unités. *Fait (valeurs proposées, voir « Unités, combat et lisibilité ») :*

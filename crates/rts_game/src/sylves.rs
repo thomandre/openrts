@@ -481,7 +481,7 @@ fn samare() -> ModelBuilder {
 }
 
 // ---------------------------------------------------------------------------
-// Les bâtiments (palier 1, propositions : voir GAME_DESIGN.md).
+// Les bâtiments (paliers 1 et 2, propositions : voir GAME_DESIGN.md).
 // ---------------------------------------------------------------------------
 
 /// Façon de construire des Sylves : la Pousse se transforme en chantier, qui
@@ -495,9 +495,13 @@ pub mod building {
     pub const CALICE: usize = 2;
     pub const RONCERAIE: usize = 3;
     pub const EPINEUX: usize = 4;
+    // Palier 2, ajouté à la suite pour ne pas décaler les indices du palier 1.
+    pub const FONTAINE: usize = 5;
+    pub const CHAMPIGNONNIERE: usize = 6;
+    pub const ERABLIERE: usize = 7;
 }
 
-/// Les bâtiments du palier 1, mêmes rôles que ceux de la Garde :
+/// Les bâtiments des Sylves. Palier 1, mêmes rôles que celui de la Garde :
 ///
 /// - **Arbre-mère** (7 × 7 m) : le cœur de la base, dépôt des récoltes,
 ///   produit les Pousses, 15 de population ;
@@ -506,6 +510,16 @@ pub mod building {
 ///   le boit ; les Pousses le récoltent à son pied ;
 /// - **Ronceraie** (5 × 5 m) : roncier en voûte où mûrissent les Ronciers ;
 /// - **Épineux** (2 × 2 m) : défense fixe, débloquée par la Ronceraie.
+///
+/// Palier 2, la spécialisation (chacun demande une Ronceraie), en miroir
+/// de l'Armurerie, du Centre de propulsion et de l'Usine de la Garde :
+///
+/// - **Fontaine de sève** (4 × 4 m) : ne produit rien ; elle nourrit les
+///   Sourciers (à la Ronceraie) et les Gardiens (à l'Érablière) ;
+/// - **Champignonnière** (4 × 4 m) : ne produit rien ; elle donne leurs
+///   spores aux Lanceurs de spores (à la Ronceraie) ;
+/// - **Érablière** (6 × 6 m) : bosquet d'érables qui lâche les Samares, et
+///   d'où sortent les Gardiens une fois la Fontaine de sève poussée.
 ///
 /// Chiffres proposés, à ajuster en test. Chaque bâtiment coûte aussi une
 /// Pousse (50 de Cristal et 12 s de production) : ses prix en Cristal sont
@@ -525,16 +539,24 @@ pub fn building_types() -> Vec<BuildingType> {
             ..building_type("Calice", (4, 4), 450.0, 22.0, (50, 0), &[], 'c', calice())
         },
         // La Ronceraie fait mûrir les Ronciers ; Sourcier et Lanceur de
-        // spores attendent des bâtiments du palier 2 pas encore dans le jeu.
+        // spores attendent la Fontaine de sève et la Champignonnière.
         BuildingType {
             production: vec![
                 option(kind::RONCIER, 'r', &[]),
-                option(kind::SOURCIER, 's', &["Fontaine de sève"]),
-                option(kind::LANCEUR, 'l', &["Champignonnière"]),
+                option(kind::SOURCIER, 's', &[FONTAINE]),
+                option(kind::LANCEUR, 'l', &[CHAMPIGNONNIERE]),
             ],
             ..building_type("Ronceraie", (5, 5), 1000.0, 45.0, (125, 0), &[ARBRE_MERE], 'r', ronceraie())
         },
         building_type("Épineux", (2, 2), 300.0, 22.0, (100, 0), &[RONCERAIE], 'e', epineux()),
+        // Palier 2 : deux bâtiments qui débloquent sans produire, et
+        // l'Érablière, second bâtiment de production.
+        building_type("Fontaine de sève", (4, 4), 800.0, 40.0, (125, 50), &[RONCERAIE], 'f', fontaine()),
+        building_type("Champignonnière", (4, 4), 750.0, 45.0, (125, 75), &[RONCERAIE], 'h', champignonniere()),
+        BuildingType {
+            production: vec![option(kind::SAMARE, 's', &[]), option(kind::GARDIEN, 'g', &[FONTAINE])],
+            ..building_type("Érablière", (6, 6), 1250.0, 55.0, (150, 75), &[RONCERAIE], 'l', erabliere())
+        },
     ]
 }
 
@@ -564,14 +586,12 @@ pub fn economy_rules(resources: [ResourceInfo; 2]) -> EconomyRules {
     }
 }
 
-/// Une unité produite par un bâtiment ; `requires` : noms de bâtiments qui
-/// n'existent pas encore dans le jeu (l'option reste grisée).
-fn option(unit_type: usize, hotkey: char, requires: &[&str]) -> ProductionOption {
-    ProductionOption {
-        unit_type,
-        hotkey,
-        requires: requires.iter().map(|name| Requirement::NotYetAvailable((*name).into())).collect(),
-    }
+/// Une unité produite par un bâtiment ; `requires` : indices (dans
+/// [`building_types`]) des bâtiments terminés qu'il faut posséder (l'option
+/// reste grisée en attendant). Le moteur décale ces indices quand il ajoute
+/// la faction à la partie.
+fn option(unit_type: usize, hotkey: char, requires: &[usize]) -> ProductionOption {
+    ProductionOption { unit_type, hotkey, requires: requires.iter().map(|&index| Requirement::Building(index)).collect() }
 }
 
 /// `cost` : (Cristal, Éther).
@@ -797,6 +817,160 @@ fn epineux() -> ModelBuilder {
     b
 }
 
+/// Fontaine de sève : une vasque d'écorce bordée de mousse, pleine d'une
+/// sève ambrée qui respire, où flottent quatre larges feuilles de nénuphar
+/// aux couleurs du joueur. Au centre, un tronc tors porte une grosse poche
+/// de sève tenue par des côtes d'écorce ; trois becs la reversent goutte à
+/// goutte dans le bassin. Vu de dessus : un disque ambré semé de feuilles
+/// d'équipe (ni l'étoile de pétales du Calice, ni le feuillage des arbres).
+fn fontaine() -> ModelBuilder {
+    let mut b = ModelBuilder::new();
+    roots(&mut b, 6, (1.4, 0.5), 1.95, 0.15, 0.5);
+    // La vasque : le profil monte jusqu'au bord, puis redescend à l'intérieur.
+    b.bulb(BARK, &[[0.0, 0.0], [1.6, 0.0], [1.72, 0.35], [1.66, 0.62], [1.5, 0.66], [1.38, 0.52], [0.0, 0.48]], Transform::IDENTITY);
+    // Margelle : boules de mousse et d'écorce sombre tout autour du bord.
+    for i in 0..10 {
+        let a = i as f32 * TAU / 10.0 + 0.2;
+        let (sin, cos) = a.sin_cos();
+        let slot = if i % 3 == 0 { MOSS } else { DARK_BARK };
+        b.blob(slot, 0.26, 0.25, 2.2, v(cos * 1.6, 0.62, sin * 1.6), v(1.0, 0.7, 1.0));
+    }
+    b.pulsing(SAP_PULSE, |b| {
+        b.cylinder(SAP, 1.42, 0.04, v(0.0, 0.56, 0.0), Vec3::ZERO); // bassin de sève
+    });
+    // Feuilles de nénuphar aux couleurs du joueur, à plat sur la sève.
+    for (x, z, r) in [(0.85, 0.5, 0.42), (-0.75, 0.7, 0.36), (-0.6, -0.85, 0.4), (0.8, -0.7, 0.3)] {
+        b.cylinder(TEAM, r, 0.05, v(x, 0.6, z), Vec3::ZERO);
+    }
+    // Le tronc tors et la grosse poche de sève qu'il porte.
+    b.branch(BARK, &[[0.0, 0.4, 0.0], [0.15, 1.2, 0.1], [-0.1, 2.0, -0.05], [0.0, 2.55, 0.0]], 0.28);
+    b.pulsing(SAP_PULSE, |b| {
+        b.blob(SAP, 0.55, 0.06, 2.0, v(0.0, 3.05, 0.0), v(1.0, 1.15, 1.0));
+    });
+    for i in 0..4 {
+        let a = i as f32 * TAU / 4.0 + PI / 4.0;
+        let (sin, cos) = a.sin_cos();
+        let at = |r: f32, y: f32| [cos * r, y, sin * r];
+        // Côtes d'écorce qui tiennent la poche.
+        b.branch(DARK_BARK, &[at(0.22, 2.45), at(0.6, 2.8), at(0.6, 3.3), at(0.15, 3.72)], 0.06);
+    }
+    for i in 0..3 {
+        let a = i as f32 * TAU / 3.0 + 0.3;
+        let (sin, cos) = a.sin_cos();
+        let at = |r: f32, y: f32| v(cos * r, y, sin * r);
+        // Bec qui reverse la sève dans le bassin, et ses gouttes.
+        b.branch(BARK, &[at(0.25, 2.35).to_array(), at(0.85, 2.55).to_array(), at(1.2, 2.2).to_array(), at(1.25, 1.7).to_array()], 0.1);
+        b.pulsing(SAP_PULSE, |b| {
+            b.sphere(SAP, 0.1, at(1.25, 1.5)).sphere(SAP, 0.07, at(1.25, 1.05));
+        });
+    }
+    // Bourgeon d'équipe au sommet, dans une petite touffe de feuilles.
+    b.leaves(LEAVES, v(0.0, 3.75, 0.0), 0.45, 10);
+    b.blob(TEAM, 0.24, 0.25, 2.4, v(0.0, 3.95, 0.0), Vec3::ONE);
+    b
+}
+
+/// Champignonnière : sur une butte d'humus, un champignon géant de 3,8 m
+/// au grand chapeau bombé aux couleurs du joueur, tacheté de lichen, aux
+/// lamelles de spores lumineuses ; à ses pieds, deux champignons plus
+/// petits, un tronc couché et pourri couvert de consoles de lichen, et des
+/// vesses de spores qui palpitent. Vu de dessus : un grand disque d'équipe
+/// tacheté (la Souche, elle, n'a que trois petits chapeaux).
+fn champignonniere() -> ModelBuilder {
+    let mut b = ModelBuilder::new();
+    b.blob(DARK_BARK, 1.3, 0.16, 1.6, Vec3::ZERO, v(1.2, 0.28, 1.2)); // butte d'humus
+    b.blob(MOSS, 0.5, 0.3, 2.2, v(1.2, 0.15, 0.9), v(1.0, 0.45, 1.0));
+    // Le tronc couché, à l'arrière, et ses consoles de lichen.
+    b.branch(BARK, &[[-1.75, 0.3, 1.1], [-0.6, 0.42, 1.45], [0.6, 0.4, 1.4], [1.7, 0.28, 1.0]], 0.32);
+    for (x, z) in [(-1.2, 1.0), (-0.3, 1.1), (0.9, 1.05), (0.3, 1.8)] {
+        b.blob(LICHEN, 0.26, 0.12, 2.0, v(x, 0.62, z), v(1.0, 0.3, 0.8));
+    }
+    // Le grand champignon, un peu décalé vers l'arrière gauche.
+    b.group(Transform::from_xyz(-0.25, 0.1, 0.1), |b| {
+        b.bulb(LICHEN, &[[0.0, 0.0], [0.55, 0.0], [0.4, 0.4], [0.3, 1.5], [0.34, 2.7], [0.0, 2.75]], Transform::IDENTITY); // pied
+        b.torus(LICHEN, 0.36, 0.07, TAU, v(0.0, 2.0, 0.0), Vec3::ZERO); // anneau
+        // Lamelles de spores sous le chapeau, qui palpitent.
+        b.pulsing(SPORE_PULSE, |b| {
+            b.bulb(SPORE, &[[0.3, 2.55], [1.0, 2.72], [1.48, 2.86], [0.0, 2.87]], Transform::IDENTITY);
+        });
+        // Le chapeau : bord retroussé, dessus bombé.
+        b.bulb(TEAM, &[[0.0, 2.9], [1.5, 2.84], [1.66, 3.0], [1.5, 3.35], [0.95, 3.65], [0.0, 3.8]], Transform::IDENTITY);
+        // Taches de lichen sur le chapeau.
+        for (x, y, z) in [(0.0, 3.8, 0.0), (0.75, 3.55, 0.35), (-0.55, 3.6, 0.6), (-0.4, 3.62, -0.7), (0.55, 3.6, -0.6), (1.2, 3.3, -0.2)] {
+            b.blob(LICHEN, 0.16, 0.2, 2.4, v(x, y, z), v(1.0, 0.35, 1.0));
+        }
+    });
+    mushroom(&mut b, v(1.05, 0.2, -0.85), 1.25);
+    mushroom(&mut b, v(1.45, 0.15, 0.25), 0.8);
+    // Vesses de spores lumineuses autour du pied.
+    b.pulsing(SPORE_PULSE, |b| {
+        for (x, z, r) in [(-1.35, -0.85, 0.28), (-1.55, 0.05, 0.2), (0.15, -1.5, 0.24), (-0.65, -1.45, 0.17)] {
+            b.blob(SPORE, r, 0.08, 2.0, v(x, r * 0.7, z), v(1.0, 0.85, 1.0));
+        }
+    });
+    for (x, y, z) in [(0.4, 4.3, -0.2), (-0.6, 4.6, 0.3), (0.1, 5.0, 0.5)] {
+        b.sphere(SPORE, 0.07, v(x, y, z)); // spores qui s'envolent
+    }
+    b
+}
+
+/// Érablière : quatre érables sortis d'une même butte s'écartent en
+/// gobelet ; au centre, sur un nid de racines, repose une grande samare
+/// aux deux ailes aux couleurs du joueur (les Samares à naître), au-dessus
+/// d'une poche de sève. Chaque couronne porte un bourgeon d'équipe et une
+/// lanterne de spores. Vu de dessus : quatre touffes de feuillage autour
+/// d'une grande paire d'ailes d'équipe (l'Arbre-mère n'a qu'une couronne).
+fn erabliere() -> ModelBuilder {
+    let mut b = ModelBuilder::new();
+    b.blob(DARK_BARK, 2.0, 0.15, 1.6, Vec3::ZERO, v(1.2, 0.28, 1.2)); // butte d'humus
+    for (x, z) in [(-1.9, 1.6), (1.8, 1.7), (0.3, -2.2)] {
+        b.blob(MOSS, 0.5, 0.3, 2.2, v(x, 0.15, z), v(1.0, 0.45, 1.0)); // plaques de mousse
+    }
+    roots(&mut b, 9, (1.0, 0.7), 2.85, 0.22, 0.1);
+    // Quatre troncs en diagonale : les ailes de la samare passent entre eux,
+    // et le centre reste dégagé pour qu'on la voie de dessus.
+    for i in 0..4 {
+        let a = PI / 4.0 + i as f32 * TAU / 4.0;
+        let (sin, cos) = a.sin_cos();
+        let at = |r: f32, y: f32| v(cos * r, y, sin * r);
+        b.branch(BARK, &[at(0.9, 0.2).to_array(), at(1.8, 1.5).to_array(), at(2.1, 3.0).to_array(), at(2.25, 4.0).to_array()], 0.32);
+        b.leaves(LEAVES, at(2.3, 4.6), 1.15, 28);
+        b.blob(TEAM, 0.3, 0.25, 2.4, at(2.35, 5.35), Vec3::ONE); // bourgeon d'équipe
+        // Lanterne de spores pendue sous la couronne.
+        b.branch(LICHEN, &[at(1.6, 4.1).to_array(), at(1.6, 3.5).to_array()], 0.025);
+        b.sphere(SPORE, 0.15, at(1.6, 3.35));
+    }
+    // Le nid de racines au centre, et la poche de sève qui nourrit la graine.
+    b.torus(DARK_BARK, 0.85, 0.2, TAU, v(0.0, 0.62, 0.0), Vec3::ZERO);
+    b.pulsing(SAP_PULSE, |b| {
+        b.blob(SAP, 0.5, 0.06, 2.0, v(0.0, 0.6, 0.0), v(1.2, 0.6, 1.2));
+    });
+    // La grande samare, posée sur le nid : même dessin que l'unité, en grand.
+    b.group(Transform::from_xyz(0.0, 1.15, 0.0).with_scale(Vec3::splat(1.65)), |b| {
+        b.blob(DARK_BARK, 0.3, 0.14, 2.0, Vec3::ZERO, v(1.0, 0.8, 1.3)) // graine
+            .sphere(SPORE, 0.12, v(0.0, 0.2, 0.0)); // cœur de spore
+        let wing = [
+            Vec2::new(-0.06, 0.0),
+            Vec2::new(0.06, 0.0),
+            Vec2::new(0.38, 0.7),
+            Vec2::new(0.4, 1.05),
+            Vec2::new(0.25, 1.3),
+            Vec2::new(0.0, 1.25),
+            Vec2::new(-0.12, 0.9),
+        ];
+        b.mirrored(|b, s| {
+            // L'aile, couchée à plat et un peu relevée (voir `samare`).
+            let lay_flat = Transform::from_xyz(s * 0.12, 0.02, 0.0)
+                .with_rotation(Quat::from_rotation_z(-s * (PI / 2.0 - 0.25)) * Quat::from_rotation_y(-s * 0.25));
+            b.group(lay_flat, |b| {
+                b.add(TEAM, PartShape::Prism { profile: wing.to_vec(), width: 0.05 }, Transform::IDENTITY);
+                b.branch(DARK_BARK, &[[0.04, 0.05, -0.1], [0.04, 0.6, 0.12], [0.04, 1.2, 0.3]], 0.035);
+            });
+        });
+    });
+    b
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -837,5 +1011,26 @@ mod tests {
         keys.sort_unstable();
         keys.dedup();
         assert_eq!(keys.len(), types.len());
+    }
+
+    /// Palier 2 : chaque unité a un bâtiment qui la produit, et chaque
+    /// prérequis d'unité est un vrai bâtiment des Sylves (plus aucun grisé
+    /// « pas encore dans le jeu »).
+    #[test]
+    fn every_unit_has_a_producer() {
+        use building::*;
+        let types = building_types();
+        for unit in 0..unit_types().len() {
+            assert!(types.iter().any(|t| t.production.iter().any(|o| o.unit_type == unit)), "unité {unit} sans bâtiment");
+        }
+        for option in types.iter().flat_map(|t| &t.production) {
+            for requirement in &option.requires {
+                // `matches!` : vrai si la valeur a la forme donnée.
+                assert!(matches!(requirement, Requirement::Building(i) if *i < types.len()), "{requirement:?}");
+            }
+        }
+        for tier_two in [FONTAINE, CHAMPIGNONNIERE, ERABLIERE] {
+            assert_eq!(types[tier_two].requires, vec![RONCERAIE]);
+        }
     }
 }

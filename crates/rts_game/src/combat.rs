@@ -63,13 +63,17 @@ pub fn sylves() -> CombatRules {
             CombatStats::unit(50.0, 0.0, &[Air, Ranged], vec![Weapon::new(6.0, 3.0, 1.0, BOTH).with_bonus(Worker, 6.0)]),
         ],
         // Ordre de `sylves::building` : Arbre-mère, Souche nourricière,
-        // Calice, Ronceraie, Épineux (défense fixe : sol et air).
+        // Calice, Ronceraie, Épineux (défense fixe : sol et air), puis le
+        // palier 2 : Fontaine de sève, Champignonnière, Érablière.
         buildings: vec![
             CombatStats::structure(1.0, &[Armored], Vec::new()),
             CombatStats::structure(1.0, &[Armored], Vec::new()),
             CombatStats::structure(1.0, &[Armored], Vec::new()),
             CombatStats::structure(1.0, &[Armored], Vec::new()),
             CombatStats::structure(1.0, &[Armored], vec![Weapon::new(15.0, 7.0, 1.2, BOTH)]),
+            CombatStats::structure(1.0, &[Armored], Vec::new()),
+            CombatStats::structure(1.0, &[Armored], Vec::new()),
+            CombatStats::structure(1.0, &[Armored], Vec::new()),
         ],
     }
 }

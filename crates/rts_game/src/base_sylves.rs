@@ -6,8 +6,8 @@
 //! plus de l'armée de présentation.
 //!
 //! `OPENRTS_FACTION=sylves OPENRTS_DEMO=buildings` met en scène au démarrage,
-//! pour vérifier le rendu d'un coup d'œil (et les captures) : les cinq
-//! bâtiments poussés, un Calice sur une source d'Éther avec deux Pousses à
+//! pour vérifier le rendu d'un coup d'œil (et les captures) : les huit
+//! bâtiments poussés (le palier 2 sur une rangée au fond), un Calice sur une source d'Éther avec deux Pousses à
 //! son pied, des Pousses sur la ligne de Cristal, une Ronceraie en pleine
 //! croissance, un fantôme vert et un rouge, et une Pousse (sélectionnée,
 //! donc avec la barre de construction) qui part s'enraciner : l'ordre part au
@@ -45,6 +45,10 @@ pub fn spawn_demo(
     place(commands, buildings, frame, SOUCHE, Vec2::new(8.5, -8.5));
     place(commands, buildings, frame, RONCERAIE, Vec2::new(14.5, -3.5));
     place(commands, buildings, frame, EPINEUX, Vec2::new(8.0, -2.0));
+    // Le palier 2, sur une rangée au fond de la base.
+    place(commands, buildings, frame, FONTAINE, Vec2::new(-10.0, 9.0));
+    place(commands, buildings, frame, CHAMPIGNONNIERE, Vec2::new(-3.0, 10.0));
+    place(commands, buildings, frame, ERABLIERE, Vec2::new(5.0, 10.0));
     let layout = gisements::starting_base(START_HQ);
     let (nodes, sources) = gisements::spawn_base(commands, deposits, frame, &layout);
     // Un Calice poussé sur la source de gauche.
