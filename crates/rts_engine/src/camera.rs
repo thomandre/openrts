@@ -6,7 +6,7 @@
 
 use bevy::prelude::*;
 
-use crate::input::CameraControl;
+use crate::input::{CameraControl, GameAction};
 use crate::RtsSystems;
 
 /// Composant à placer sur l'entité caméra pour la piloter comme dans un RTS.
@@ -51,6 +51,13 @@ impl RtsCamera {
         let offset = Vec3::new(0.0, self.pitch.sin(), self.pitch.cos()) * self.distance;
         Transform::from_translation(self.focus + offset).looking_at(self.focus, Vec3::Y)
     }
+
+    /// Vise ce point du sol (x, z), sans sortir de `bounds`. La `Transform`
+    /// suit à la prochaine mise à jour de la caméra.
+    pub fn look_at(&mut self, point: Vec2) {
+        let point = point.clamp(self.bounds.min, self.bounds.max);
+        self.focus = Vec3::new(point.x, 0.0, point.y);
+    }
 }
 
 /// Le rayon qui part de la caméra et passe par ce point de l'écran.
@@ -75,7 +82,18 @@ pub struct RtsCameraPlugin;
 
 impl Plugin for RtsCameraPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(Update, apply_camera_control.in_set(RtsSystems::Actions));
+        app.add_systems(Update, (handle_look_at, apply_camera_control).chain().in_set(RtsSystems::Actions));
+    }
+}
+
+/// « Regarder ce point » (minicarte) : la caméra y saute.
+fn handle_look_at(mut actions: MessageReader<GameAction>, mut cameras: Query<&mut RtsCamera>) {
+    for action in actions.read() {
+        if let GameAction::LookAt { point } = *action {
+            for mut cam in &mut cameras {
+                cam.look_at(point);
+            }
+        }
     }
 }
 

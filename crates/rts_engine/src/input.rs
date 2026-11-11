@@ -13,7 +13,9 @@ use bevy::ui::UiGlobalTransform;
 use bevy::window::PrimaryWindow;
 
 use crate::camera::screen_to_ground;
+use crate::control_groups::GROUP_COUNT;
 use crate::cursor::Pointer;
+use crate::minimap::MinimapSurface;
 use crate::RtsSystems;
 
 /// Une action de joueur, indépendante du périphérique.
@@ -61,6 +63,22 @@ pub enum GameAction {
     DismissOutcome,
     /// Quitter le jeu (bouton de l'écran de fin).
     Quit,
+    /// Centrer la caméra sur ce point du sol (x, z) : clic ou glissé sur la minicarte.
+    LookAt { point: Vec2 },
+    /// Ordre contextuel vers ce point du sol (x, z), sans rien viser dessus :
+    /// clic droit sur la minicarte. Même effet qu'un clic droit au sol.
+    CommandAtPoint { point: Vec2 },
+    /// Donner l'ordre préparé (A ou M) vers ce point du sol : clic sur la
+    /// minicarte en mode visée. `keep` : rester en mode visée.
+    OrderAtPoint { order: TargetedOrder, point: Vec2, keep: bool },
+    /// Mémoriser la sélection dans le groupe de contrôle `group` (0 à 9 ;
+    /// Ctrl ou Cmd + chiffre). Voir le module `control_groups`.
+    AssignGroup { group: usize },
+    /// Ajouter la sélection au groupe `group` (Maj + chiffre).
+    AddToGroup { group: usize },
+    /// Rappeler le groupe `group` (chiffre seul, ou bouton de la barre de
+    /// groupes) ; deux fois de suite rapidement : centrer la caméra dessus.
+    RecallGroup { group: usize },
 }
 
 /// Un ordre qui attend qu'on vise un point.
@@ -187,7 +205,28 @@ fn reset_camera_control(mut control: ResMut<CameraControl>) {
 struct LeftPress {
     start_screen: Option<Vec2>,
     start_ground: Option<Vec3>,
+    /// Le clic a commencé sur la minicarte : tant qu'il est tenu, glisser
+    /// déplace la caméra (même si le pointeur sort de la minicarte).
+    on_minimap: bool,
 }
+
+/// Les touches des groupes de contrôle, dans l'ordre des groupes : 1 à 9, puis 0.
+///
+/// Ce sont des **positions** de touches (`KeyCode`), pas des caractères tapés
+/// comme les autres raccourcis : sur un clavier AZERTY, la rangée du haut
+/// tape « & é " ' ( … » sans Maj, mais ce sont bien les touches 1 à 0.
+const GROUP_KEYS: [KeyCode; GROUP_COUNT] = [
+    KeyCode::Digit1,
+    KeyCode::Digit2,
+    KeyCode::Digit3,
+    KeyCode::Digit4,
+    KeyCode::Digit5,
+    KeyCode::Digit6,
+    KeyCode::Digit7,
+    KeyCode::Digit8,
+    KeyCode::Digit9,
+    KeyCode::Digit0,
+];
 
 /// Backend souris + clavier : lit le matériel et produit des actions.
 fn mouse_keyboard_backend(
@@ -204,6 +243,7 @@ fn mouse_keyboard_backend(
     mut context: ResMut<InputContext>,
     mut actions: MessageWriter<GameAction>,
     buttons: Query<(&ComputedNode, &UiGlobalTransform, &InheritedVisibility, Option<&ActionButton>), Or<(With<ActionButton>, With<BlocksPointer>)>>,
+    minimap: Query<(&ComputedNode, &UiGlobalTransform, &InheritedVisibility, &MinimapSurface)>,
     // `Local` : une variable qui survit d'une image à l'autre, privée à ce système.
     mut press: Local<LeftPress>,
 ) {
@@ -254,6 +294,21 @@ fn mouse_keyboard_backend(
     // --- Entrée : ferme l'écran de fin (sans effet s'il n'est pas affiché) ---
     if keys.just_pressed(KeyCode::Enter) {
         actions.write(GameAction::DismissOutcome);
+    }
+
+    // --- Groupes de contrôle : Ctrl (ou Cmd) + chiffre mémorise, Maj +
+    // chiffre ajoute, le chiffre seul rappelle ---
+    let ctrl = keys.any_pressed([KeyCode::ControlLeft, KeyCode::ControlRight, KeyCode::SuperLeft, KeyCode::SuperRight]);
+    for (group, key) in GROUP_KEYS.into_iter().enumerate() {
+        if keys.just_pressed(key) {
+            actions.write(if ctrl {
+                GameAction::AssignGroup { group }
+            } else if additive {
+                GameAction::AddToGroup { group }
+            } else {
+                GameAction::RecallGroup { group }
+            });
+        }
     }
 
     // --- Outil de test de charge ---
@@ -314,6 +369,55 @@ fn mouse_keyboard_backend(
             // Trackpads : défilement en pixels, bien plus fin qu'un cran de molette.
             MouseScrollUnit::Pixel => event.y / 40.0,
         };
+    }
+
+    // --- Minicarte : le point du sol sous le pointeur ---
+    // `normalize_point` donne la position dans le nœud, de -0,5 à 0,5 sur
+    // chaque axe ; `clamp_to_map` : un glissé qui sort de la minicarte vise
+    // son bord.
+    let on_minimap = |pos: Vec2, clamp_to_map: bool| {
+        minimap.iter().find_map(|(node, transform, visible, surface)| {
+            let local = node.normalize_point(*transform, pos / node.inverse_scale_factor())? + 0.5;
+            let inside = local.cmpge(Vec2::ZERO).all() && local.cmple(Vec2::ONE).all();
+            (visible.get() && (inside || clamp_to_map)).then(|| surface.to_world(local))
+        })
+    };
+    if press.on_minimap {
+        if mouse.pressed(MouseButton::Left)
+            && let Some(point) = cursor.and_then(|pos| on_minimap(pos, true))
+        {
+            // La minicarte mène la caméra : pas de défilement par les bords en même temps.
+            control.pan = Vec2::ZERO;
+            actions.write(GameAction::LookAt { point });
+        } else {
+            press.on_minimap = false;
+        }
+        return;
+    }
+    if let Some(point) = cursor.and_then(|pos| on_minimap(pos, false)) {
+        if mouse.just_pressed(MouseButton::Left) {
+            if let Some(order) = context.targeting {
+                // En mode visée, le clic sur la minicarte donne l'ordre à ce point.
+                actions.write(GameAction::OrderAtPoint { order, point, keep: additive });
+            } else {
+                *press = LeftPress { on_minimap: true, ..default() };
+                drag.0 = None;
+                actions.write(GameAction::LookAt { point });
+            }
+        }
+        if mouse.just_pressed(MouseButton::Right) {
+            // Comme au sol : le clic droit annule la pose ou la visée, sinon il ordonne.
+            if context.placing {
+                actions.write(GameAction::CancelPlacement);
+            } else if context.targeting.is_some() {
+                actions.write(GameAction::CancelOrder);
+            } else {
+                actions.write(GameAction::CommandAtPoint { point });
+            }
+        }
+        if mouse.any_just_pressed([MouseButton::Left, MouseButton::Right]) {
+            return;
+        }
     }
 
     // --- Clic sur l'interface : le bouton agit, rien d'autre ---

@@ -9,7 +9,7 @@ Le design du jeu est décrit dans [GAME_DESIGN.md](GAME_DESIGN.md).
 
 | Dossier | Rôle |
 | --- | --- |
-| `crates/rts_engine` | Le moteur générique : entrées, caméra, sélection, joueurs (`players`), file des ordres (`orders`), simulation, collisions, navigation (grille, A\*), bâtiments (pose, chantiers), économie (`economy` : gisements, récolte, production, population, interface), combat (`combat` : armes, ciblage, ordres, dégâts, barre d'ordres, effets), rendu (`graphics`). Aucun contenu de jeu. |
+| `crates/rts_engine` | Le moteur générique : entrées, caméra, sélection, groupes de contrôle (`control_groups`), minicarte (`minimap`), joueurs (`players`), file des ordres (`orders`), simulation, collisions, navigation (grille, A\*), bâtiments (pose, chantiers), économie (`economy` : gisements, récolte, production, population, interface), combat (`combat` : armes, ciblage, ordres, dégâts, barre d'ordres, effets), rendu (`graphics`). Aucun contenu de jeu. |
 | `crates/rts_game` | Le jeu : unités, bâtiments, factions, cartes, gisements (`garde.rs`, `sylves.rs`, `collectif.rs`, `map.rs`, `base.rs`, `base_sylves.rs`, `base_collectif.rs`, `gisements.rs`, `combat.rs` : fiches de combat, `battle.rs` : démonstration de bataille). Utilise `rts_engine`. |
 
 ## Compiler et lancer
@@ -43,6 +43,11 @@ Sous Linux, il faut aussi les dépendances système de Bevy
 | Produire (Quartier général ou Caserne sélectionné) | Touche de l'unité ou bouton du panneau en bas : T (Technicien, QG) ; S (Sentinelle), V, L, F (Caserne, grisés tant que leur bâtiment n'existe pas) |
 | Annuler une unité en file | Clic sur sa case dans la file (remboursée) |
 | Annuler un chantier sélectionné | X ou bouton « Annuler » (remboursé) |
+| Mémoriser la sélection dans un groupe | Ctrl + 1 … 9 ou 0 (Cmd aussi sur Mac) |
+| Ajouter la sélection à un groupe | Maj + 1 … 9 ou 0 |
+| Rappeler un groupe | 1 … 9 ou 0, ou clic sur sa case dans la barre de groupes (en haut à gauche) ; deux fois rapidement : la caméra se centre dessus |
+| Déplacer la caméra par la minicarte (en bas à droite) | Clic gauche ou glisser sur la minicarte |
+| Ordre vers un point de la minicarte | Clic droit sur la minicarte (comme au sol : attaque-déplacement pour les armées) ; en mode visée (A ou M), clic gauche |
 | Faire défiler la caméra | Flèches ou souris au bord de l'écran |
 | Zoomer | Molette ou trackpad |
 | Test de charge (300 unités) | F3 |
@@ -51,6 +56,14 @@ Sous Linux, il faut aussi les dépendances système de Bevy
 | Annuler la pose | Clic droit ou Échap |
 | Libérer la souris | Échap (un clic dans le jeu la reprend ; pendant une pose, le premier Échap annule la pose) |
 | Quitter | Cmd + Q (macOS), Alt + F4 (Windows, Linux) |
+
+Les touches des groupes sont celles de la rangée du haut, en AZERTY comme en
+QWERTY (sans Maj). Un groupe ne garde que les unités et bâtiments du joueur ;
+les morts en disparaissent. La barre de groupes montre, pour chaque groupe
+non vide, son chiffre, son nombre d'entités et son type principal ; la case
+du groupe qui correspond à la sélection est éclairée. La minicarte montre le
+sol, les gisements, les bâtiments (rectangles) et les unités (points) aux
+couleurs d'équipe, et le trapèze de ce que voit la caméra.
 
 Le jeu s'ouvre en plein écran. Pour que les bords d'écran servent au défilement
 sans déclencher les coins actifs, la barre de menus ou le Dock de macOS, le curseur

@@ -61,7 +61,7 @@ fn handle_order_actions(
     for action in actions.read() {
         match *action {
             GameAction::ChooseOrder { order } => context.targeting = Some(order),
-            GameAction::OrderAt { keep, .. } if !keep => context.targeting = None,
+            GameAction::OrderAt { keep, .. } | GameAction::OrderAtPoint { keep, .. } if !keep => context.targeting = None,
             GameAction::CancelOrder | GameAction::Stop | GameAction::HoldPosition => context.targeting = None,
             // Le mode pose d'un bâtiment remplace le mode visée.
             GameAction::ChooseBuilding { .. } => context.targeting = None,
