@@ -1,299 +1,304 @@
 # openRTS
 
-Un jeu de stratégie en temps réel (RTS) en 3D, jouable à la souris comme au doigt,
-écrit en Rust avec le moteur [Bevy](https://bevyengine.org) 0.20.
+A 3D real-time strategy (RTS) game, playable with a mouse or by touch,
+written in Rust with the [Bevy](https://bevyengine.org) 0.20 engine.
 
-Le design du jeu est décrit dans [GAME_DESIGN.md](GAME_DESIGN.md).
+The game design is described in [GAME_DESIGN.md](GAME_DESIGN.md) (in French).
+The in-game interface is in French for now: unit, building and resource names
+below are given as they appear in the game.
 
-## Organisation du dépôt
+## Repository layout
 
-| Dossier | Rôle |
+| Folder | Role |
 | --- | --- |
-| `crates/rts_engine` | Le moteur générique : entrées, caméra, sélection, groupes de contrôle (`control_groups`), minicarte (`minimap`), joueurs (`players`), file des ordres (`orders`), simulation, collisions, navigation (grille, A\*), bâtiments (pose, chantiers), économie (`economy` : gisements, récolte, production, population, interface), combat (`combat` : armes, ciblage, ordres, dégâts, barre d'ordres, effets), IA adverse (`ai`), brouillard de guerre (`vision`), fin de partie (`outcome`), rendu (`graphics`). Aucun contenu de jeu. |
-| `crates/rts_game` | Le jeu : unités, bâtiments, factions, cartes, gisements (`garde.rs`, `sylves.rs`, `collectif.rs`, `map.rs`, `base.rs`, `base_sylves.rs`, `base_collectif.rs`, `gisements.rs`, `combat.rs` : fiches de combat, `battle.rs` : démonstration de bataille). Utilise `rts_engine`. |
+| `crates/rts_engine` | The generic engine: input, camera, selection, control groups (`control_groups`), minimap (`minimap`), players (`players`), order queue (`orders`), simulation, collisions, navigation (grid, A\*), buildings (placement, construction sites), economy (`economy`: resource nodes, harvesting, production, supply, UI), combat (`combat`: weapons, targeting, orders, damage, order bar, effects), enemy AI (`ai`), fog of war (`vision`), end of game (`outcome`), rendering (`graphics`). No game content. |
+| `crates/rts_game` | The game: units, buildings, factions, maps, resource nodes (`garde.rs`, `sylves.rs`, `collectif.rs`, `map.rs`, `base.rs`, `base_sylves.rs`, `base_collectif.rs`, `gisements.rs`, `combat.rs`: combat stats, `battle.rs`: battle demo, `menu.rs`: start menu, `side.rs`: player sides). Uses `rts_engine`. |
 
-## Compiler et lancer
+## Building and running
 
-Il faut Rust stable (installé avec [rustup](https://rustup.rs)), puis :
+You need stable Rust (installed with [rustup](https://rustup.rs)), then:
 
 ```sh
-cargo run
+cargo run --release
 ```
 
-La première compilation de Bevy prend plusieurs minutes ; les suivantes sont rapides.
+The first Bevy build takes several minutes; later ones are fast.
+On Linux you also need Bevy's system dependencies
+(see the [Bevy Linux guide](https://github.com/bevyengine/bevy/blob/main/docs/linux_dependencies.md)).
 
-Le jeu s'ouvre sur un **menu** : on choisit sa faction et celle de
-l'adversaire (tenu par l'IA), ou « Aléatoire » (tirage au lancement), puis
-« Lancer la partie » (ou Entrée). Les
-variables de développement `OPENRTS_FACTION`, `OPENRTS_ENEMY`,
-`OPENRTS_DEMO` et `OPENRTS_SCREENSHOT` sautent le menu ; `OPENRTS_MENU=1`
-le force, `OPENRTS_MENU=start` le valide tout seul au bout de 2 s.
-Sous Linux, il faut aussi les dépendances système de Bevy
-(voir le [guide Bevy pour Linux](https://github.com/bevyengine/bevy/blob/main/docs/linux_dependencies.md)).
+The game opens on a **menu**: pick your faction and the opponent's (played by
+the AI), or « Aléatoire » (random, drawn when the game starts), then
+« Lancer la partie » (or Enter). The development variables `OPENRTS_FACTION`,
+`OPENRTS_ENEMY`, `OPENRTS_DEMO` and `OPENRTS_SCREENSHOT` skip the menu;
+`OPENRTS_MENU=1` forces it, `OPENRTS_MENU=start` confirms it on its own after 2 s.
 
-## Commandes (ordinateur)
+## Controls (desktop)
 
-| Action | Commande |
+| Action | Input |
 | --- | --- |
-| Sélectionner une unité | Clic gauche |
-| Sélection en rectangle | Glisser au clic gauche |
-| Ajouter / retirer de la sélection | Maj + clic ou Maj + rectangle |
-| Attaque-déplacement (par défaut) | Clic droit sur le sol : les unités armées y vont en combattant ce qu'elles croisent ; ouvriers et unités sans arme s'y déplacent simplement |
-| Attaquer un ennemi | Clic droit sur une unité ou un bâtiment adverse |
-| Attaque-déplacement (ouvriers compris) | A puis clic gauche (sur un ennemi : l'attaquer), ou bouton « Attaquer » de la barre d'ordres |
-| Déplacement simple (ignore les ennemis, pour battre en retraite) | M puis clic gauche, ou bouton « Déplacer » |
-| Stop / Tenir la position | S / H, ou boutons de la barre d'ordres (en bas à gauche, visible avec des unités sélectionnées) |
-| Quitter le mode visée | Clic droit ou Échap (Maj + clic : donner l'ordre sans quitter le mode) |
-| Voir une unité adverse | Clic gauche dessus (anneau rouge ; pas d'ordre possible) |
-| Récolter (Techniciens, Pousses ou Collecteurs sélectionnés) | Clic droit sur un gisement de Cristal, ou sur un Extracteur (Calice chez les Sylves, Creuset chez le Collectif) terminé |
-| Point de ralliement (bâtiment producteur sélectionné) | Clic droit sur le sol, ou sur un gisement (les Techniciens produits y récoltent directement) |
-| Produire (Quartier général, Caserne ou Usine sélectionné) | Touche de l'unité ou bouton du panneau en bas : T (Technicien, QG) ; S (Sentinelle), V (Longue-Vue), L (Lancier), F (Faucon) à la Caserne, grisés tant qu'il manque l'Armurerie (V, L) ou le Centre de propulsion (F) ; C (Bastion, Usine) |
-| Annuler une unité en file | Clic sur sa case dans la file (remboursée) |
-| Annuler un chantier sélectionné | X ou bouton « Annuler » (remboursé) |
-| Mémoriser la sélection dans un groupe | Ctrl + 1 … 9 ou 0 (Cmd aussi sur Mac) |
-| Ajouter la sélection à un groupe | Maj + 1 … 9 ou 0 |
-| Rappeler un groupe | 1 … 9 ou 0, ou clic sur sa case dans la barre de groupes (en haut à gauche) ; deux fois rapidement : la caméra se centre dessus |
-| Déplacer la caméra par la minicarte (en bas à droite) | Clic gauche ou glisser sur la minicarte |
-| Ordre vers un point de la minicarte | Clic droit sur la minicarte (comme au sol : attaque-déplacement pour les armées) ; en mode visée (A ou M), clic gauche |
-| Faire défiler la caméra | Flèches ou souris au bord de l'écran |
-| Zoomer | Molette ou trackpad |
-| Test de charge (300 unités) | F3 |
-| Construire (un Technicien, une Pousse ou un Collecteur sélectionné) | B puis la touche du bâtiment, ou un bouton de la barre en bas de l'écran |
-| Poser le bâtiment | Clic gauche (Maj + clic : en poser un autre) |
-| Annuler la pose | Clic droit ou Échap |
-| Libérer la souris | Échap (un clic dans le jeu la reprend ; pendant une pose, le premier Échap annule la pose) |
-| Quitter | Cmd + Q (macOS), Alt + F4 (Windows, Linux) |
+| Select a unit | Left click |
+| Box selection | Left-click drag |
+| Add to / remove from selection | Shift + click or Shift + box |
+| Attack-move (default) | Right click on the ground: armed units go there fighting whatever they meet; workers and unarmed units simply move |
+| Attack an enemy | Right click on an enemy unit or building |
+| Attack-move (workers included) | A then left click (on an enemy: attack it), or the « Attaquer » button of the order bar |
+| Plain move (ignores enemies, to retreat) | M then left click, or the « Déplacer » button |
+| Stop / Hold position | S / H, or the order bar buttons (bottom left, shown when units are selected) |
+| Leave targeting mode | Right click or Escape (Shift + click: give the order and stay in targeting mode) |
+| Inspect an enemy unit | Left click on it (red ring; no orders possible) |
+| Harvest (Techniciens, Pousses or Collecteurs selected) | Right click on a Cristal node, or on a finished extractor (Extracteur; Calice for the Sylves, Creuset for the Collectif) |
+| Rally point (producing building selected) | Right click on the ground, or on a resource node (produced workers harvest it directly) |
+| Train (producing building selected) | The unit's key or a button of the bottom panel, e.g. for the Garde: T (Technicien, Quartier général); S (Sentinelle), V (Longue-Vue), L (Lancier), F (Faucon) at the Caserne, greyed out until the Armurerie (V, L) or the Centre de propulsion (F) exists; C (Bastion, Usine) |
+| Cancel a queued unit | Click its slot in the queue (refunded) |
+| Cancel a selected construction site | X or the « Annuler » button (refunded) |
+| Store the selection in a group | Ctrl + 1 … 9 or 0 (also Cmd on Mac) |
+| Add the selection to a group | Shift + 1 … 9 or 0 |
+| Recall a group | 1 … 9 or 0, or click its slot in the group bar (top left); twice quickly: the camera centers on it |
+| Move the camera with the minimap (bottom right) | Left click or drag on the minimap |
+| Order towards a minimap point | Right click on the minimap (as on the ground: attack-move for armies); in targeting mode (A or M), left click |
+| Scroll the camera | Arrow keys or mouse at the screen edge |
+| Zoom | Mouse wheel or trackpad |
+| Stress test (300 units) | F3 |
+| Build (a Technicien, Pousse or Collecteur selected) | B then the building's key, or a button of the bar at the bottom of the screen |
+| Place the building | Left click (Shift + click: place another one) |
+| Cancel placement | Right click or Escape |
+| Release the mouse | Escape (a click in the game captures it again; while placing, the first Escape cancels the placement) |
+| Quit | Cmd + Q (macOS), Alt + F4 (Windows, Linux) |
 
-Les touches des groupes sont celles de la rangée du haut, en AZERTY comme en
-QWERTY (sans Maj). Un groupe ne garde que les unités et bâtiments du joueur ;
-les morts en disparaissent. La barre de groupes montre, pour chaque groupe
-non vide, son chiffre, son nombre d'entités et son type principal ; la case
-du groupe qui correspond à la sélection est éclairée. La minicarte montre le
-sol, les gisements, les bâtiments (rectangles) et les unités (points) aux
-couleurs d'équipe, et le trapèze de ce que voit la caméra.
+Group keys are the top-row keys, on AZERTY as on QWERTY (without Shift). A
+group only keeps the player's own units and buildings; dead ones are removed.
+The group bar shows, for each non-empty group, its number, its size and its
+main type; the slot of the group matching the selection is highlighted. The
+minimap shows the ground, resource nodes, buildings (rectangles) and units
+(dots) in team colors, and the trapezoid seen by the camera.
 
-Le jeu s'ouvre en plein écran. Pour que les bords d'écran servent au défilement
-sans déclencher les coins actifs, la barre de menus ou le Dock de macOS, le curseur
-du système est verrouillé et le jeu dessine le sien, qui ne peut pas sortir de l'écran.
+The game starts fullscreen. So that screen edges can scroll without triggering
+macOS hot corners, the menu bar or the Dock, the system cursor is locked and
+the game draws its own, which cannot leave the screen.
 
-Les unités ne se traversent pas : elles se bousculent, écartent les unités
-immobiles de leur chemin et s'arrêtent en groupe serré à l'arrivée. Elles
-contournent les bâtiments (grille de navigation de 1 m et A\*) ; les grosses
-unités évitent les passages trop étroits pour elles. Les unités volantes
-passent au-dessus de tout et ne gênent que les autres volantes.
+Units do not overlap: they jostle, push idle units out of their way and stop
+in a tight group on arrival. They path around buildings (1 m navigation grid
+and A\*); large units avoid passages too narrow for them. Flying units pass
+over everything (at least 3 m above the ground) and only collide with other
+flyers.
 
-### Bâtiments de la Garde
+### Garde buildings
 
-| Touche (après B) | Bâtiment | Empreinte | Coût | Prérequis | Rôle |
+| Key (after B) | Building | Footprint | Cost | Requires | Role |
 | --- | --- | --- | --- | --- | --- |
-| Q | Quartier général | 7 × 7 m | 400 Cristal | — | Dépôt, Techniciens (T) |
-| H | Module d'habitat | 3 × 3 m | 100 Cristal | — | Population (+8) |
-| E | Extracteur | 4 × 4 m | 75 Cristal | — (pile sur une source d'Éther libre) | Éther |
+| Q | Quartier général | 7 × 7 m | 400 Cristal | — | Drop-off, Techniciens (T) |
+| H | Module d'habitat | 3 × 3 m | 100 Cristal | — | Supply (+8) |
+| E | Extracteur | 4 × 4 m | 75 Cristal | — (right on a free Éther source) | Éther |
 | C | Caserne | 5 × 6 m | 150 Cristal | Quartier général | Sentinelles (S), Longue-Vue (V), Lanciers (L), Faucons (F) |
-| T | Tourelle | 2 × 2 m | 100 Cristal | Caserne | Défense fixe |
-| A | Armurerie | 4 × 4 m | 150 Cristal + 50 Éther | Caserne | Débloque Longue-Vue et Lanciers à la Caserne |
-| P | Centre de propulsion | 5 × 5 m | 150 Cristal + 100 Éther | Caserne | Débloque les Faucons à la Caserne |
+| T | Tourelle | 2 × 2 m | 100 Cristal | Caserne | Static defense |
+| A | Armurerie | 4 × 4 m | 150 Cristal + 50 Éther | Caserne | Unlocks Longue-Vue and Lanciers at the Caserne |
+| P | Centre de propulsion | 5 × 5 m | 150 Cristal + 100 Éther | Caserne | Unlocks Faucons at the Caserne |
 | U | Usine | 6 × 7 m | 200 Cristal + 100 Éther | Armurerie | Bastions (C) |
 
-Les raccourcis sont des lettres tapées : ils suivent ce qui est écrit sur les
-touches, en AZERTY comme en QWERTY. En mode pose, un fantôme suit le pointeur,
-aligné sur la grille : vert si l'emplacement est libre, rouge sinon. Le
-Technicien le plus proche se rend sur le chantier et y reste : le bâtiment
-monte du sol tant qu'il travaille. Un chantier abandonné (Technicien
-envoyé ailleurs ou tué) s'arrête : **clic droit dessus** avec des
-Techniciens sélectionnés pour le reprendre. Le coût est débité à la pose (refus et
-message « Ressources insuffisantes » sinon) et remboursé si l'on annule le
-chantier. L'Extracteur s'aimante sur la source d'Éther la plus proche ;
-ailleurs, son fantôme est rouge (« Doit être posé sur une source »).
+Hotkeys are typed letters: they follow what is printed on the keys, on AZERTY
+as on QWERTY. In placement mode a ghost follows the pointer, snapped to the
+grid: green if the spot is free, red otherwise. The nearest Technicien walks
+to the site and stays there: the building rises from the ground while it
+works. An abandoned site (Technicien sent elsewhere or killed) stops:
+**right click on it** with Techniciens selected to resume it. The cost is
+paid on placement (refused with « Ressources insuffisantes » otherwise) and
+refunded if the site is cancelled. The Extracteur snaps onto the nearest Éther
+source; anywhere else its ghost is red (« Doit être posé sur une source »).
 
-### Bâtiments des Sylves (`OPENRTS_FACTION=sylves`)
+### Sylves buildings
 
-| Touche (après B) | Bâtiment | Empreinte | Prérequis | Rôle |
+| Key (after B) | Building | Footprint | Requires | Role |
 | --- | --- | --- | --- | --- |
-| A | Arbre-mère | 7 × 7 m | — | Cœur de base, dépôt, produit les Pousses (P), 15 de population |
-| S | Souche nourricière | 3 × 3 m | — | 8 de population |
-| C | Calice | 4 × 4 m | — (pile sur une source d'Éther libre) | Récolte de l'Éther |
-| R | Ronceraie | 5 × 5 m | Arbre-mère | Produit les Ronciers (R), les Sourciers (S, avec une Fontaine de sève) et les Lanceurs de spores (L, avec une Champignonnière) |
-| E | Épineux | 2 × 2 m | Ronceraie | Défense fixe |
-| F | Fontaine de sève | 4 × 4 m | Ronceraie | Palier 2 : débloque le Sourcier (Ronceraie) et le Gardien (Érablière) |
-| H | Champignonnière | 4 × 4 m | Ronceraie | Palier 2 : débloque le Lanceur de spores (Ronceraie) |
-| L | Érablière | 6 × 6 m | Ronceraie | Palier 2 : produit les Samares (S) et les Gardiens (G, avec une Fontaine de sève) |
+| A | Arbre-mère | 7 × 7 m | — | Base core, drop-off, trains Pousses (P), 15 supply |
+| S | Souche nourricière | 3 × 3 m | — | 8 supply |
+| C | Calice | 4 × 4 m | — (right on a free Éther source) | Éther harvesting |
+| R | Ronceraie | 5 × 5 m | Arbre-mère | Trains Ronciers (R), Sourciers (S, with a Fontaine de sève) and Lanceurs de spores (L, with a Champignonnière) |
+| E | Épineux | 2 × 2 m | Ronceraie | Static defense |
+| F | Fontaine de sève | 4 × 4 m | Ronceraie | Tier 2: unlocks the Sourcier (Ronceraie) and the Gardien (Érablière) |
+| H | Champignonnière | 4 × 4 m | Ronceraie | Tier 2: unlocks the Lanceur de spores (Ronceraie) |
+| L | Érablière | 6 × 6 m | Ronceraie | Tier 2: trains Samares (S) and Gardiens (G, with a Fontaine de sève) |
 
-Les Sylves construisent autrement : **la Pousse devient le bâtiment**. Avec
-des Pousses sélectionnées, B puis une lettre (ou la barre de boutons) ouvre
-la pose, comme pour la Garde. Le coût est débité à la pose et
-l'emplacement est promis (cadre vert au sol) à la Pousse libre la plus
-proche ; elle s'y rend, s'enracine et disparaît (sa population est libérée).
-Le chantier pousse ensuite tout seul, sans échafaudage : le bâtiment grandit
-du sol. Chaque Pousse ne fait qu'un bâtiment (« Aucun ouvrier libre » sinon).
-Donner un autre ordre à la Pousse avant qu'elle arrive annule la promesse,
-remboursée en entier ; annuler un chantier qui pousse (X) rend 75 % du coût
-et la Pousse ressort de terre.
+The Sylves build differently: **the Pousse becomes the building**. With Pousses
+selected, B then a letter (or the button bar) opens placement, as for the
+Garde. The cost is paid on placement and the spot is promised (green frame on
+the ground) to the nearest free Pousse; it walks there, takes root and
+disappears (its supply is freed). The site then grows on its own, without
+scaffolding: the building grows out of the ground. Each Pousse makes only one
+building (« Aucun ouvrier libre » otherwise). Giving the Pousse another order
+before it arrives cancels the promise, fully refunded; cancelling a growing
+site (X) returns 75 % of the cost and the Pousse comes back out of the ground.
 
-### Bâtiments du Collectif (`OPENRTS_FACTION=collectif`)
+### Collectif buildings
 
-| Touche (après B) | Bâtiment | Empreinte | Prérequis | Rôle |
+| Key (after B) | Building | Footprint | Requires | Role |
 | --- | --- | --- | --- | --- |
-| E | Écrin | 7 × 7 m | — | Cœur de base, dépôt, produit les Collecteurs (C), 15 de population, champ de résonance de 8 m |
-| R | Résonateur | 2 × 2 m | — | Relais : 8 de population, champ de résonance de 6,5 m |
-| C | Creuset | 4 × 4 m | — (pile sur une source d'Éther libre) | Récolte de l'Éther |
-| O | Orfèvrerie | 5 × 5 m | Écrin, dans un champ | Produit les Automates (A) ; Perceur (P) avec un Lapidaire |
-| A | Aiguillon | 2 × 2 m | Orfèvrerie, dans un champ | Défense fixe |
-| L | Lapidaire | 4 × 4 m | Orfèvrerie, dans un champ | Taille les pierres : débloque le Perceur, l'Essaimeur et la Fonderie |
-| V | Volière | 5 × 5 m | Orfèvrerie, dans un champ | Atelier aérien : produit les Essaims (E) ; Essaimeur (M) avec un Lapidaire |
-| F | Fonderie | 6 × 6 m | Lapidaire, dans un champ | Produit les Titans (T) |
+| E | Écrin | 7 × 7 m | — | Base core, drop-off, trains Collecteurs (C), 15 supply, 8 m resonance field |
+| R | Résonateur | 2 × 2 m | — | Relay: 8 supply, 6.5 m resonance field |
+| C | Creuset | 4 × 4 m | — (right on a free Éther source) | Éther harvesting |
+| O | Orfèvrerie | 5 × 5 m | Écrin, inside a field | Trains Automates (A); Perceur (P) with a Lapidaire |
+| A | Aiguillon | 2 × 2 m | Orfèvrerie, inside a field | Static defense |
+| L | Lapidaire | 4 × 4 m | Orfèvrerie, inside a field | Gem cutting: unlocks the Perceur, the Essaimeur and the Fonderie |
+| V | Volière | 5 × 5 m | Orfèvrerie, inside a field | Air workshop: trains Essaims (E); Essaimeur (M) with a Lapidaire |
+| F | Fonderie | 6 × 6 m | Lapidaire, inside a field | Trains Titans (T) |
 
-Le Collectif construit par **sertissage à distance**. Avec des Collecteurs
-sélectionnés, B puis une lettre ouvre la pose ; les **champs de résonance**
-de l'Écrin et des Résonateurs terminés apparaissent alors au sol (cercles
-vert d'eau). Tous les bâtiments sauf l'Écrin, le Résonateur et le Creuset
-ne se posent qu'à l'intérieur d'un
-champ : ailleurs, leur fantôme est rouge et le clic affiche « Hors champ ».
-Le coût est débité à la pose et l'emplacement promis au Collecteur libre le
-plus proche ; il vole jusque-là, pose une gemme d'ancrage et **repart
-aussitôt** à sa récolte (ou au gisement de Cristal le plus proche). Le
-bâtiment s'assemble ensuite seul, sous sa gemme qui tourne. Un autre ordre
-donné au Collecteur avant qu'il arrive annule la promesse, remboursée en
-entier ; annuler un chantier (X) rend 75 % de son coût.
+The Collectif builds by **remote setting**. With Collecteurs selected, B then a
+letter opens placement; the **resonance fields** of the Écrin and of finished
+Résonateurs then show on the ground (pale green circles). Every building but
+the Écrin, the Résonateur and the Creuset can only be placed inside a field:
+elsewhere its ghost is red and the click shows « Hors champ ». The cost is paid
+on placement and the spot promised to the nearest free Collecteur; it flies
+there, sets an anchor gem and **immediately goes back** to harvesting (or to
+the nearest Cristal node). The building then assembles itself under its
+spinning gem. Another order given to the Collecteur before it arrives cancels
+the promise, fully refunded; cancelling a site (X) returns 75 % of its cost.
 
 ### Combat
 
-Chaque unité et chaque bâtiment a des points de vie, une armure et des
-catégories (infanterie, blindé, aérien, mêlée, distance, ouvrier, géant,
-bâtiment) ; les unités armées et les défenses fixes (Tourelle, Épineux)
-ont une arme : dégâts, portée, cadence, sol et/ou air, bonus contre
-certaines catégories, dégâts de zone. Un coup fait les dégâts de l'arme,
-plus son bonus, moins l'armure de la cible (au moins 0,5).
+Every unit and building has hit points, armor and categories (infantry,
+armored, air, melee, ranged, worker, massive, structure); armed units and
+static defenses (Tourelle, Épineux, Aiguillon) have a weapon: damage, range,
+rate of fire, ground and/or air, bonus against some categories, splash damage.
+A hit deals the weapon's damage, plus its bonus, minus the target's armor
+(at least 0.5).
 
-- Une unité au repos repère seule les ennemis proches et leur tire dessus :
-  d'abord ce qui attaque, puis le plus proche. Attaquée, elle riposte
-  toujours ; elle poursuit sans s'éloigner de plus de quelques mètres, puis
-  revient à sa place. Un ouvrier qui récolte ou construit ne combat pas.
-- Barres de vie au-dessus des unités sélectionnées, blessées ou survolées ;
-  traits de tir aux couleurs d'équipe, éclats, épaves qui s'effondrent.
-- Une unité tuée libère sa population ; un bâtiment détruit libère sa place
-  (les unités passent à nouveau) et la population qu'il fournissait.
+- An idle unit spots nearby enemies on its own and shoots them: attackers
+  first, then the nearest. When attacked it always fights back; it chases
+  without straying more than a few meters, then returns to its spot. A worker
+  that is harvesting or building does not fight.
+- Health bars above selected, damaged or hovered units; shot tracers in team
+  colors, sparks, collapsing wrecks.
+- A killed unit frees its supply; a destroyed building frees its footprint
+  (units can pass again) and the supply it provided.
+- The Faucon flies over units and buildings but counts as a ground unit in
+  combat: every weapon can hit it.
 
-### Brouillard de guerre
+### Fog of war
 
-Chaque unité et chaque bâtiment voit autour de lui (6 à 12 m selon le type,
-mesurés depuis son bord, toujours au moins sa portée d'acquisition). Le sol est
-assombri là où l'on ne voit pas, et plus encore là où l'on n'est jamais allé.
-Les unités ennemies hors de vue sont cachées : on ne peut ni les
-sélectionner ni les viser, et les unités ne tirent que sur ce que voit leur
-joueur. Un bâtiment ennemi aperçu reste affiché tel qu'au dernier aperçu,
-même détruit depuis, jusqu'à ce qu'on revoie son emplacement. L'IA ne
-connaît que ce que voit son joueur et les bâtiments qu'elle a aperçus ; elle
-suppose la base adverse à l'opposé de la sienne (la carte est symétrique) et
-explore si elle n'y trouve rien. `OPENRTS_FOG=0` coupe le brouillard.
+Every unit and building sees around itself (6 to 12 m depending on the type,
+measured from its edge, never less than its acquisition range). The ground is
+darkened where you cannot see, and darker still where you have never been.
+Enemy units out of sight are hidden: they cannot be selected or targeted, and
+units only shoot at what their player sees. An enemy building you have seen
+stays displayed as it was last seen, even if destroyed since, until you see
+its spot again. The AI only knows what its player sees and the buildings it
+has spotted; it assumes the enemy base is opposite its own (the map is
+symmetric) and scouts if it finds nothing there. `OPENRTS_FOG=0` turns the fog off.
 
-### Économie
+### Economy
 
-Deux ressources, aux noms **provisoires** : le **Cristal** (principale,
-grappes bleu glacier en ligne derrière le Quartier général) et l'**Éther**
-(rare, failles violettes sur les flancs, récoltées par un Extracteur). Les
-compteurs en haut à droite montrent les stocks et la population
-(utilisée / disponible).
+Two resources, with **provisional** names: **Cristal** (primary, ice-blue
+clusters in a line behind the main building) and **Éther** (rare, purple rifts
+on the sides, harvested through an extractor). The counters at the top right
+show stocks and supply (used / available).
 
-- Les Techniciens vont au gisement, extraient (2,8 s pour 5 Cristal, 2 s pour
-  4 Éther), portent leur charge (visible) au Quartier général le plus proche,
-  et recommencent. Un seul Technicien à la fois par gisement : les autres
-  attendent leur tour ou passent au voisin libre ; deux à trois par gisement
-  le saturent. Un gisement vidé disparaît, ses Techniciens passent au suivant.
-- Production : un bâtiment producteur sélectionné affiche ses boutons et sa
-  file (5 au plus, payée à la mise en file, progression de la première
-  unité). Les unités produites sortent vers le point de ralliement.
-- Population : chaque unité en occupe (1 à 4), le Quartier général en
-  fournit 15 et chaque Module d'habitat 8, dans la limite d'un plafond
-  global (200, réglable avec `OPENRTS_POP_MAX`). Au-delà : « Population maximale ».
+- Workers go to a node, extract (2.8 s for 5 Cristal, 2 s for 4 Éther), carry
+  their (visible) load to the nearest drop-off, and start again. Only one
+  worker at a time per node: others wait their turn or move to a free
+  neighbor; two to three per node saturate it. An emptied node disappears and
+  its workers move to the next one.
+- Production: a selected producing building shows its buttons and its queue
+  (up to 5, paid when queued, progress of the first unit). Produced units head
+  to the rally point.
+- Supply: each unit uses some (1 to 8), the main building provides 15 and each
+  supply building 8, up to a global cap (200, adjustable with
+  `OPENRTS_POP_MAX`). Beyond that: « Population maximale ».
 
-La partie démarre avec 50 Cristal, un Quartier général, deux Modules
-d'habitat, les gisements et quatre Techniciens qui récoltent déjà. En
-Sylves : un Arbre-mère, deux Souches nourricières et quatre Pousses (elles
-rapportent à l'Arbre-mère, et récoltent l'Éther au pied d'un Calice). En
-Collectif : un Écrin, trois Résonateurs et quatre Collecteurs, qui volent
-tout droit au gisement et à l'Écrin, par-dessus les bâtiments.
+A game starts with 50 Cristal, a main building, two or three supply
+buildings, resource nodes and four workers already harvesting, plus a small
+army. You start in the north; the AI opponent starts in the mirrored base in
+the south.
 
-Tous les ordres (déplacer, récolter, poser, produire, rallier, annuler)
-passent par une file appliquée au pas de simulation suivant : c'est la base
-du futur multijoueur en lockstep (voir `crates/rts_engine/src/orders.rs`).
+All orders (move, harvest, place, train, rally, cancel) go through a queue
+applied at the next simulation step: this is the basis for future lockstep
+multiplayer (see `crates/rts_engine/src/orders.rs`).
 
-### Fin de partie
+### AI opponent
 
-Un joueur est vaincu quand il n'a plus aucun bâtiment (chantiers compris).
-Quand il ne reste qu'un joueur en lice, la partie est finie : écran
-« Victoire » ou « Défaite » avec la durée de la partie. **Entrée** (ou
-« Continuer à regarder ») ferme l'écran, « Quitter » ferme le jeu. Une scène
-sans base adverse (démonstrations) ne se termine jamais.
+A generic AI in the engine (`ai.rs`) plays any faction from its data alone:
+it harvests (three workers per extractor), builds up to 16 workers, adds
+supply before being blocked, production buildings and what unlocks its units,
+its extractor, trains a varied army, defends its base and attacks in waves
+from 2 min 30 s on (10 units, then 4 more each wave). It acts only through the
+order queue, like a player, in a fixed order (deterministic).
 
-## Rendu et réglages graphiques
+### End of game
 
-Animations de mouvement (affichage seulement, pour toutes les unités, sans
-données en plus) : rebond à chaque foulée et buste penché pour les unités
-au sol, vibration et tangage pour les engins lourds, recul à chaque tir,
-virages en douceur. Les volants (jetpacks du Faucon, Samares, Essaims…)
-volent au moins à 3 m du sol, au-dessus des unités au sol ; ils prennent un
-peu d'altitude en vol, piquent du nez en avançant et s'inclinent dans les
-virages.
+A player is defeated when they have no building left (construction sites
+included). When only one player is left, the game is over: « Victoire » or
+« Défaite » screen with the game duration. **Enter** (or « Continuer à
+regarder ») closes the screen, « Quitter » quits the game. A scene without an
+enemy base (demos) never ends.
 
-Le moteur gère le rendu (module `graphics`) : HDR, tone mapping filmique (ACES),
-bloom sur les pièces lumineuses, ombres en cascade recadrées sur la zone visible,
-brouillard proportionnel au zoom, éclairage d'ambiance par image (IBL) calculé au
-démarrage, lumière principale et contre-jours colorés, particules d'ambiance.
-Les couleurs (lumières, ciel, brouillard) viennent d'une `Ambiance` fournie par le
-jeu ; l'apparence des unités est décrite en données, pièce par pièce
-(`ModelBuilder`), avec une `Palette` de matériaux par faction.
+## Rendering and graphics settings
 
-Deux niveaux de qualité (`GraphicsQuality`) :
+Movement animations (display only, for every unit, without extra data):
+a bounce on each stride and a forward lean for ground units, vibration and
+pitch for heavy vehicles, recoil on each shot, smooth turns. Flyers (Faucon
+jetpacks, Samares, Essaims…) fly at least 3 m above the ground, over ground
+units; they climb a little while moving, dip their nose when moving forward
+and bank into turns.
 
-| Qualité | Contenu | Cible |
+The engine handles rendering (`graphics` module): HDR, filmic tone mapping
+(ACES), bloom on glowing parts, cascaded shadows fitted to the visible area,
+zoom-dependent distance fog, image-based lighting (IBL) computed at startup,
+key light and colored rim lights, ambient particles. Colors (lights, sky, fog)
+come from an `Ambiance` provided by the game; unit appearance is described as
+data, part by part (`ModelBuilder`), with a material `Palette` per faction.
+
+Two quality levels (`GraphicsQuality`):
+
+| Quality | Content | Target |
 | --- | --- | --- |
-| Haute (défaut) | HDR + bloom, MSAA ×4, 3 cascades d'ombre filtrées en douceur | Ordinateur |
-| Basse | Sans HDR ni bloom, FXAA, 1 cascade d'ombre, 3 fois moins de particules | iPad, machines modestes |
+| High (default) | HDR + bloom, MSAA ×4, 3 soft-filtered shadow cascades | Desktop |
+| Low | No HDR or bloom, FXAA, 1 shadow cascade, 3 times fewer particles | iPad, modest machines |
 
-## Variables de développement
+## Development variables
 
-| Variable | Effet |
+| Variable | Effect |
 | --- | --- |
-| `OPENRTS_WINDOWED=1` | Fenêtre au lieu du plein écran, souris libre |
-| `OPENRTS_FACTION=sylves` | Faction du joueur : `garde` (défaut ; `coalition` accepté), `sylves` ou `collectif` (ambiance, sol, unités, test de charge) |
-| `OPENRTS_ENEMY=garde` | Faction de l'adversaire (bleu, base en miroir au sud) : par défaut la suivante, Garde → Sylves → Collectif → Garde |
-| `OPENRTS_QUALITY=bas` | Qualité graphique Basse (`haut` par défaut) |
-| `OPENRTS_STRESS=1` | Lance le test de charge (300 unités) au démarrage |
-| `OPENRTS_ZOOM=12` | Distance de départ de la caméra (10 à 70 m) |
-| `OPENRTS_DEMO=buildings` | Garde : scène de démonstration des bâtiments (les huit bâtiments, un chantier en cours, un fantôme vert et un rouge, un groupe qui contourne la Caserne au bout de 11 s) |
-| `OPENRTS_FACTION=sylves OPENRTS_DEMO=buildings` | Sylves : les huit bâtiments (le palier 2 sur une rangée au fond de la base), un Calice et la ligne de Cristal récoltés par des Pousses, une Ronceraie en pleine croissance, un fantôme vert et un rouge, une Pousse sélectionnée qui part s'enraciner au bout de 10,5 s (emplacement promis en vert) |
-| `OPENRTS_FACTION=collectif OPENRTS_DEMO=buildings` | Collectif : les huit bâtiments (Lapidaire, Volière et Fonderie au nord, `OPENRTS_FOCUS=-1,8`), les champs de résonance au sol, un Creuset et la ligne de Cristal récoltés par des Collecteurs, une Orfèvrerie en cours d'assemblage sous sa gemme, un fantôme vert dans un champ et un rouge hors champ, un Collecteur sélectionné qui part sertir un Aiguillon au bout de 10 s puis repart récolter |
-| `OPENRTS_FOCUS=x,z` | La caméra vise ce point du sol au démarrage |
-| `OPENRTS_DEMO=economy` | Garde : l'économie en marche (douze Techniciens sur la ligne de Cristal, trois à un Extracteur, Quartier général sélectionné avec trois Techniciens en file et son point de ralliement, compteurs) |
-| `OPENRTS_DEMO=battle` | Deux armées (joueur 1 orange au sud, joueur 2 bleu au nord), chacune devant deux défenses fixes (Tourelles, Épineux, Aiguillons), qui partent à l'attaque-déplacement au bout de 8 s et se rencontrent au milieu. `OPENRTS_FACTION` et `OPENRTS_ENEMY` choisissent les factions, `OPENRTS_STRESS=1` donne 300 contre 300 |
-| `OPENRTS_POP_MAX=100` | Plafond global de population (200 par défaut) |
-| `OPENRTS_AI=0` | L'adversaire ne joue pas (par défaut, une IA basique le tient en partie normale) |
-| `OPENRTS_AI_ATTACK=60` | Délai avant la première vague de l'IA (150 s par défaut) |
-| `OPENRTS_SPEED=8` | Accélère le temps de la partie (pour observer l'IA) |
-| `OPENRTS_SCREENSHOT_DELAY=30` | Instant de la capture automatique (14 s par défaut) |
-| `OPENRTS_FOG=0` | Pas de brouillard de guerre (tout est visible). Les démonstrations (`OPENRTS_DEMO`) s'en passent par défaut ; `OPENRTS_FOG=1` l'y remet |
-| `OPENRTS_SCREENSHOT=capture.png` | Après 14 s : affiche les FPS moyens des 6 dernières secondes, enregistre une capture du rendu et quitte (synchronisation verticale coupée pour mesurer) |
+| `OPENRTS_WINDOWED=1` | Window instead of fullscreen, free mouse |
+| `OPENRTS_FACTION=sylves` | Player faction: `garde` (default; `coalition` accepted), `sylves` or `collectif` (ambiance, ground, units, stress test); skips the menu |
+| `OPENRTS_ENEMY=garde` | Opponent faction (blue, mirrored base in the south): by default the next one, Garde → Sylves → Collectif → Garde; skips the menu |
+| `OPENRTS_MENU=1` | Shows the start menu even when another variable would skip it (`start`: confirms it after 2 s) |
+| `OPENRTS_QUALITY=bas` | Low graphics quality (`haut` by default) |
+| `OPENRTS_STRESS=1` | Starts the stress test (300 units) at launch |
+| `OPENRTS_ZOOM=12` | Starting camera distance (10 to 70 m) |
+| `OPENRTS_DEMO=buildings` | Garde: building showcase scene (the eight buildings, a site under construction, a green and a red ghost, a group that walks around the Caserne after 11 s) |
+| `OPENRTS_FACTION=sylves OPENRTS_DEMO=buildings` | Sylves: the eight buildings (tier 2 in a row at the back of the base), a Calice and the Cristal line harvested by Pousses, a growing Ronceraie, a green and a red ghost, a selected Pousse that leaves to take root after 10.5 s (promised spot in green) |
+| `OPENRTS_FACTION=collectif OPENRTS_DEMO=buildings` | Collectif: the eight buildings (Lapidaire, Volière and Fonderie to the north, `OPENRTS_FOCUS=-1,8`), resonance fields on the ground, a Creuset and the Cristal line harvested by Collecteurs, an Orfèvrerie assembling under its gem, a green ghost inside a field and a red one outside, a selected Collecteur that leaves to set an Aiguillon after 10 s then goes back to harvesting |
+| `OPENRTS_FOCUS=x,z` | The camera looks at this ground point at startup |
+| `OPENRTS_DEMO=economy` | Garde: the economy at work (twelve Techniciens on the Cristal line, three at an Extracteur, Quartier général selected with three Techniciens queued and its rally point, counters) |
+| `OPENRTS_DEMO=battle` | Two armies (player 1 orange in the south, player 2 blue in the north), each in front of two static defenses, that attack-move after 8 s and meet in the middle. `OPENRTS_FACTION` and `OPENRTS_ENEMY` choose the factions, `OPENRTS_STRESS=1` makes it 300 versus 300 |
+| `OPENRTS_POP_MAX=100` | Global supply cap (200 by default) |
+| `OPENRTS_AI=0` | The opponent does not play (by default a basic AI controls it in a normal game) |
+| `OPENRTS_AI_ATTACK=60` | Delay before the AI's first wave (150 s by default) |
+| `OPENRTS_SPEED=8` | Speeds up game time (to watch the AI) |
+| `OPENRTS_FOG=0` | No fog of war (everything visible). Demos (`OPENRTS_DEMO`) do without it by default; `OPENRTS_FOG=1` turns it back on |
+| `OPENRTS_SCREENSHOT=capture.png` | After 14 s: prints the average FPS of the last 6 seconds, saves a screenshot of the render and quits (vsync off to measure); skips the menu |
+| `OPENRTS_SCREENSHOT_DELAY=30` | Time of the automatic screenshot (14 s by default) |
 
-Exemples : `OPENRTS_WINDOWED=1 OPENRTS_STRESS=1 OPENRTS_SCREENSHOT=/tmp/charge.png cargo run --release`,
-`OPENRTS_WINDOWED=1 OPENRTS_DEMO=buildings OPENRTS_ZOOM=36 OPENRTS_SCREENSHOT=/tmp/batiments.png cargo run --release`,
+Examples: `OPENRTS_WINDOWED=1 OPENRTS_STRESS=1 OPENRTS_SCREENSHOT=/tmp/stress.png cargo run --release`,
+`OPENRTS_WINDOWED=1 OPENRTS_DEMO=buildings OPENRTS_ZOOM=36 OPENRTS_SCREENSHOT=/tmp/buildings.png cargo run --release`,
 `OPENRTS_FACTION=sylves OPENRTS_WINDOWED=1 OPENRTS_DEMO=buildings OPENRTS_ZOOM=40 OPENRTS_FOCUS=0,-5 OPENRTS_SCREENSHOT=/tmp/sylves.png cargo run --release`,
 `OPENRTS_FACTION=collectif OPENRTS_WINDOWED=1 OPENRTS_DEMO=buildings OPENRTS_ZOOM=40 OPENRTS_FOCUS=0,-6 OPENRTS_SCREENSHOT=/tmp/collectif.png cargo run --release`,
-`OPENRTS_WINDOWED=1 OPENRTS_DEMO=economy OPENRTS_ZOOM=34 OPENRTS_FOCUS=1,-11 OPENRTS_SCREENSHOT=/tmp/economie.png cargo run --release`,
-`OPENRTS_WINDOWED=1 OPENRTS_DEMO=battle OPENRTS_ZOOM=18 OPENRTS_FOCUS=0,1 OPENRTS_SCREENSHOT=/tmp/bataille.png cargo run --release`,
-`OPENRTS_WINDOWED=1 OPENRTS_DEMO=battle OPENRTS_STRESS=1 OPENRTS_ZOOM=70 OPENRTS_SCREENSHOT=/tmp/charge.png cargo run --release`.
-Coût d'un pas de simulation pendant une bataille de 300 contre 300 (sans fenêtre) :
-`cargo test --release -p rts_engine -- --ignored --nocapture battle_300` ; coût du
-calcul de la vision (600 unités) : `cargo test --release -p rts_engine -- --ignored --nocapture vision_cost`.
-Pour mesurer les performances, compiler en `--release` : en mode debug, les
-vérifications internes de Bevy et de wgpu coûtent beaucoup d'images par seconde.
+`OPENRTS_WINDOWED=1 OPENRTS_DEMO=economy OPENRTS_ZOOM=34 OPENRTS_FOCUS=1,-11 OPENRTS_SCREENSHOT=/tmp/economy.png cargo run --release`,
+`OPENRTS_WINDOWED=1 OPENRTS_DEMO=battle OPENRTS_ZOOM=18 OPENRTS_FOCUS=0,1 OPENRTS_SCREENSHOT=/tmp/battle.png cargo run --release`,
+`OPENRTS_WINDOWED=1 OPENRTS_DEMO=battle OPENRTS_STRESS=1 OPENRTS_ZOOM=70 OPENRTS_SCREENSHOT=/tmp/stress.png cargo run --release`.
 
-## Licence
+Cost of one simulation step during a 300 versus 300 battle (headless):
+`cargo test --release -p rts_engine -- --ignored --nocapture battle_300`; cost
+of the vision computation (600 units):
+`cargo test --release -p rts_engine -- --ignored --nocapture vision_cost`.
+To measure performance, build with `--release`: in debug mode, Bevy's and
+wgpu's internal checks cost a lot of frames per second.
 
-Le code est sous double licence, au choix :
+## License
+
+The code is dual-licensed, at your option:
 
 - Apache License, Version 2.0 ([LICENSE-APACHE](LICENSE-APACHE))
 - MIT ([LICENSE-MIT](LICENSE-MIT))
 
-Sauf mention contraire, toute contribution envoyée pour être incluse dans le projet
-est placée sous cette même double licence, sans condition supplémentaire.
+Unless stated otherwise, any contribution intentionally submitted for
+inclusion in the project is dual-licensed as above, without any additional
+terms or conditions.
