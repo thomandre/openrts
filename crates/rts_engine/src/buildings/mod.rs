@@ -10,12 +10,19 @@
 //! Un bâtiment occupe un bloc de cases de la grille de navigation : c'est un
 //! obstacle fixe ([`StaticObstacle`]) que les unités contournent.
 //!
-//! La construction suit un [`ConstructionStyle`], propre à chaque faction.
-//! Pour l'instant un seul : l'ouvrier reste sur le chantier (Coalition). Le
-//! chantier est posé tout de suite (obstacle, points de vie qui montent) et
-//! n'avance que tant qu'un ouvrier le touche. D'autres factions pourront
-//! construire autrement (bâtiment qui pousse seul, ouvrier qui se transforme…) :
-//! c'est l'asymétrie voulue par le design.
+//! La construction suit un [`ConstructionStyle`], propre à chaque faction :
+//!
+//! - **l'ouvrier reste sur le chantier** (`WorkerStays`, la Coalition) : le
+//!   chantier est posé tout de suite (obstacle, points de vie qui montent) et
+//!   n'avance que tant qu'un ouvrier le touche ;
+//! - **l'ouvrier devient le bâtiment** (`WorkerConsumed`, les Sylves) : à la
+//!   pose, l'emplacement est seulement promis ([`PlannedSite`], déjà payé) ;
+//!   l'ouvrier s'y rend, et à l'arrivée il disparaît (sa population est
+//!   libérée) pour laisser place au chantier, qui pousse ensuite tout seul.
+//!   Annulé, le chantier rend une part du coût et l'ouvrier ressort de terre.
+//!
+//! C'est l'asymétrie voulue par le design : mêmes règles du moteur, données
+//! différentes.
 //!
 //! Tout ce qui change l'état du jeu (pose effective, progression, obstacles)
 //! se fait dans la simulation à pas fixe ; le module [`placement`] (mode pose,
@@ -130,11 +137,35 @@ impl Requirement {
 }
 
 /// Façon de construire d'une faction.
+///
+/// Une variante d'`enum` peut porter ses propres données, comme une petite
+/// structure : `WorkerConsumed { refund_percent: 75 }`. On les lit avec
+/// `match` (ou `matches!`), qui donne accès aux champs de la variante trouvée.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ConstructionStyle {
     /// L'ouvrier se rend sur le chantier et y reste jusqu'à la fin : la
-    /// construction n'avance que tant qu'il le touche.
+    /// construction n'avance que tant qu'il le touche. Un chantier annulé
+    /// est remboursé en entier.
     WorkerStays,
+    /// L'ouvrier se rend à l'emplacement et s'y transforme en chantier : il
+    /// disparaît, et le chantier pousse seul jusqu'au bout. Un chantier
+    /// annulé rend `refund_percent` % de son coût, et l'ouvrier.
+    WorkerConsumed { refund_percent: u32 },
+}
+
+impl ConstructionStyle {
+    /// L'ouvrier disparaît-il dans le bâtiment ?
+    pub fn consumes_worker(self) -> bool {
+        matches!(self, ConstructionStyle::WorkerConsumed { .. })
+    }
+
+    /// Ce que rend un chantier de coût `cost` quand on l'annule.
+    pub fn cancel_refund(self, cost: Cost) -> Cost {
+        match self {
+            ConstructionStyle::WorkerStays => cost,
+            ConstructionStyle::WorkerConsumed { refund_percent } => cost.percent(refund_percent),
+        }
+    }
 }
 
 /// Tous les types de bâtiments d'une faction, avec leurs maillages prêts.
@@ -210,7 +241,10 @@ impl BuildingCatalog {
             site_frames,
             pads,
             ring_material: units.ring_material(),
-            site_material: units.material(MaterialSlot::Hazard),
+            // Cadre de chantier : chevrons de danger pour un chantier
+            // d'ouvriers ; un simple anneau (de mousse, chez les Sylves) autour
+            // d'un bâtiment qui pousse seul.
+            site_material: units.material(if style.consumes_worker() { MaterialSlot::Steel } else { MaterialSlot::Hazard }),
             pole_mesh: meshes.add(Cylinder::new(0.07, 1.0)),
             pole_material: units.material(MaterialSlot::Dark),
             ghost_materials: [
@@ -345,7 +379,17 @@ impl BuildingCatalog {
                 NotShadowCaster,
                 Visibility::Hidden,
             ));
-            if progress.is_some() {
+            if progress.is_some() && self.style.consumes_worker() {
+                // Un bâtiment qui pousse seul n'a pas d'échafaudage : juste un
+                // anneau au sol qui marque l'empreinte pendant la croissance.
+                parent.spawn((
+                    SiteFrame,
+                    Mesh3d(self.site_frames[type_index].clone()),
+                    MeshMaterial3d(self.site_material.clone()),
+                    Transform::from_xyz(0.0, -height + 0.03, 0.0),
+                    NotShadowCaster,
+                ));
+            } else if progress.is_some() {
                 // Cadre de chantier rayé de chevrons, au sol autour de
                 // l'empreinte, et échafaudage à la hauteur du bâtiment fini :
                 // quatre poteaux d'angle et un cadre au niveau du toit. Vu de
@@ -378,7 +422,7 @@ impl BuildingCatalog {
             parent
                 .spawn((
                     Name::new("Corps"),
-                    BuildingBody { center_height: height, top: visual.top },
+                    BuildingBody { center_height: height, top: visual.top, grows: self.style.consumes_worker() },
                     Transform::from_xyz(0.0, -height, 0.0),
                     Visibility::default(),
                 ))
@@ -426,6 +470,27 @@ impl BuildingCatalog {
 
     pub(crate) fn ghost_material(&self, valid: bool) -> Handle<StandardMaterial> {
         self.ghost_materials[usize::from(!valid)].clone()
+    }
+
+    /// Rectangle au sol d'un emplacement promis.
+    pub fn plan_rect(&self, frame: GridFrame, plan: &PlannedSite) -> Rect {
+        frame.rect(plan.min_cell, self.types[plan.type_index].footprint)
+    }
+
+    /// Repère au sol d'un emplacement promis à l'ouvrier `worker` : un cadre
+    /// vert translucide à la taille du bâtiment (affichage seulement).
+    pub(crate) fn spawn_plan_marker(&self, commands: &mut Commands, worker: Entity, plan: PlannedSite, frame: GridFrame) -> Entity {
+        let center = self.plan_rect(frame, &plan).center();
+        commands
+            .spawn((
+                Name::new("Emplacement promis"),
+                PlannedMarker { worker, plan },
+                Mesh3d(self.site_frames[plan.type_index].clone()),
+                MeshMaterial3d(self.ghost_materials[0].clone()),
+                Transform::from_xyz(center.x, 0.04, center.y),
+                NotShadowCaster,
+            ))
+            .id()
     }
 }
 
@@ -501,11 +566,37 @@ pub struct ConstructionTask {
     pub sites: Vec<Entity>,
 }
 
-/// Le corps d'un bâtiment (ses pièces), qui monte du sol pendant la construction.
+/// Style « ouvrier consommé » : l'emplacement promis à un ouvrier en route.
+/// Le coût est déjà payé (`paid`) ; si l'ouvrier reçoit un autre ordre avant
+/// d'arriver, il est remboursé en entier et la promesse disparaît.
+#[derive(Component, Debug, Clone, Copy, PartialEq)]
+pub struct PlannedSite {
+    pub type_index: usize,
+    pub min_cell: IVec2,
+    pub paid: Cost,
+}
+
+/// Style « ouvrier consommé » : le type de l'ouvrier devenu ce chantier,
+/// qui ressort de terre si le chantier est annulé.
+#[derive(Component, Debug, Clone, Copy)]
+pub struct RootedWorker {
+    pub unit_type: usize,
+}
+
+/// Repère au sol d'un emplacement promis (affichage seulement).
+#[derive(Component, Debug, Clone, Copy)]
+pub(crate) struct PlannedMarker {
+    pub(crate) worker: Entity,
+    pub(crate) plan: PlannedSite,
+}
+
+/// Le corps d'un bâtiment (ses pièces), qui monte du sol pendant la
+/// construction, ou qui grandit (`grows`) s'il pousse seul.
 #[derive(Component, Debug, Clone, Copy)]
 pub(crate) struct BuildingBody {
     center_height: f32,
     top: f32,
+    grows: bool,
 }
 
 /// Le cadre rayé d'un chantier, retiré à la fin de la construction.
@@ -541,7 +632,7 @@ impl Plugin for BuildingsPlugin {
                 (
                     // Après les déplacements : un ordre de pose donné juste
                     // après un ordre de marche l'emporte.
-                    (apply_build_orders, drive_builders)
+                    (apply_build_orders, drive_builders, root_planned_sites)
                         .chain()
                         .in_set(SimSet::Orders)
                         .after(crate::orders::apply_unit_orders),
@@ -554,6 +645,7 @@ impl Plugin for BuildingsPlugin {
                     placement::handle_build_actions,
                     placement::update_pointer_ghost,
                     placement::refresh_ghosts,
+                    ui::show_planned_sites,
                     ui::update_command_bar,
                     ui::raise_buildings,
                     ui::update_progress_bars,
@@ -585,25 +677,33 @@ pub fn completed_types<'a>(
 }
 
 /// Applique les ordres de pose du pas : vérifie l'emplacement et les
-/// prérequis du joueur, crée le chantier et le confie à l'ouvrier le plus proche.
+/// prérequis du joueur, puis, selon le style de construction, crée le
+/// chantier et le confie à l'ouvrier le plus proche (`WorkerStays`), ou
+/// promet l'emplacement à l'ouvrier libre le plus proche, qui s'y rendra
+/// (`WorkerConsumed`, voir [`root_planned_sites`]).
 pub(crate) fn apply_build_orders(
     mut commands: Commands,
     tick: Res<TickCommands>,
     catalog: Option<Res<BuildingCatalog>>,
     grid: Option<Res<NavGrid>>,
     buildings: Query<(&Building, &Owner, Has<UnderConstruction>)>,
-    mut builders: Query<(Entity, &Owner, &SimPosition, Option<&mut ConstructionTask>), With<Unit>>,
+    mut builders: Query<(Entity, &Owner, &SimPosition, Option<&mut ConstructionTask>, Has<PlannedSite>), With<Unit>>,
+    plans: Query<&PlannedSite>,
     mut nodes: Query<(Entity, &mut ResourceNode, &Footprint)>,
     mut players: ResMut<Players>,
     mut notices: MessageWriter<Notice>,
 ) {
     // Pas encore de grille (tout premier pas) ou pas de bâtiments dans ce jeu.
     let (Some(grid), Some(catalog)) = (grid, catalog) else { return };
+    let consumes = catalog.style.consumes_worker();
     // Chantiers posés pendant ce pas : la grille ne les connaîtra qu'au
     // prochain, il faut donc aussi vérifier qu'ils ne se chevauchent pas.
-    let mut placed: Vec<Rect> = Vec::new();
+    // On y ajoute les emplacements déjà promis à un ouvrier en route.
+    let mut placed: Vec<Rect> = plans.iter().map(|plan| catalog.plan_rect(grid.frame(), plan)).collect();
     // Ouvriers qui ont reçu un chantier pendant ce pas (pour l'équité).
     let mut assigned: Vec<(Entity, Vec<Entity>)> = Vec::new();
+    // Ouvriers qui ont reçu un emplacement promis pendant ce pas.
+    let mut promised: Vec<Entity> = Vec::new();
 
     for issued in &tick.0 {
         let PlayerCommand::Build { type_index, min_cell, builders: ordered } = &issued.command else { continue };
@@ -627,21 +727,41 @@ pub(crate) fn apply_build_orders(
         let mut candidates: Vec<(bool, f32, Entity)> = mine
             .iter()
             .filter_map(|&e| builders.get(e).ok())
-            .map(|(entity, _, position, task)| {
-                let busy = task.is_some_and(|t| !t.sites.is_empty()) || assigned.iter().any(|(b, _)| *b == entity);
+            .map(|(entity, _, position, task, planned)| {
+                let busy = task.is_some_and(|t| !t.sites.is_empty())
+                    || planned
+                    || assigned.iter().any(|(b, _)| *b == entity)
+                    || promised.contains(&entity);
                 (busy, position.current.distance(rect.center()), entity)
             })
             .collect();
         candidates.sort_by(|a, b| a.0.cmp(&b.0).then(a.1.total_cmp(&b.1)).then(a.2.cmp(&b.2)));
-        let Some(&(_, _, builder)) = candidates.first() else { continue };
+        // Un ouvrier consommé ne fait qu'un bâtiment : seuls les libres comptent.
+        let Some(&(_, _, builder)) = candidates.iter().find(|c| !consumes || !c.0) else {
+            if consumes {
+                notices.write(Notice { player, kind: NoticeKind::NoWorker });
+            }
+            continue;
+        };
         // Le coût est débité à la pose (remboursé si le chantier est annulé).
         if !players.get_mut(player).stock.try_pay(building.cost) {
             notices.write(Notice { player, kind: NoticeKind::NotEnoughResources });
             continue;
         }
+        placed.push(rect);
+
+        if consumes {
+            // L'emplacement est promis ; l'ouvrier lâche ce qu'il faisait et
+            // s'y rendra (voir `root_planned_sites`).
+            commands
+                .entity(builder)
+                .insert(PlannedSite { type_index, min_cell, paid: building.cost })
+                .remove::<(Harvesting, ConstructionTask, MoveTarget, NavPath, MoveGroup)>();
+            promised.push(builder);
+            continue;
+        }
 
         let site = catalog.spawn(&mut commands, grid.frame(), player, type_index, min_cell, Some(0.0));
-        placed.push(rect);
         // Le bâtiment d'extraction se réserve sa source.
         if let Some(source) = source
             && let Ok((_, mut node, _)) = nodes.get_mut(source)
@@ -654,13 +774,93 @@ pub(crate) fn apply_build_orders(
         }
     }
     for (builder, sites) in assigned {
-        let Ok((_, _, _, task)) = builders.get_mut(builder) else { continue };
+        let Ok((_, _, _, task, _)) = builders.get_mut(builder) else { continue };
         // Un ouvrier envoyé construire abandonne sa récolte.
         commands.entity(builder).remove::<Harvesting>();
         match task {
             Some(mut task) => task.sites.extend(sites),
             None => {
                 commands.entity(builder).insert(ConstructionTask { sites });
+            }
+        }
+    }
+}
+
+/// Rembourse au joueur `player` l'emplacement promis `plan`, abandonné
+/// parce que l'ouvrier a reçu un autre ordre (déplacement, récolte).
+pub(crate) fn refund_plan(players: &mut Players, player: PlayerId, plan: &PlannedSite) {
+    players.get_mut(player).stock += plan.paid;
+}
+
+/// Style « ouvrier consommé » : mène chaque ouvrier à son emplacement promis.
+/// Arrivé, il s'enracine : il disparaît (sa population est libérée), et le
+/// chantier apparaît à sa place, qui poussera seul. Si l'emplacement n'est
+/// plus libre entre-temps (un autre bâtiment s'y est posé), la promesse est
+/// remboursée et l'ouvrier s'arrête.
+///
+/// Arrivée : au centre de l'emplacement (à 60 cm près), ou arrêté en le
+/// touchant (bousculé par d'autres) ; au bord, pour un bâtiment d'extraction,
+/// dont la source est un obstacle.
+fn root_planned_sites(
+    mut commands: Commands,
+    catalog: Option<Res<BuildingCatalog>>,
+    grid: Option<Res<NavGrid>>,
+    buildings: Query<(&Building, &Owner, Has<UnderConstruction>)>,
+    mut nodes: Query<(Entity, &mut ResourceNode, &Footprint)>,
+    workers: Query<(Entity, &Owner, &Unit, &SimPosition, &Collider, &PlannedSite, Has<MoveTarget>)>,
+    mut players: ResMut<Players>,
+    mut notices: MessageWriter<Notice>,
+) {
+    let (Some(catalog), Some(grid)) = (catalog, grid) else { return };
+    let frame = grid.frame();
+    // Ordre fixe : le plus petit identifiant d'abord.
+    let mut order: Vec<Entity> = workers.iter().map(|w| w.0).collect();
+    order.sort_unstable();
+    // Chantiers apparus pendant ce pas (la grille ne les connaît pas encore).
+    let mut placed: Vec<Rect> = Vec::new();
+
+    for entity in order {
+        let Ok((_, owner, unit, position, collider, plan, moving)) = workers.get(entity) else { continue };
+        let Some(building) = catalog.types.get(plan.type_index) else { continue };
+        let rect = catalog.plan_rect(frame, plan);
+        let (pos, radius) = (position.current, collider.radius);
+        let on_source = matches!(building.placement, PlacementRule::OnResource(_));
+        let arrived = if on_source {
+            distance_to_rect(pos, rect) <= radius + if moving { CONTACT_MARGIN } else { 0.75 }
+        } else {
+            pos.distance(rect.center()) <= 0.6 || (!moving && distance_to_rect(pos, rect) <= radius + CONTACT_MARGIN)
+        };
+        if !arrived {
+            // Ni arrivé, ni en route (bousculé, arrêté ailleurs) : on y va.
+            if !moving {
+                let goal = if on_source { approach_point(&grid, pos, radius, rect) } else { rect.center() };
+                commands.entity(entity).insert(MoveTarget(goal));
+            }
+            continue;
+        }
+        // On revérifie l'emplacement et les prérequis au moment de s'enraciner.
+        let player = owner.0;
+        let completed = completed_types(&catalog, player, buildings.iter());
+        let overlaps = placed.iter().any(|p| !p.intersect(rect).is_empty());
+        match (catalog.check_placement(plan.type_index, plan.min_cell, &grid, &completed, nodes.iter()), overlaps) {
+            (Ok(source), false) => {
+                // `despawn` retire l'ouvrier du monde (et ses enfants : son
+                // modèle, son anneau de sélection).
+                commands.entity(entity).despawn();
+                let site = catalog.spawn(&mut commands, frame, player, plan.type_index, plan.min_cell, Some(0.0));
+                commands.entity(site).insert(RootedWorker { unit_type: unit.type_index });
+                placed.push(rect);
+                if let Some(source) = source
+                    && let Ok((_, mut node, _)) = nodes.get_mut(source)
+                {
+                    node.extractor = Some(site);
+                }
+            }
+            (result, _) => {
+                info!("Enracinement impossible : {} en {}", building.name, plan.min_cell);
+                refund_plan(&mut players, player, plan);
+                notices.write(Notice { player, kind: result.err().unwrap_or(NoticeKind::Blocked) });
+                commands.entity(entity).remove::<(PlannedSite, MoveTarget, NavPath, MoveGroup)>();
             }
         }
     }
@@ -741,7 +941,8 @@ fn drive_builders(
     }
 }
 
-/// Fait avancer les chantiers dont l'ouvrier est au contact.
+/// Fait avancer les chantiers dont l'ouvrier est au contact (ou tous, pour
+/// un style où le bâtiment pousse seul).
 fn progress_construction(
     mut commands: Commands,
     time: Res<Time>,
@@ -750,15 +951,20 @@ fn progress_construction(
     builders: Query<(&SimPosition, &Collider, &ConstructionTask)>,
 ) {
     let Some(catalog) = catalog else { return };
-    // Chantiers sur lesquels un ouvrier travaille : son premier chantier, au contact.
-    let mut worked: Vec<Entity> = builders
-        .iter()
-        .filter_map(|(position, collider, task)| {
-            let site = *task.sites.first()?;
-            let (_, _, obstacle, ..) = sites.get(site).ok()?;
-            (distance_to_rect(position.current, obstacle.0) <= collider.radius + CONTACT_MARGIN).then_some(site)
-        })
-        .collect();
+    let mut worked: Vec<Entity> = if catalog.style.consumes_worker() {
+        // Les bâtiments qui poussent seuls avancent tous, sans ouvrier.
+        sites.iter().map(|(entity, ..)| entity).collect()
+    } else {
+        // Chantiers sur lesquels un ouvrier travaille : son premier chantier, au contact.
+        builders
+            .iter()
+            .filter_map(|(position, collider, task)| {
+                let site = *task.sites.first()?;
+                let (_, _, obstacle, ..) = sites.get(site).ok()?;
+                (distance_to_rect(position.current, obstacle.0) <= collider.radius + CONTACT_MARGIN).then_some(site)
+            })
+            .collect()
+    };
     worked.sort_unstable();
     worked.dedup();
     let dt = time.delta_secs();
@@ -805,6 +1011,11 @@ mod tests {
     /// Une simulation sans fenêtre : un ouvrier, un catalogue d'un seul
     /// bâtiment de 3 × 3 cases qui se construit en 2 s.
     fn app() -> (App, Entity) {
+        app_with(ConstructionStyle::WorkerStays, Cost::default())
+    }
+
+    /// Comme [`app`], avec un style de construction et un coût d'abri au choix.
+    fn app_with(style: ConstructionStyle, cost: Cost) -> (App, Entity) {
         let mut app = App::new();
         app.add_plugins(MinimalPlugins)
             .add_message::<GameAction>()
@@ -814,13 +1025,17 @@ mod tests {
             // Chaque `update` avance le temps d'exactement un pas de simulation.
             .insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_secs_f64(1.0 / 32.0)));
         let (mut meshes, mut materials, mut images) = (Assets::default(), Assets::default(), Assets::default());
-        let units = UnitCatalog::new(Vec::new(), &palette(), &mut meshes, &mut materials, &mut images);
+        // Un type d'unité (l'ouvrier, sans pièces) : il ressort de terre
+        // quand on annule un chantier dans lequel il s'est enraciné.
+        let worker_type =
+            crate::units::UnitType { name: "Ouvrier".into(), parts: Vec::new(), footprint_radius: 0.6, mass: 1.0, speed: 4.0, hover: None };
+        let units = UnitCatalog::new(vec![worker_type], &palette(), &mut meshes, &mut materials, &mut images);
         let building = BuildingType {
             name: "Abri".into(),
             footprint: UVec2::new(3, 3),
             max_health: 100.0,
             build_time: 2.0,
-            cost: Cost::default(),
+            cost,
             requires: Vec::new(),
             hotkey: 'a',
             ..default()
@@ -833,8 +1048,17 @@ mod tests {
             ..building.clone()
         };
         let catalog =
-            BuildingCatalog::new(vec![building, extractor], vec![0], ConstructionStyle::WorkerStays, &units, &mut meshes, &mut materials);
-        app.insert_resource(catalog);
+            BuildingCatalog::new(vec![building, extractor], vec![0], style, &units, &mut meshes, &mut materials);
+        app.insert_resource(catalog).insert_resource(units).insert_resource(crate::economy::EconomyRules {
+            resources: [
+                crate::economy::ResourceInfo { name: "P".into(), color: Color::WHITE },
+                crate::economy::ResourceInfo { name: "R".into(), color: Color::WHITE },
+            ],
+            harvesters: vec![0],
+            carry: [5, 4],
+            gather_time: [2.0, 1.5],
+            units: Vec::new(),
+        });
         let worker = app
             .world_mut()
             .spawn((
@@ -843,6 +1067,7 @@ mod tests {
                 SimPosition::new(Vec2::new(-10.0, 0.0)),
                 MoveSpeed(4.0),
                 Collider { radius: 0.6, mass: 1.0, layer: CollisionLayer::Ground },
+                Selectable { radius: 0.8, half_extents: None },
             ))
             .id();
         // Quelques pas : la grille de navigation est créée au premier.
@@ -923,5 +1148,143 @@ mod tests {
         let world = app.world_mut();
         let count = world.query::<&Building>().iter(world).count();
         assert_eq!(count, 1, "le second chantier chevauchait le premier");
+    }
+
+    // --- Style « ouvrier consommé » (les Sylves) -------------------------
+
+    const GROWS: ConstructionStyle = ConstructionStyle::WorkerConsumed { refund_percent: 75 };
+    const ABRI_COST: Cost = Cost::new(100, 20);
+
+    fn stock(app: &App) -> Cost {
+        app.world().resource::<Players>().get(PlayerId(0)).stock
+    }
+
+    fn set_stock(app: &mut App, stock: Cost) {
+        app.world_mut().resource_mut::<Players>().get_mut(PlayerId(0)).stock = stock;
+    }
+
+    fn notices(app: &App) -> Vec<NoticeKind> {
+        app.world().resource::<Messages<Notice>>().iter_current_update_messages().map(|n| n.kind).collect()
+    }
+
+    fn run(app: &mut App, seconds: f32) {
+        for _ in 0..(seconds * 32.0) as usize {
+            app.update();
+        }
+    }
+
+    fn count<F: bevy::ecs::query::QueryFilter>(app: &mut App) -> usize {
+        let world = app.world_mut();
+        world.query_filtered::<(), F>().iter(world).count()
+    }
+
+    #[test]
+    fn consumed_worker_roots_and_the_site_grows_alone() {
+        let (mut app, worker) = app_with(GROWS, ABRI_COST);
+        set_stock(&mut app, Cost::new(150, 50));
+        build(&mut app, IVec2::new(55, 49), worker);
+        app.update();
+        // Payé à la pose ; l'emplacement est promis, rien n'est encore posé.
+        assert_eq!(stock(&app), Cost::new(50, 30));
+        assert!(app.world().get::<PlannedSite>(worker).is_some());
+        assert_eq!(count::<With<Building>>(&mut app), 0, "pas de chantier avant l'arrivée");
+        // 15 m de marche à 4 m/s : l'ouvrier arrive et disparaît dans le chantier.
+        run(&mut app, 5.0);
+        assert!(app.world().get_entity(worker).is_err(), "l'ouvrier est consommé");
+        assert_eq!(count::<With<Unit>>(&mut app), 0);
+        assert_eq!(count::<(With<UnderConstruction>, With<RootedWorker>)>(&mut app), 1);
+        // Sans personne pour s'en occuper, il pousse jusqu'au bout (2 s).
+        run(&mut app, 2.5);
+        let world = app.world_mut();
+        let (health, under_construction) = world.query::<(&Health, Has<UnderConstruction>)>().single(world).unwrap();
+        assert!(!under_construction, "le bâtiment devrait être terminé");
+        assert_eq!(health.current, health.max);
+        // Posé au centre de l'emplacement promis : c'est un obstacle.
+        assert!(app.world().resource::<NavGrid>().is_blocked(IVec2::new(56, 50)));
+        assert_eq!(stock(&app), Cost::new(50, 30), "rien de remboursé");
+    }
+
+    #[test]
+    fn cancelling_a_growing_site_refunds_part_and_returns_the_worker() {
+        let (mut app, worker) = app_with(GROWS, ABRI_COST);
+        set_stock(&mut app, ABRI_COST);
+        build(&mut app, IVec2::new(55, 49), worker);
+        run(&mut app, 5.0);
+        let site = {
+            let world = app.world_mut();
+            world.query_filtered::<Entity, With<UnderConstruction>>().single(world).unwrap()
+        };
+        app.world_mut().resource_mut::<CommandQueue>().push(PlayerId(0), PlayerCommand::CancelConstruction { building: site });
+        app.update();
+        assert!(app.world().get_entity(site).is_err(), "le chantier a disparu");
+        // 75 % de 100 + 20 (arrondi en dessous).
+        assert_eq!(stock(&app), Cost::new(75, 15));
+        // L'ouvrier ressort de terre, au bord de l'ancien chantier.
+        let world = app.world_mut();
+        let position = world.query_filtered::<&SimPosition, With<Unit>>().single(world).expect("l'ouvrier revient").current;
+        let rect = app.world().resource::<NavGrid>().frame().rect(IVec2::new(55, 49), UVec2::new(3, 3));
+        assert!(distance_to_rect(position, rect) < 1.5, "ouvrier rendu à {position}");
+    }
+
+    #[test]
+    fn consumed_build_is_refused_without_a_free_worker_or_resources() {
+        let (mut app, worker) = app_with(GROWS, ABRI_COST);
+        set_stock(&mut app, Cost::new(150, 30));
+        // Aucun ouvrier dans l'ordre : refusé, rien de payé.
+        app.world_mut()
+            .resource_mut::<CommandQueue>()
+            .push(PlayerId(0), PlayerCommand::Build { type_index: 0, min_cell: IVec2::new(55, 49), builders: vec![] });
+        app.update();
+        assert_eq!(notices(&app), vec![NoticeKind::NoWorker]);
+        assert_eq!(stock(&app), Cost::new(150, 30));
+        // Un premier emplacement promis : accepté.
+        build(&mut app, IVec2::new(55, 49), worker);
+        app.update();
+        assert_eq!(stock(&app), Cost::new(50, 10));
+        // Le même ouvrier, déjà promis ailleurs : refusé (un seul bâtiment par ouvrier).
+        set_stock(&mut app, Cost::new(500, 500));
+        build(&mut app, IVec2::new(40, 40), worker);
+        app.update();
+        assert_eq!(notices(&app), vec![NoticeKind::NoWorker]);
+        assert_eq!(stock(&app), Cost::new(500, 500));
+        // Un ouvrier disparu ne construit rien non plus.
+        let gone = app.world_mut().spawn((Unit { type_index: 0 }, Owner(PlayerId(0)), SimPosition::new(Vec2::ZERO))).id();
+        app.world_mut().despawn(gone);
+        build(&mut app, IVec2::new(40, 40), gone);
+        app.update();
+        assert_eq!(notices(&app), vec![NoticeKind::NoWorker]);
+        // Ressources insuffisantes : refusé, l'ouvrier libre n'a rien reçu.
+        let other = app
+            .world_mut()
+            .spawn((
+                Unit { type_index: 0 },
+                Owner(PlayerId(0)),
+                SimPosition::new(Vec2::new(-10.0, 5.0)),
+                MoveSpeed(4.0),
+                Collider { radius: 0.6, mass: 1.0, layer: CollisionLayer::Ground },
+            ))
+            .id();
+        set_stock(&mut app, Cost::new(99, 50));
+        build(&mut app, IVec2::new(40, 40), other);
+        app.update();
+        assert_eq!(notices(&app), vec![NoticeKind::NotEnoughResources]);
+        assert!(app.world().get::<PlannedSite>(other).is_none());
+        assert_eq!(stock(&app), Cost::new(99, 50));
+    }
+
+    #[test]
+    fn another_order_cancels_the_promise_and_refunds_it() {
+        let (mut app, worker) = app_with(GROWS, ABRI_COST);
+        set_stock(&mut app, ABRI_COST);
+        build(&mut app, IVec2::new(55, 49), worker);
+        run(&mut app, 0.5);
+        assert_eq!(stock(&app), Cost::default());
+        app.world_mut()
+            .resource_mut::<CommandQueue>()
+            .push(PlayerId(0), PlayerCommand::Move { units: vec![worker], target: Vec2::new(-20.0, 0.0) });
+        run(&mut app, 5.0);
+        assert_eq!(stock(&app), ABRI_COST, "remboursé en entier");
+        assert!(app.world().get::<PlannedSite>(worker).is_none());
+        assert_eq!(count::<With<Building>>(&mut app), 0);
     }
 }

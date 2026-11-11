@@ -21,7 +21,7 @@ use bevy::prelude::*;
 
 use super::harvest::{HarvestPhase, Harvesting};
 use super::{Cost, EconomyRules, Notice, NoticeKind, ResourceNode};
-use crate::buildings::{approach_point, completed_types, Building, BuildingCatalog, UnderConstruction};
+use crate::buildings::{approach_point, completed_types, Building, BuildingCatalog, RootedWorker, UnderConstruction};
 use crate::collision::StaticObstacle;
 use crate::navigation::NavGrid;
 use crate::orders::{PlayerCommand, TickCommands};
@@ -142,7 +142,9 @@ pub(crate) fn apply_production_orders(
     mut players: ResMut<Players>,
     all_buildings: Query<(&Building, &Owner, Has<UnderConstruction>)>,
     mut producers: Query<(&Building, &Owner, &mut ProductionQueue), Without<UnderConstruction>>,
-    sites: Query<(&Building, &Owner), With<UnderConstruction>>,
+    sites: Query<(&Building, &Owner, &StaticObstacle, Option<&RootedWorker>), With<UnderConstruction>>,
+    units: Option<Res<UnitCatalog>>,
+    grid: Option<Res<NavGrid>>,
     mut notices: MessageWriter<Notice>,
 ) {
     let (Some(rules), Some(catalog)) = (rules, catalog) else { return };
@@ -197,12 +199,23 @@ pub(crate) fn apply_production_orders(
                 }
             }
             PlayerCommand::CancelConstruction { building } => {
-                let Ok((kind, owner)) = sites.get(*building) else { continue };
+                let Ok((kind, owner, obstacle, rooted)) = sites.get(*building) else { continue };
                 if owner.0 != player {
                     continue;
                 }
-                // Remboursement complet (valeur proposée : à revoir avec le combat).
-                players.get_mut(player).stock += catalog.types[kind.type_index].cost;
+                // Le style de construction décide du remboursement : complet
+                // quand l'ouvrier est resté dehors, partiel quand il est
+                // devenu le bâtiment (valeurs proposées, à revoir avec le combat).
+                players.get_mut(player).stock += catalog.style.cancel_refund(catalog.types[kind.type_index].cost);
+                // L'ouvrier devenu ce chantier ressort de terre, devant lui.
+                if let (Some(rooted), Some(units), Some(grid)) = (rooted, units.as_deref(), grid.as_deref())
+                    && let Some(unit) = units.types.get(rooted.unit_type)
+                {
+                    let rect = obstacle.0;
+                    let front = rect.center() + Vec2::new(0.0, rect.half_size().y + 1.0);
+                    let exit = approach_point(grid, front, unit.footprint_radius, rect);
+                    units.spawn_owned(&mut commands, player, rooted.unit_type, exit, std::f32::consts::PI);
+                }
                 commands.entity(*building).despawn();
             }
             _ => {}

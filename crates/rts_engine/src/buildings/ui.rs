@@ -8,11 +8,12 @@
 use bevy::prelude::*;
 use bevy::text::{FontSource, GenericFontFamily};
 
-use super::{completed_types, Building, BuildingBody, BuildingCatalog, SiteFrame, UnderConstruction};
+use super::{completed_types, Building, BuildingBody, BuildingCatalog, PlannedMarker, PlannedSite, SiteFrame, UnderConstruction};
 use super::placement::Placement;
 use crate::camera::RtsCamera;
 use crate::economy::ui::format_cost;
 use crate::economy::EconomyRules;
+use crate::navigation::NavGrid;
 use crate::input::{ActionButton, BlocksPointer, GameAction, Hotkey, InputContext};
 use crate::players::{LocalPlayer, Owner};
 use crate::selection::Selected;
@@ -189,7 +190,8 @@ fn spawn_command_bar(commands: &mut Commands, catalog: &BuildingCatalog, rules: 
 
 /// Pendant la construction, le bâtiment monte du sol : son corps est
 /// enfoncé de ce qui reste à construire (le sol cache la partie enterrée).
-/// À la fin, le cadre rayé du chantier disparaît.
+/// Un bâtiment qui pousse seul, lui, grandit : il part du cinquième de sa
+/// taille. À la fin, le cadre du chantier disparaît.
 pub(crate) fn raise_buildings(
     mut commands: Commands,
     buildings: Query<(Option<&UnderConstruction>, &Children), With<Building>>,
@@ -199,16 +201,51 @@ pub(crate) fn raise_buildings(
     for (construction, children) in &buildings {
         for child in children.iter() {
             if let Ok((body, mut transform)) = bodies.get_mut(child) {
-                // On montre au moins 15 % du bâtiment dès la pose (les fondations).
-                let shown = construction.map_or(1.0, |c| 0.15 + 0.85 * c.progress);
-                let y = -body.center_height - (1.0 - shown) * body.top;
-                if transform.translation.y != y {
-                    transform.translation.y = y;
+                let progress = construction.map_or(1.0, |c| c.progress);
+                if body.grows {
+                    // L'échelle part du sol (l'origine du corps y est) : la
+                    // pousse s'élargit et monte en même temps.
+                    let scale = Vec3::splat(0.2 + 0.8 * progress);
+                    if transform.scale != scale {
+                        transform.scale = scale;
+                    }
+                } else {
+                    // On montre au moins 15 % du bâtiment dès la pose (les fondations).
+                    let shown = 0.15 + 0.85 * progress;
+                    let y = -body.center_height - (1.0 - shown) * body.top;
+                    if transform.translation.y != y {
+                        transform.translation.y = y;
+                    }
                 }
             }
             if construction.is_none() && frames.contains(child) {
                 commands.entity(child).despawn();
             }
+        }
+    }
+}
+
+/// Repères au sol des emplacements promis aux ouvriers du joueur local en
+/// route pour s'y enraciner (style « ouvrier consommé ») : un par promesse,
+/// retiré quand l'ouvrier arrive, change d'ordre ou disparaît.
+pub(crate) fn show_planned_sites(
+    mut commands: Commands,
+    catalog: Option<Res<BuildingCatalog>>,
+    grid: Option<Res<NavGrid>>,
+    local: Res<LocalPlayer>,
+    plans: Query<(Entity, &PlannedSite, &Owner)>,
+    markers: Query<(Entity, &PlannedMarker)>,
+) {
+    let (Some(catalog), Some(grid)) = (catalog, grid) else { return };
+    for (entity, marker) in &markers {
+        if !plans.get(marker.worker).is_ok_and(|(_, plan, _)| *plan == marker.plan) {
+            commands.entity(entity).despawn();
+        }
+    }
+    for (worker, plan, owner) in &plans {
+        let shown = markers.iter().any(|(_, m)| m.worker == worker && m.plan == *plan);
+        if owner.0 == local.0 && !shown {
+            catalog.spawn_plan_marker(&mut commands, worker, *plan, grid.frame());
         }
     }
 }

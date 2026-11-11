@@ -29,7 +29,8 @@ use bevy::prelude::*;
 
 use super::{EconomyRules, ResourceKind, ResourceNode};
 use crate::buildings::{
-    approach_point, distance_to_rect, Building, BuildingCatalog, ConstructionTask, UnderConstruction, CONTACT_MARGIN,
+    approach_point, distance_to_rect, refund_plan, Building, BuildingCatalog, ConstructionTask, PlannedSite, UnderConstruction,
+    CONTACT_MARGIN,
 };
 use crate::collision::{Collider, StaticObstacle};
 use crate::graphics::shapes::merge_parts;
@@ -97,15 +98,20 @@ pub(crate) fn apply_harvest_orders(
     tick: Res<TickCommands>,
     rules: Option<Res<EconomyRules>>,
     nodes: Query<(&ResourceNode, &StaticObstacle)>,
-    workers: Query<(&Owner, &Unit, Option<&Harvesting>)>,
+    workers: Query<(&Owner, &Unit, Option<&Harvesting>, Option<&PlannedSite>)>,
+    mut players: ResMut<Players>,
 ) {
     let Some(rules) = rules else { return };
     for issued in &tick.0 {
         let PlayerCommand::Harvest { units, node } = &issued.command else { continue };
         let Ok((resource, obstacle)) = nodes.get(*node) else { continue };
-        let owner = |e: Entity| workers.get(e).ok().filter(|(_, unit, _)| rules.harvesters.contains(&unit.type_index)).map(|(o, ..)| *o);
+        let owner = |e: Entity| workers.get(e).ok().filter(|(_, unit, ..)| rules.harvesters.contains(&unit.type_index)).map(|(o, ..)| *o);
         for worker in owned_units(units, issued.player, owner) {
-            let carrying = workers.get(worker).ok().and_then(|(.., h)| h.and_then(|h| h.carrying));
+            let carrying = workers.get(worker).ok().and_then(|(_, _, h, _)| h.and_then(|h| h.carrying));
+            // Un ouvrier qui allait s'enraciner abandonne son emplacement promis : remboursé.
+            if let Ok((.., Some(plan))) = workers.get(worker) {
+                refund_plan(&mut players, issued.player, plan);
+            }
             commands
                 .entity(worker)
                 .insert(Harvesting {
@@ -116,7 +122,7 @@ pub(crate) fn apply_harvest_orders(
                     phase: if carrying.is_some() { HarvestPhase::Returning } else { HarvestPhase::ToNode },
                     carrying,
                 })
-                .remove::<(ConstructionTask, MoveTarget, NavPath, MoveGroup)>();
+                .remove::<(ConstructionTask, PlannedSite, MoveTarget, NavPath, MoveGroup)>();
         }
     }
 }

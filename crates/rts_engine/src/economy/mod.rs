@@ -89,6 +89,11 @@ impl Cost {
         self.primary >= cost.primary && self.rare >= cost.rare
     }
 
+    /// `percent` % de ce coût, arrondi à l'unité inférieure (remboursements).
+    pub fn percent(self, percent: u32) -> Cost {
+        Cost::new(self.primary * percent / 100, self.rare * percent / 100)
+    }
+
     /// Paie `cost` si le stock suffit (et renvoie vrai) ; sinon ne touche à rien.
     pub fn try_pay(&mut self, cost: Cost) -> bool {
         if !self.covers(cost) {
@@ -241,6 +246,9 @@ pub enum NoticeKind {
     QueueFull,
     MissingRequirement,
     Blocked,
+    /// Aucun ouvrier libre parmi la sélection (style « ouvrier consommé » :
+    /// chacun ne fait qu'un bâtiment).
+    NoWorker,
 }
 
 impl NoticeKind {
@@ -253,6 +261,7 @@ impl NoticeKind {
             NoticeKind::QueueFull => "File de production pleine",
             NoticeKind::MissingRequirement => "Prérequis manquant",
             NoticeKind::Blocked => "Emplacement occupé",
+            NoticeKind::NoWorker => "Aucun ouvrier libre",
         }
     }
 }

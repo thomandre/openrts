@@ -25,10 +25,10 @@
 
 use bevy::prelude::*;
 
-use crate::buildings::ConstructionTask;
+use crate::buildings::{refund_plan, ConstructionTask, PlannedSite};
 use crate::economy::harvest::Harvesting;
 use crate::navigation::MoveGroupCounter;
-use crate::players::{Owner, PlayerId};
+use crate::players::{Owner, PlayerId, Players};
 use crate::selection::{formation, Selectable};
 use crate::simulation::{MoveSpeed, MoveTarget, SimSet};
 
@@ -112,21 +112,27 @@ pub(crate) fn owned_units(units: &[Entity], player: PlayerId, owner: impl Fn(Ent
 /// Applique les ordres de déplacement.
 ///
 /// Un ordre donné à la main remplace ce que faisait l'unité : elle quitte son
-/// chantier ([`ConstructionTask`]) et sa récolte ([`Harvesting`]). Les ordres
+/// chantier ([`ConstructionTask`]), son emplacement promis ([`PlannedSite`],
+/// remboursé) et sa récolte ([`Harvesting`]). Les ordres
 /// de récolte sont appliqués par `economy::harvest`.
 pub(crate) fn apply_unit_orders(
     mut commands: Commands,
     tick: Res<TickCommands>,
     mut groups: ResMut<MoveGroupCounter>,
-    units: Query<(&Owner, &Selectable), With<MoveSpeed>>,
+    mut players: ResMut<Players>,
+    units: Query<(&Owner, &Selectable, Option<&PlannedSite>), With<MoveSpeed>>,
 ) {
     for issued in &tick.0 {
         let PlayerCommand::Move { units: ordered, target } = &issued.command else { continue };
-        let movers = owned_units(ordered, issued.player, |e| units.get(e).ok().map(|(o, _)| *o));
+        let movers = owned_units(ordered, issued.player, |e| units.get(e).ok().map(|(o, ..)| *o));
         if movers.is_empty() {
             continue;
         }
-        let radii: Vec<f32> = movers.iter().filter_map(|&e| units.get(e).ok()).map(|(_, s)| s.radius).collect();
+        let radii: Vec<f32> = movers.iter().filter_map(|&e| units.get(e).ok()).map(|(_, s, _)| s.radius).collect();
+        // Un ouvrier qui allait s'enraciner abandonne son emplacement promis : remboursé.
+        for plan in movers.iter().filter_map(|&e| units.get(e).ok().and_then(|(.., plan)| plan)) {
+            refund_plan(&mut players, issued.player, plan);
+        }
         // Un numéro de groupe commun : les unités de l'ordre partagent leur
         // recherche de chemin (voir `navigation`).
         let group = groups.next_group();
@@ -134,7 +140,7 @@ pub(crate) fn apply_unit_orders(
             commands
                 .entity(entity)
                 .insert((MoveTarget(slot), group))
-                .remove::<(ConstructionTask, Harvesting)>();
+                .remove::<(ConstructionTask, PlannedSite, Harvesting)>();
         }
     }
 }
@@ -149,7 +155,7 @@ mod tests {
     fn app() -> App {
         let mut app = App::new();
         app.add_plugins(MinimalPlugins)
-            .add_plugins((SimulationPlugin, OrdersPlugin))
+            .add_plugins((SimulationPlugin, crate::players::PlayersPlugin, OrdersPlugin))
             .insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_secs_f64(1.0 / 32.0)));
         app.update();
         app
