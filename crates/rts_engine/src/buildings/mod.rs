@@ -20,6 +20,15 @@
 //!   l'ouvrier s'y rend, et à l'arrivée il disparaît (sa population est
 //!   libérée) pour laisser place au chantier, qui pousse ensuite tout seul.
 //!   Annulé, le chantier rend une part du coût et l'ouvrier ressort de terre.
+//! - **sertissage à distance** (`RemoteAnchor`, le Collectif) : comme
+//!   ci-dessus, l'emplacement est d'abord promis ; l'ouvrier s'y rend, y pose
+//!   une « gemme d'ancrage » (le chantier apparaît) puis **repart aussitôt**
+//!   à sa récolte ; le bâtiment s'assemble seul pendant son temps de
+//!   construction. Annulé, il rend une part de son coût.
+//!
+//! Certains bâtiments émettent un **champ de construction** (rayon en
+//! données) et d'autres ne se posent qu'à l'intérieur d'un champ du même
+//! joueur : voir le module [`field`].
 //!
 //! C'est l'asymétrie voulue par le design : mêmes règles du moteur, données
 //! différentes.
@@ -29,6 +38,7 @@
 //! fantôme) et le module [`ui`] (barre de boutons, barres de progression,
 //! bâtiment qui monte du sol) ne font que de l'affichage et des demandes.
 
+pub mod field;
 pub mod placement;
 pub(crate) mod ui;
 
@@ -49,7 +59,8 @@ use crate::RtsSystems;
 // `pub use` : le type `Cost` (défini dans `economy`) est aussi accessible
 // sous le nom `buildings::Cost`.
 pub use crate::economy::Cost;
-use crate::economy::harvest::Harvesting;
+use crate::economy::harvest::{HarvestPhase, Harvesting};
+use field::{ConstructionFields, FieldBuildings, FieldVisuals};
 use crate::economy::production::ProductionQueue;
 use crate::economy::{Notice, NoticeKind, ResourceKind, ResourceNode};
 use crate::players::Players;
@@ -95,6 +106,12 @@ pub struct BuildingType {
     pub supply: u32,
     /// Les unités qu'il produit, dans l'ordre des boutons.
     pub production: Vec<ProductionOption>,
+    /// Rayon (mètres, depuis le centre de l'empreinte) du champ de
+    /// construction qu'il émet une fois terminé ; 0 : aucun champ.
+    pub field_radius: f32,
+    /// Ne se pose que si le centre de son empreinte est dans un champ de
+    /// construction actif du même joueur (voir [`field`]).
+    pub needs_field: bool,
 }
 
 /// Une unité qu'un bâtiment sait produire.
@@ -151,6 +168,11 @@ pub enum ConstructionStyle {
     /// disparaît, et le chantier pousse seul jusqu'au bout. Un chantier
     /// annulé rend `refund_percent` % de son coût, et l'ouvrier.
     WorkerConsumed { refund_percent: u32 },
+    /// Sertissage à distance : l'ouvrier se rend à l'emplacement, y pose le
+    /// chantier (une « gemme d'ancrage ») et repart aussitôt à sa récolte ;
+    /// le chantier s'assemble seul jusqu'au bout. Un chantier annulé rend
+    /// `refund_percent` % de son coût (l'ouvrier, lui, n'a rien perdu).
+    RemoteAnchor { refund_percent: u32 },
 }
 
 impl ConstructionStyle {
@@ -159,11 +181,25 @@ impl ConstructionStyle {
         matches!(self, ConstructionStyle::WorkerConsumed { .. })
     }
 
+    /// Le chantier avance-t-il seul, sans ouvrier au contact ?
+    pub fn builds_alone(self) -> bool {
+        !matches!(self, ConstructionStyle::WorkerStays)
+    }
+
+    /// L'emplacement est-il d'abord promis à un ouvrier qui doit s'y rendre
+    /// avant que le chantier n'apparaisse ([`PlannedSite`]) ? Oui pour les
+    /// deux styles où le bâtiment se construit seul.
+    pub fn promises_site(self) -> bool {
+        self.builds_alone()
+    }
+
     /// Ce que rend un chantier de coût `cost` quand on l'annule.
     pub fn cancel_refund(self, cost: Cost) -> Cost {
         match self {
             ConstructionStyle::WorkerStays => cost,
-            ConstructionStyle::WorkerConsumed { refund_percent } => cost.percent(refund_percent),
+            ConstructionStyle::WorkerConsumed { refund_percent } | ConstructionStyle::RemoteAnchor { refund_percent } => {
+                cost.percent(refund_percent)
+            }
         }
     }
 }
@@ -197,6 +233,11 @@ pub struct BuildingCatalog {
     pole_material: Handle<StandardMaterial>,
     /// Fantôme : vert (emplacement libre) ou rouge (emplacement interdit).
     ghost_materials: [Handle<StandardMaterial>; 2],
+    /// Dessin au sol des champs de construction (si la faction en a).
+    pub(crate) field_visuals: Option<FieldVisuals>,
+    /// Sertissage à distance : le modèle de la gemme d'ancrage, qui flotte
+    /// au-dessus d'un chantier pendant qu'il s'assemble.
+    anchor_visual: Option<TypeVisual>,
 }
 
 /// Marge (mètres) entre l'empreinte et le cadre de sélection.
@@ -244,14 +285,39 @@ impl BuildingCatalog {
             // Cadre de chantier : chevrons de danger pour un chantier
             // d'ouvriers ; un simple anneau (de mousse, chez les Sylves) autour
             // d'un bâtiment qui pousse seul.
-            site_material: units.material(if style.consumes_worker() { MaterialSlot::Steel } else { MaterialSlot::Hazard }),
+            site_material: units.material(if style.builds_alone() { MaterialSlot::Steel } else { MaterialSlot::Hazard }),
             pole_mesh: meshes.add(Cylinder::new(0.07, 1.0)),
             pole_material: units.material(MaterialSlot::Dark),
             ghost_materials: [
                 materials.add(ghost(Color::srgba(0.25, 1.0, 0.45, 0.38))),
                 materials.add(ghost(Color::srgba(1.0, 0.18, 0.12, 0.42))),
             ],
+            field_visuals: None,
+            anchor_visual: None,
         }
+    }
+
+    /// Prépare le dessin au sol des champs de construction, de la couleur
+    /// `color` (celle de la faction). S'utilise en chaîne après `new` :
+    /// `BuildingCatalog::new(…).with_construction_field(…)`. `self` (sans
+    /// `&`) : la fonction prend le catalogue, le modifie et le rend.
+    pub fn with_construction_field(
+        mut self,
+        color: Color,
+        meshes: &mut Assets<Mesh>,
+        materials: &mut Assets<StandardMaterial>,
+    ) -> Self {
+        let radii = self.types.iter().map(|t| t.field_radius);
+        self.field_visuals = Some(FieldVisuals::new(radii, color, meshes, materials));
+        self
+    }
+
+    /// Sertissage à distance : le modèle (`parts`, pieds en y = 0) de la
+    /// gemme d'ancrage qui flotte au-dessus des chantiers, avec la palette du
+    /// catalogue d'unités `units`.
+    pub fn with_anchor_marker(mut self, parts: &[Part], units: &UnitCatalog, meshes: &mut Assets<Mesh>) -> Self {
+        self.anchor_visual = Some(units.make_visual(parts, meshes));
+        self
     }
 
     /// Les prérequis du type `type_index` sont-ils remplis ? `completed[i]`
@@ -261,20 +327,26 @@ impl BuildingCatalog {
     }
 
     /// Le type `type_index` peut-il se poser sur le bloc de cases dont le coin
-    /// est `min_cell` ? Vérifie le terrain (ou la source, pour un bâtiment
-    /// d'extraction) et les prérequis (`completed`, voir [`completed_types`]).
-    /// En cas de succès, renvoie la source couverte, s'il y en a une.
+    /// est `min_cell` ? Vérifie les prérequis (`completed`, voir
+    /// [`completed_types`]), le champ de construction s'il en faut un
+    /// (`fields` : ceux du joueur), puis le terrain (ou la source, pour un
+    /// bâtiment d'extraction). En cas de succès, renvoie la source couverte,
+    /// s'il y en a une.
     pub fn check_placement<'a>(
         &self,
         type_index: usize,
         min_cell: IVec2,
         grid: &NavGrid,
         completed: &[bool],
+        fields: &ConstructionFields,
         nodes: impl IntoIterator<Item = (Entity, &'a ResourceNode, &'a Footprint)>,
     ) -> Result<Option<Entity>, NoticeKind> {
         let building = &self.types[type_index];
         if !self.requirements_met(type_index, completed) {
             return Err(NoticeKind::MissingRequirement);
+        }
+        if building.needs_field && !fields.covers(grid.frame().rect(min_cell, building.footprint).center()) {
+            return Err(NoticeKind::OutsideField);
         }
         match building.placement {
             PlacementRule::Anywhere => {
@@ -379,16 +451,28 @@ impl BuildingCatalog {
                 NotShadowCaster,
                 Visibility::Hidden,
             ));
-            if progress.is_some() && self.style.consumes_worker() {
-                // Un bâtiment qui pousse seul n'a pas d'échafaudage : juste un
-                // anneau au sol qui marque l'empreinte pendant la croissance.
-                parent.spawn((
-                    SiteFrame,
-                    Mesh3d(self.site_frames[type_index].clone()),
-                    MeshMaterial3d(self.site_material.clone()),
-                    Transform::from_xyz(0.0, -height + 0.03, 0.0),
-                    NotShadowCaster,
-                ));
+            if progress.is_some() && self.style.builds_alone() {
+                // Un bâtiment qui pousse ou s'assemble seul n'a pas
+                // d'échafaudage : juste un anneau au sol qui marque l'empreinte
+                // pendant la construction. En sertissage à distance, la gemme
+                // d'ancrage flotte au-dessus du toit à venir (enfant du cadre :
+                // elle disparaît avec lui, à la fin de la construction).
+                let top = visual.top;
+                parent
+                    .spawn((
+                        SiteFrame,
+                        Mesh3d(self.site_frames[type_index].clone()),
+                        MeshMaterial3d(self.site_material.clone()),
+                        Transform::from_xyz(0.0, -height + 0.03, 0.0),
+                        NotShadowCaster,
+                    ))
+                    .with_children(|frame| {
+                        if let (ConstructionStyle::RemoteAnchor { .. }, Some(anchor)) = (self.style, &self.anchor_visual) {
+                            frame
+                                .spawn((Name::new("Gemme d'ancrage"), Transform::from_xyz(0.0, top + 0.3, 0.0), Visibility::default()))
+                                .with_children(|gem| spawn_model(gem, anchor, jitter, &self.materials));
+                        }
+                    });
             } else if progress.is_some() {
                 // Cadre de chantier rayé de chevrons, au sol autour de
                 // l'empreinte, et échafaudage à la hauteur du bâtiment fini :
@@ -576,6 +660,15 @@ pub struct PlannedSite {
     pub paid: Cost,
 }
 
+/// Sertissage à distance : la récolte qu'un ouvrier menait avant d'aller
+/// poser un chantier, qu'il reprend aussitôt la gemme d'ancrage posée.
+#[derive(Component, Debug, Clone, Copy, PartialEq)]
+pub struct ResumeHarvest(pub Harvesting);
+
+/// Rayon (mètres) dans lequel un ouvrier qui vient de poser un chantier, et
+/// qui ne récoltait rien, cherche un gisement de ressource principale.
+const RESUME_RADIUS: f32 = 30.0;
+
 /// Style « ouvrier consommé » : le type de l'ouvrier devenu ce chantier,
 /// qui ressort de terre si le chantier est annulé.
 #[derive(Component, Debug, Clone, Copy)]
@@ -646,6 +739,7 @@ impl Plugin for BuildingsPlugin {
                     placement::update_pointer_ghost,
                     placement::refresh_ghosts,
                     ui::show_planned_sites,
+                    field::show_construction_fields,
                     ui::update_command_bar,
                     ui::raise_buildings,
                     ui::update_progress_bars,
@@ -687,7 +781,11 @@ pub(crate) fn apply_build_orders(
     catalog: Option<Res<BuildingCatalog>>,
     grid: Option<Res<NavGrid>>,
     buildings: Query<(&Building, &Owner, Has<UnderConstruction>)>,
-    mut builders: Query<(Entity, &Owner, &SimPosition, Option<&mut ConstructionTask>, Has<PlannedSite>), With<Unit>>,
+    field_buildings: FieldBuildings,
+    mut builders: Query<
+        (Entity, &Owner, &SimPosition, Option<&mut ConstructionTask>, Has<PlannedSite>, Option<&Harvesting>),
+        With<Unit>,
+    >,
     plans: Query<&PlannedSite>,
     mut nodes: Query<(Entity, &mut ResourceNode, &Footprint)>,
     mut players: ResMut<Players>,
@@ -695,7 +793,8 @@ pub(crate) fn apply_build_orders(
 ) {
     // Pas encore de grille (tout premier pas) ou pas de bâtiments dans ce jeu.
     let (Some(grid), Some(catalog)) = (grid, catalog) else { return };
-    let consumes = catalog.style.consumes_worker();
+    // Styles où l'emplacement est d'abord promis à un ouvrier libre.
+    let promises = catalog.style.promises_site();
     // Chantiers posés pendant ce pas : la grille ne les connaîtra qu'au
     // prochain, il faut donc aussi vérifier qu'ils ne se chevauchent pas.
     // On y ajoute les emplacements déjà promis à un ouvrier en route.
@@ -710,9 +809,10 @@ pub(crate) fn apply_build_orders(
         let (type_index, min_cell, player) = (*type_index, *min_cell, issued.player);
         let Some(building) = catalog.types.get(type_index) else { continue };
         let completed = completed_types(&catalog, player, buildings.iter());
+        let fields = ConstructionFields::of_player(&catalog, grid.frame(), player, field_buildings.iter());
         let rect = grid.frame().rect(min_cell, building.footprint);
         let overlaps = placed.iter().any(|p| !p.intersect(rect).is_empty());
-        let check = catalog.check_placement(type_index, min_cell, &grid, &completed, nodes.iter());
+        let check = catalog.check_placement(type_index, min_cell, &grid, &completed, &fields, nodes.iter());
         let source = match (check, overlaps) {
             (Ok(source), false) => source,
             (result, _) => {
@@ -727,7 +827,7 @@ pub(crate) fn apply_build_orders(
         let mut candidates: Vec<(bool, f32, Entity)> = mine
             .iter()
             .filter_map(|&e| builders.get(e).ok())
-            .map(|(entity, _, position, task, planned)| {
+            .map(|(entity, _, position, task, planned, _)| {
                 let busy = task.is_some_and(|t| !t.sites.is_empty())
                     || planned
                     || assigned.iter().any(|(b, _)| *b == entity)
@@ -736,9 +836,10 @@ pub(crate) fn apply_build_orders(
             })
             .collect();
         candidates.sort_by(|a, b| a.0.cmp(&b.0).then(a.1.total_cmp(&b.1)).then(a.2.cmp(&b.2)));
-        // Un ouvrier consommé ne fait qu'un bâtiment : seuls les libres comptent.
-        let Some(&(_, _, builder)) = candidates.iter().find(|c| !consumes || !c.0) else {
-            if consumes {
+        // Un ouvrier à qui l'on promet un emplacement n'en a qu'un à la fois :
+        // seuls les libres comptent.
+        let Some(&(_, _, builder)) = candidates.iter().find(|c| !promises || !c.0) else {
+            if promises {
                 notices.write(Notice { player, kind: NoticeKind::NoWorker });
             }
             continue;
@@ -750,13 +851,19 @@ pub(crate) fn apply_build_orders(
         }
         placed.push(rect);
 
-        if consumes {
+        if promises {
             // L'emplacement est promis ; l'ouvrier lâche ce qu'il faisait et
-            // s'y rendra (voir `root_planned_sites`).
-            commands
-                .entity(builder)
+            // s'y rendra (voir `root_planned_sites`). En sertissage à
+            // distance, il retient sa récolte pour la reprendre ensuite.
+            let resume = builders.get(builder).ok().and_then(|(.., harvesting)| harvesting.copied());
+            let mut worker = commands.entity(builder);
+            worker
                 .insert(PlannedSite { type_index, min_cell, paid: building.cost })
                 .remove::<(Harvesting, ConstructionTask, MoveTarget, NavPath, MoveGroup)>();
+            match resume {
+                Some(job) if !catalog.style.consumes_worker() => worker.insert(ResumeHarvest(job)),
+                _ => worker.remove::<ResumeHarvest>(),
+            };
             promised.push(builder);
             continue;
         }
@@ -774,7 +881,7 @@ pub(crate) fn apply_build_orders(
         }
     }
     for (builder, sites) in assigned {
-        let Ok((_, _, _, task, _)) = builders.get_mut(builder) else { continue };
+        let Ok((_, _, _, task, ..)) = builders.get_mut(builder) else { continue };
         // Un ouvrier envoyé construire abandonne sa récolte.
         commands.entity(builder).remove::<Harvesting>();
         match task {
@@ -792,11 +899,18 @@ pub(crate) fn refund_plan(players: &mut Players, player: PlayerId, plan: &Planne
     players.get_mut(player).stock += plan.paid;
 }
 
-/// Style « ouvrier consommé » : mène chaque ouvrier à son emplacement promis.
-/// Arrivé, il s'enracine : il disparaît (sa population est libérée), et le
-/// chantier apparaît à sa place, qui poussera seul. Si l'emplacement n'est
-/// plus libre entre-temps (un autre bâtiment s'y est posé), la promesse est
-/// remboursée et l'ouvrier s'arrête.
+/// Styles où l'emplacement est promis : mène chaque ouvrier à son
+/// emplacement. Arrivé, le chantier apparaît, qui se construira seul :
+///
+/// - ouvrier consommé : il s'enracine et disparaît (sa population est
+///   libérée) ;
+/// - sertissage à distance : il pose la gemme d'ancrage et repart aussitôt
+///   à la récolte qu'il menait ([`ResumeHarvest`]), ou, s'il ne récoltait
+///   rien, au gisement de ressource principale le plus proche.
+///
+/// Si l'emplacement n'est plus valable entre-temps (un autre bâtiment s'y est
+/// posé, son champ de construction a disparu), la promesse est remboursée et
+/// l'ouvrier s'arrête.
 ///
 /// Arrivée : au centre de l'emplacement (à 60 cm près), ou arrêté en le
 /// touchant (bousculé par d'autres) ; au bord, pour un bâtiment d'extraction,
@@ -806,8 +920,9 @@ fn root_planned_sites(
     catalog: Option<Res<BuildingCatalog>>,
     grid: Option<Res<NavGrid>>,
     buildings: Query<(&Building, &Owner, Has<UnderConstruction>)>,
+    field_buildings: FieldBuildings,
     mut nodes: Query<(Entity, &mut ResourceNode, &Footprint)>,
-    workers: Query<(Entity, &Owner, &Unit, &SimPosition, &Collider, &PlannedSite, Has<MoveTarget>)>,
+    workers: Query<(Entity, &Owner, &Unit, &SimPosition, &Collider, &PlannedSite, Has<MoveTarget>, Option<&ResumeHarvest>)>,
     mut players: ResMut<Players>,
     mut notices: MessageWriter<Notice>,
 ) {
@@ -820,7 +935,7 @@ fn root_planned_sites(
     let mut placed: Vec<Rect> = Vec::new();
 
     for entity in order {
-        let Ok((_, owner, unit, position, collider, plan, moving)) = workers.get(entity) else { continue };
+        let Ok((_, owner, unit, position, collider, plan, moving, resume)) = workers.get(entity) else { continue };
         let Some(building) = catalog.types.get(plan.type_index) else { continue };
         let rect = catalog.plan_rect(frame, plan);
         let (pos, radius) = (position.current, collider.radius);
@@ -841,14 +956,27 @@ fn root_planned_sites(
         // On revérifie l'emplacement et les prérequis au moment de s'enraciner.
         let player = owner.0;
         let completed = completed_types(&catalog, player, buildings.iter());
+        let fields = ConstructionFields::of_player(&catalog, frame, player, field_buildings.iter());
         let overlaps = placed.iter().any(|p| !p.intersect(rect).is_empty());
-        match (catalog.check_placement(plan.type_index, plan.min_cell, &grid, &completed, nodes.iter()), overlaps) {
+        match (catalog.check_placement(plan.type_index, plan.min_cell, &grid, &completed, &fields, nodes.iter()), overlaps) {
             (Ok(source), false) => {
-                // `despawn` retire l'ouvrier du monde (et ses enfants : son
-                // modèle, son anneau de sélection).
-                commands.entity(entity).despawn();
                 let site = catalog.spawn(&mut commands, frame, player, plan.type_index, plan.min_cell, Some(0.0));
-                commands.entity(site).insert(RootedWorker { unit_type: unit.type_index });
+                if catalog.style.consumes_worker() {
+                    // `despawn` retire l'ouvrier du monde (et ses enfants : son
+                    // modèle, son anneau de sélection).
+                    commands.entity(entity).despawn();
+                    commands.entity(site).insert(RootedWorker { unit_type: unit.type_index });
+                } else {
+                    // Sertissage à distance : la gemme est posée, l'ouvrier repart.
+                    let job = resume.map(|r| r.0).or_else(|| nearest_primary(&nodes, frame, pos));
+                    let mut worker = commands.entity(entity);
+                    worker.remove::<(PlannedSite, ResumeHarvest, MoveTarget, NavPath, MoveGroup)>();
+                    if let Some(job) = job {
+                        // Chargé, il rapporte d'abord sa charge ; sinon il retourne au gisement.
+                        let phase = if job.carrying.is_some() { HarvestPhase::Returning } else { HarvestPhase::ToNode };
+                        worker.insert(Harvesting { phase, ..job });
+                    }
+                }
                 placed.push(rect);
                 if let Some(source) = source
                     && let Ok((_, mut node, _)) = nodes.get_mut(source)
@@ -860,10 +988,37 @@ fn root_planned_sites(
                 info!("Enracinement impossible : {} en {}", building.name, plan.min_cell);
                 refund_plan(&mut players, player, plan);
                 notices.write(Notice { player, kind: result.err().unwrap_or(NoticeKind::Blocked) });
-                commands.entity(entity).remove::<(PlannedSite, MoveTarget, NavPath, MoveGroup)>();
+                commands.entity(entity).remove::<(PlannedSite, ResumeHarvest, MoveTarget, NavPath, MoveGroup)>();
             }
         }
     }
+}
+
+/// Le gisement de ressource principale (non épuisé) le plus proche de
+/// `from`, à moins de [`RESUME_RADIUS`] : la récolte que reprend un ouvrier
+/// qui vient de poser un chantier sans rien récolter avant.
+fn nearest_primary(
+    nodes: &Query<(Entity, &mut ResourceNode, &Footprint)>,
+    frame: GridFrame,
+    from: Vec2,
+) -> Option<Harvesting> {
+    nodes
+        .iter()
+        .filter(|(_, node, _)| node.kind == ResourceKind::Primary && !node.needs_extractor && node.amount > 0)
+        .map(|(entity, _, footprint)| {
+            let rect = frame.rect(footprint.min_cell, footprint.size);
+            (distance_to_rect(from, rect), entity, rect.center())
+        })
+        .filter(|(distance, ..)| *distance <= RESUME_RADIUS)
+        // Le plus proche ; à égalité, le plus petit identifiant (déterministe).
+        .min_by(|a, b| a.0.total_cmp(&b.0).then(a.1.cmp(&b.1)))
+        .map(|(_, node, node_position)| Harvesting {
+            node,
+            kind: ResourceKind::Primary,
+            node_position,
+            phase: HarvestPhase::ToNode,
+            carrying: None,
+        })
 }
 
 /// Distance d'un point à un rectangle (0 à l'intérieur).
@@ -951,8 +1106,8 @@ fn progress_construction(
     builders: Query<(&SimPosition, &Collider, &ConstructionTask)>,
 ) {
     let Some(catalog) = catalog else { return };
-    let mut worked: Vec<Entity> = if catalog.style.consumes_worker() {
-        // Les bâtiments qui poussent seuls avancent tous, sans ouvrier.
+    let mut worked: Vec<Entity> = if catalog.style.builds_alone() {
+        // Les bâtiments qui poussent ou s'assemblent seuls avancent tous, sans ouvrier.
         sites.iter().map(|(entity, ..)| entity).collect()
     } else {
         // Chantiers sur lesquels un ouvrier travaille : son premier chantier, au contact.
@@ -1047,8 +1202,19 @@ mod tests {
             placement: PlacementRule::OnResource(ResourceKind::Rare),
             ..building.clone()
         };
-        let catalog =
-            BuildingCatalog::new(vec![building, extractor], vec![0], style, &units, &mut meshes, &mut materials);
+        // Champs de construction : un relais de 2 × 2 qui en émet un de 6 m,
+        // un atelier qui en a besoin, et un cœur de base qui en émet un de 8 m.
+        let relay = BuildingType { name: "Relais".into(), footprint: UVec2::new(2, 2), field_radius: 6.0, ..building.clone() };
+        let workshop = BuildingType { name: "Atelier".into(), needs_field: true, ..building.clone() };
+        let core = BuildingType { name: "Cœur".into(), footprint: UVec2::new(5, 5), field_radius: 8.0, ..building.clone() };
+        let catalog = BuildingCatalog::new(
+            vec![building, extractor, relay, workshop, core],
+            vec![0],
+            style,
+            &units,
+            &mut meshes,
+            &mut materials,
+        );
         app.insert_resource(catalog).insert_resource(units).insert_resource(crate::economy::EconomyRules {
             resources: [
                 crate::economy::ResourceInfo { name: "P".into(), color: Color::WHITE },
@@ -1286,5 +1452,183 @@ mod tests {
         assert_eq!(stock(&app), ABRI_COST, "remboursé en entier");
         assert!(app.world().get::<PlannedSite>(worker).is_none());
         assert_eq!(count::<With<Building>>(&mut app), 0);
+    }
+
+    // --- Sertissage à distance (le Collectif) et champs de construction ---
+
+    const ANCHOR: ConstructionStyle = ConstructionStyle::RemoteAnchor { refund_percent: 75 };
+    const RELAY: usize = 2;
+    const WORKSHOP: usize = 3;
+    const CORE: usize = 4;
+
+    /// Pose directement un bâtiment du joueur `player` (terminé si `progress`
+    /// vaut `None`), comme le fait la carte au démarrage.
+    fn spawn_building(app: &mut App, player: u8, type_index: usize, min_cell: IVec2, progress: Option<f32>) -> Entity {
+        let frame = app.world().resource::<NavGrid>().frame();
+        // On sort le catalogue du monde le temps de s'en servir (le monde ne
+        // peut pas être emprunté deux fois, en lecture et en écriture).
+        let catalog = app.world_mut().remove_resource::<BuildingCatalog>().unwrap();
+        let entity = catalog.spawn(&mut app.world_mut().commands(), frame, PlayerId(player), type_index, min_cell, progress);
+        app.world_mut().flush();
+        app.insert_resource(catalog);
+        entity
+    }
+
+    /// Fait de l'ouvrier une unité volante (couche de collision de l'air).
+    fn make_flying(app: &mut App, worker: Entity) {
+        app.world_mut().get_mut::<Collider>(worker).unwrap().layer = CollisionLayer::Air;
+    }
+
+    #[test]
+    fn anchoring_worker_leaves_and_the_site_assembles_alone() {
+        let (mut app, worker) = app_with(ANCHOR, ABRI_COST);
+        make_flying(&mut app, worker);
+        set_stock(&mut app, Cost::new(150, 50));
+        // L'ouvrier récolte un gisement à côté de lui (x de −14 à −12).
+        let frame = app.world().resource::<NavGrid>().frame();
+        let patch = crate::economy::spawn_resource_node(
+            &mut app.world_mut().commands(),
+            frame,
+            ResourceKind::Primary,
+            IVec2::new(36, 52),
+            UVec2::new(2, 1),
+            500,
+            false,
+        );
+        app.world_mut().flush();
+        app.world_mut().resource_mut::<CommandQueue>().push(PlayerId(0), PlayerCommand::Harvest { units: vec![worker], node: patch });
+        run(&mut app, 1.0);
+        assert!(app.world().get::<Harvesting>(worker).is_some());
+        // Envoyé sertir un abri à 17 m : payé, emplacement promis, récolte retenue.
+        build(&mut app, IVec2::new(55, 49), worker);
+        app.update();
+        assert_eq!(stock(&app), Cost::new(50, 30));
+        assert!(app.world().get::<PlannedSite>(worker).is_some());
+        assert_eq!(app.world().get::<ResumeHarvest>(worker).map(|r| r.0.node), Some(patch));
+        assert_eq!(count::<With<Building>>(&mut app), 0, "pas de chantier avant l'arrivée");
+        // Arrivé, il pose la gemme : le chantier apparaît, et il repart récolter.
+        run(&mut app, 5.5);
+        assert_eq!(count::<With<UnderConstruction>>(&mut app), 1, "le chantier est ancré");
+        assert!(app.world().get_entity(worker).is_ok(), "l'ouvrier n'est pas consommé");
+        assert!(app.world().get::<PlannedSite>(worker).is_none());
+        assert_eq!(app.world().get::<Harvesting>(worker).map(|h| h.node), Some(patch), "il reprend sa récolte");
+        assert_eq!(count::<With<RootedWorker>>(&mut app), 0);
+        // Le chantier s'assemble seul, l'ouvrier loin de lui (2 s de construction).
+        run(&mut app, 2.5);
+        let world = app.world_mut();
+        let (health, under_construction, obstacle) =
+            world.query::<(&Health, Has<UnderConstruction>, &StaticObstacle)>().single(world).unwrap();
+        assert!(!under_construction, "le bâtiment devrait être terminé");
+        assert_eq!(health.current, health.max);
+        let rect = obstacle.0;
+        let position = app.world().get::<SimPosition>(worker).unwrap().current;
+        assert!(distance_to_rect(position, rect) > 3.0, "l'ouvrier est reparti ({position})");
+    }
+
+    #[test]
+    fn anchoring_worker_without_a_harvest_goes_to_the_nearest_patch() {
+        let (mut app, worker) = app_with(ANCHOR, Cost::default());
+        make_flying(&mut app, worker);
+        let frame = app.world().resource::<NavGrid>().frame();
+        let patch = crate::economy::spawn_resource_node(
+            &mut app.world_mut().commands(),
+            frame,
+            ResourceKind::Primary,
+            IVec2::new(60, 52),
+            UVec2::new(2, 1),
+            500,
+            false,
+        );
+        app.world_mut().flush();
+        build(&mut app, IVec2::new(55, 49), worker);
+        run(&mut app, 5.5);
+        assert_eq!(count::<With<UnderConstruction>>(&mut app), 1);
+        assert_eq!(app.world().get::<Harvesting>(worker).map(|h| h.node), Some(patch));
+    }
+
+    #[test]
+    fn workshop_is_refused_outside_any_active_field() {
+        let (mut app, worker) = app_with(ANCHOR, Cost::default());
+        // Aucun champ : refusé, avec le bon message.
+        build_type(&mut app, WORKSHOP, IVec2::new(55, 49), worker);
+        app.update();
+        assert_eq!(notices(&app), vec![NoticeKind::OutsideField]);
+        assert!(app.world().get::<PlannedSite>(worker).is_none());
+        // Un relais encore en chantier n'émet rien.
+        spawn_building(&mut app, 0, RELAY, IVec2::new(60, 49), Some(0.5));
+        build_type(&mut app, WORKSHOP, IVec2::new(55, 49), worker);
+        app.update();
+        assert_eq!(notices(&app), vec![NoticeKind::OutsideField]);
+        // Un relais d'un autre joueur non plus.
+        spawn_building(&mut app, 1, RELAY, IVec2::new(60, 46), None);
+        build_type(&mut app, WORKSHOP, IVec2::new(55, 49), worker);
+        app.update();
+        assert_eq!(notices(&app), vec![NoticeKind::OutsideField]);
+        // Le relais terminé du joueur, à 4,5 m : accepté.
+        spawn_building(&mut app, 0, RELAY, IVec2::new(60, 52), None);
+        build_type(&mut app, WORKSHOP, IVec2::new(55, 49), worker);
+        app.update();
+        assert!(notices(&app).is_empty(), "refusé : {:?}", notices(&app));
+        assert!(app.world().get::<PlannedSite>(worker).is_some());
+        // Un relais, lui, se pose n'importe où.
+        let other = app
+            .world_mut()
+            .spawn((
+                Unit { type_index: 0 },
+                Owner(PlayerId(0)),
+                SimPosition::new(Vec2::new(-10.0, 5.0)),
+                MoveSpeed(4.0),
+                Collider { radius: 0.6, mass: 1.0, layer: CollisionLayer::Air },
+            ))
+            .id();
+        build_type(&mut app, RELAY, IVec2::new(20, 20), other);
+        app.update();
+        assert!(app.world().get::<PlannedSite>(other).is_some());
+    }
+
+    #[test]
+    fn core_and_relay_fields() {
+        let (mut app, _) = app_with(ANCHOR, Cost::default());
+        // Un cœur de 5 × 5 centré en (2,5 ; 2,5), un relais de 2 × 2 centré en (21 ; 1).
+        spawn_building(&mut app, 0, CORE, IVec2::new(50, 50), None);
+        spawn_building(&mut app, 0, RELAY, IVec2::new(70, 50), None);
+        spawn_building(&mut app, 0, RELAY, IVec2::new(30, 30), Some(0.3));
+        spawn_building(&mut app, 1, CORE, IVec2::new(80, 80), None);
+        let frame = app.world().resource::<NavGrid>().frame();
+        let catalog = app.world_mut().remove_resource::<BuildingCatalog>().unwrap();
+        let world = app.world_mut();
+        let mut query = world.query::<(&Building, &Owner, &Footprint, Has<UnderConstruction>)>();
+        let fields = ConstructionFields::of_player(&catalog, frame, PlayerId(0), query.iter(world));
+        assert_eq!(fields.circles.len(), 2, "le chantier et le cœur adverse n'émettent rien pour moi");
+        assert!(fields.covers(Vec2::new(2.5, 10.4)), "dans le champ du cœur (8 m)");
+        assert!(!fields.covers(Vec2::new(2.5, 10.6)));
+        assert!(fields.covers(Vec2::new(26.9, 1.0)), "dans le champ du relais (6 m)");
+        assert!(!fields.covers(Vec2::new(27.1, 1.0)));
+        assert!(!fields.covers(Vec2::new(-19.0, -19.0)), "le relais en chantier n'émet pas");
+        // La même question, posée comme le fera le combat (relais détruit ?).
+        let point = Vec2::new(32.0, 32.0);
+        assert!(field::in_active_field(&catalog, frame, PlayerId(1), point, query.iter(world)));
+        assert!(!field::in_active_field(&catalog, frame, PlayerId(0), point, query.iter(world)));
+    }
+
+    #[test]
+    fn cancelling_an_anchored_site_refunds_part_and_keeps_the_worker() {
+        let (mut app, worker) = app_with(ANCHOR, ABRI_COST);
+        make_flying(&mut app, worker);
+        set_stock(&mut app, ABRI_COST);
+        build(&mut app, IVec2::new(55, 49), worker);
+        run(&mut app, 5.5);
+        let site = {
+            let world = app.world_mut();
+            world.query_filtered::<Entity, With<UnderConstruction>>().single(world).unwrap()
+        };
+        app.world_mut().resource_mut::<CommandQueue>().push(PlayerId(0), PlayerCommand::CancelConstruction { building: site });
+        app.update();
+        assert!(app.world().get_entity(site).is_err(), "le chantier a disparu");
+        // 75 % de 100 + 20 (arrondi en dessous) ; l'ouvrier n'a rien perdu,
+        // aucun autre ne sort du chantier.
+        assert_eq!(stock(&app), Cost::new(75, 15));
+        assert!(app.world().get_entity(worker).is_ok());
+        assert_eq!(count::<With<Unit>>(&mut app), 1);
     }
 }
