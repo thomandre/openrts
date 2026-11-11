@@ -26,7 +26,9 @@
 //! - `OPENRTS_AI=0` : l'adversaire ne joue pas (ses unités attendent) ;
 //! - `OPENRTS_AI_ATTACK=60` : délai (s) avant la première attaque de l'IA ;
 //! - `OPENRTS_SPEED=4` : accélère le temps de la partie (pour observer l'IA) ;
-//! - `OPENRTS_SCREENSHOT_DELAY=60` : instant de la capture (en s de temps réel).
+//! - `OPENRTS_SCREENSHOT_DELAY=60` : instant de la capture (en s de temps réel) ;
+//! - `OPENRTS_FOG=0` : pas de brouillard de guerre (`OPENRTS_FOG=1` le
+//!   remet dans les démonstrations, qui s'en passent par défaut).
 
 mod base;
 mod base_collectif;
@@ -60,6 +62,7 @@ use rts_engine::graphics::{Ambiance, GraphicsQuality, ReflectionPanels};
 use rts_engine::input::GameAction;
 use rts_engine::navigation::{GridFrame, NavSettings};
 use rts_engine::units::{Palette, UnitCatalog, UnitType};
+use rts_engine::vision::VisionSettings;
 use rts_engine::RtsEnginePlugin;
 
 use map::{GroundPattern, GroundStyle};
@@ -388,6 +391,13 @@ fn main() {
             // Sans quoi un pas d'image trop long est tronqué, et le temps ralentit.
             time.set_max_delta(std::time::Duration::from_secs_f32(0.25 * speed.max(1.0)));
         });
+    }
+    // Brouillard de guerre : actif en partie normale, coupé par défaut dans
+    // les démonstrations (pour qu'elles restent lisibles).
+    let demo = battle::requested() || base::demo_requested().is_some();
+    let fog = std::env::var("OPENRTS_FOG").map_or(!demo, |f| f != "0");
+    if !fog {
+        app.insert_resource(VisionSettings { enabled: false });
     }
     if battle::requested() {
         // La bataille fait elle-même son test de charge (300 contre 300).

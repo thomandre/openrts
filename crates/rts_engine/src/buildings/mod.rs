@@ -682,6 +682,35 @@ impl BuildingCatalog {
         Some(root)
     }
 
+    /// Souvenir d'un bâtiment ennemi sous le brouillard (affichage
+    /// seulement, voir [`crate::vision::display`]) : son modèle, centré en
+    /// `center`, aux couleurs du joueur `owner`, figé à l'avancement
+    /// `progress` du dernier aperçu (`None` : terminé), sans échafaudage.
+    pub(crate) fn spawn_memory(&self, commands: &mut Commands, owner: PlayerId, type_index: usize, center: Vec2, progress: Option<f32>) -> Option<Entity> {
+        let visual = self.visuals.get(type_index)?;
+        let faction = self.faction(self.faction_of(type_index))?;
+        let materials = self.materials_for(type_index, owner);
+        // Le corps monte du sol ou grandit, comme dans `ui::raise_buildings`.
+        let body = match progress {
+            None => Transform::IDENTITY,
+            Some(p) if faction.style.consumes_worker() => Transform::from_scale(Vec3::splat(0.2 + 0.8 * p)),
+            Some(p) => Transform::from_xyz(0.0, -(1.0 - (0.15 + 0.85 * p)) * visual.top, 0.0),
+        };
+        let root = commands
+            .spawn((
+                Name::new("Souvenir de bâtiment"),
+                Transform::from_xyz(center.x, 0.0, center.y).with_rotation(Quat::from_rotation_y(self.facing)),
+                Visibility::default(),
+            ))
+            .with_children(|parent| {
+                parent
+                    .spawn((body, Visibility::default()))
+                    .with_children(|body| spawn_model(body, visual, position_jitter(center), materials));
+            })
+            .id();
+        Some(root)
+    }
+
     pub(crate) fn ghost_material(&self, valid: bool) -> Handle<StandardMaterial> {
         self.ghost_materials[usize::from(!valid)].clone()
     }

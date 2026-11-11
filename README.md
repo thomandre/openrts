@@ -9,7 +9,7 @@ Le design du jeu est décrit dans [GAME_DESIGN.md](GAME_DESIGN.md).
 
 | Dossier | Rôle |
 | --- | --- |
-| `crates/rts_engine` | Le moteur générique : entrées, caméra, sélection, groupes de contrôle (`control_groups`), minicarte (`minimap`), joueurs (`players`), file des ordres (`orders`), simulation, collisions, navigation (grille, A\*), bâtiments (pose, chantiers), économie (`economy` : gisements, récolte, production, population, interface), combat (`combat` : armes, ciblage, ordres, dégâts, barre d'ordres, effets), rendu (`graphics`). Aucun contenu de jeu. |
+| `crates/rts_engine` | Le moteur générique : entrées, caméra, sélection, groupes de contrôle (`control_groups`), minicarte (`minimap`), joueurs (`players`), file des ordres (`orders`), simulation, collisions, navigation (grille, A\*), bâtiments (pose, chantiers), économie (`economy` : gisements, récolte, production, population, interface), combat (`combat` : armes, ciblage, ordres, dégâts, barre d'ordres, effets), IA adverse (`ai`), brouillard de guerre (`vision`), fin de partie (`outcome`), rendu (`graphics`). Aucun contenu de jeu. |
 | `crates/rts_game` | Le jeu : unités, bâtiments, factions, cartes, gisements (`garde.rs`, `sylves.rs`, `collectif.rs`, `map.rs`, `base.rs`, `base_sylves.rs`, `base_collectif.rs`, `gisements.rs`, `combat.rs` : fiches de combat, `battle.rs` : démonstration de bataille). Utilise `rts_engine`. |
 
 ## Compiler et lancer
@@ -167,6 +167,19 @@ plus son bonus, moins l'armure de la cible (au moins 0,5).
 - Une unité tuée libère sa population ; un bâtiment détruit libère sa place
   (les unités passent à nouveau) et la population qu'il fournissait.
 
+### Brouillard de guerre
+
+Chaque unité et chaque bâtiment voit autour de lui (6 à 12 m selon le type,
+mesurés depuis son bord, toujours au moins sa portée d'acquisition). Le sol est
+assombri là où l'on ne voit pas, et plus encore là où l'on n'est jamais allé.
+Les unités ennemies hors de vue sont cachées : on ne peut ni les
+sélectionner ni les viser, et les unités ne tirent que sur ce que voit leur
+joueur. Un bâtiment ennemi aperçu reste affiché tel qu'au dernier aperçu,
+même détruit depuis, jusqu'à ce qu'on revoie son emplacement. L'IA ne
+connaît que ce que voit son joueur et les bâtiments qu'elle a aperçus ; elle
+suppose la base adverse à l'opposé de la sienne (la carte est symétrique) et
+explore si elle n'y trouve rien. `OPENRTS_FOG=0` coupe le brouillard.
+
 ### Économie
 
 Deux ressources, aux noms **provisoires** : le **Cristal** (principale,
@@ -252,6 +265,7 @@ Deux niveaux de qualité (`GraphicsQuality`) :
 | `OPENRTS_AI_ATTACK=60` | Délai avant la première vague de l'IA (150 s par défaut) |
 | `OPENRTS_SPEED=8` | Accélère le temps de la partie (pour observer l'IA) |
 | `OPENRTS_SCREENSHOT_DELAY=30` | Instant de la capture automatique (14 s par défaut) |
+| `OPENRTS_FOG=0` | Pas de brouillard de guerre (tout est visible). Les démonstrations (`OPENRTS_DEMO`) s'en passent par défaut ; `OPENRTS_FOG=1` l'y remet |
 | `OPENRTS_SCREENSHOT=capture.png` | Après 14 s : affiche les FPS moyens des 6 dernières secondes, enregistre une capture du rendu et quitte (synchronisation verticale coupée pour mesurer) |
 
 Exemples : `OPENRTS_WINDOWED=1 OPENRTS_STRESS=1 OPENRTS_SCREENSHOT=/tmp/charge.png cargo run --release`,
@@ -262,7 +276,8 @@ Exemples : `OPENRTS_WINDOWED=1 OPENRTS_STRESS=1 OPENRTS_SCREENSHOT=/tmp/charge.p
 `OPENRTS_WINDOWED=1 OPENRTS_DEMO=battle OPENRTS_ZOOM=18 OPENRTS_FOCUS=0,1 OPENRTS_SCREENSHOT=/tmp/bataille.png cargo run --release`,
 `OPENRTS_WINDOWED=1 OPENRTS_DEMO=battle OPENRTS_STRESS=1 OPENRTS_ZOOM=70 OPENRTS_SCREENSHOT=/tmp/charge.png cargo run --release`.
 Coût d'un pas de simulation pendant une bataille de 300 contre 300 (sans fenêtre) :
-`cargo test --release -p rts_engine -- --ignored --nocapture battle_300`.
+`cargo test --release -p rts_engine -- --ignored --nocapture battle_300` ; coût du
+calcul de la vision (600 unités) : `cargo test --release -p rts_engine -- --ignored --nocapture vision_cost`.
 Pour mesurer les performances, compiler en `--release` : en mode debug, les
 vérifications internes de Bevy et de wgpu coûtent beaucoup d'images par seconde.
 

@@ -22,7 +22,7 @@
 //!
 //! **Brouillard de guerre** : tout ce qui est dessiné passe par
 //! [`LocalVision::sees`], le seul point qui décide de ce que voit le joueur
-//! local (pour l'instant : tout).
+//! local (le brouillard de guerre : voir le module `vision`).
 
 use bevy::asset::RenderAssetUsages;
 use bevy::color::ColorToPacked;
@@ -67,6 +67,8 @@ const NEUTRAL: Color = Color::srgb(0.7, 0.7, 0.7);
 #[derive(SystemParam)]
 pub struct LocalVision<'w> {
     local: Res<'w, LocalPlayer>,
+    /// Le brouillard de guerre (absent d'une simulation de test).
+    fog: Option<Res<'w, crate::vision::FogOfWar>>,
 }
 
 impl LocalVision<'_> {
@@ -74,16 +76,15 @@ impl LocalVision<'_> {
     /// `owner` (`None` : un gisement, un élément de décor), placée en
     /// `position` (x, z).
     ///
-    /// Pour l'instant, sans brouillard de guerre, tout est visible.
+    /// Une unité adverse ne se voit que dans la vision du joueur ; un
+    /// bâtiment adverse, aussi tant qu'il s'en souvient (déjà aperçu).
     pub fn sees(&self, entity: Entity, owner: Option<PlayerId>, position: Vec2) -> bool {
         // Ses propres entités sont toujours visibles.
         if owner == Some(self.local.0) {
             return true;
         }
-        // `let _ = …` : ces valeurs serviront au brouillard ; on les « utilise »
-        // pour que le compilateur ne signale pas de paramètre inutilisé.
-        let _ = (entity, position);
-        true
+        let (Some(owner), Some(fog)) = (owner, self.fog.as_ref()) else { return true };
+        fog.sees_entity(self.local.0, owner, position, None) || fog.remembers(self.local.0, entity).is_some()
     }
 }
 

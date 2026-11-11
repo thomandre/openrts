@@ -15,7 +15,8 @@
 //! - **Cibles possibles** : une arme touche le sol, l'air, ou les deux ; une
 //!   cible est « aérienne » si elle a la catégorie [`Category::Air`].
 //! - **Ciblage automatique** : une unité sans ordre (ou en attaque-déplacement)
-//!   prend pour cible l'ennemi à portée d'acquisition qui l'intéresse le plus :
+//!   prend pour cible l'ennemi **visible par son joueur** (brouillard de
+//!   guerre, voir [`crate::vision`]) à portée d'acquisition qui l'intéresse le plus :
 //!   d'abord ce qui attaque, puis les autres unités, puis les bâtiments qui
 //!   ne tirent pas ; à priorité égale le plus proche, puis le plus petit
 //!   identifiant (départage déterministe).
@@ -57,6 +58,7 @@ use crate::players::{are_enemies, Owner, PlayerId, Players};
 use crate::selection::{formation, Selectable};
 use crate::simulation::{MoveSpeed, MoveTarget, SimPosition, SimSet, TICKS_PER_SECOND};
 use crate::units::Unit;
+use crate::vision::{mask_sees, FogOfWar};
 
 // ---------------------------------------------------------------------------
 // Données (fournies par le jeu).
@@ -157,6 +159,9 @@ impl Weapon {
 /// Dégâts minimaux d'un coup, quelle que soit l'armure.
 pub const MIN_DAMAGE: f32 = 0.5;
 
+/// Rayon de vision minimal d'une fiche sans vision renseignée, en mètres.
+pub const DEFAULT_SIGHT: f32 = 8.0;
+
 /// La fiche de combat d'un type d'unité ou de bâtiment.
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct CombatStats {
@@ -172,12 +177,24 @@ pub struct CombatStats {
     /// Distance à laquelle elle repère seule un ennemi (0 : portée de sa
     /// plus longue arme + 3 m, au moins 6 m).
     pub acquire_range: f32,
+    /// Rayon de vision (brouillard de guerre, voir [`crate::vision`]), en
+    /// mètres, mesuré comme la portée des armes : depuis le bord de l'unité
+    /// ou du bâtiment. 0 : la portée d'acquisition, au moins 8 m. Elle doit
+    /// rester au moins égale à la portée d'acquisition : on ne vise que ce
+    /// que l'on voit.
+    pub sight: f32,
 }
 
 impl CombatStats {
     /// Une unité : PV, armure, catégories et armes.
     pub fn unit(max_health: f32, armor: f32, categories: &[Category], weapons: Vec<Weapon>) -> Self {
-        Self { max_health, armor, categories: Categories::of(categories), weapons, acquire_range: 0.0 }
+        Self { max_health, armor, categories: Categories::of(categories), weapons, acquire_range: 0.0, sight: 0.0 }
+    }
+
+    /// La même fiche, avec un rayon de vision de `sight` mètres.
+    pub fn with_sight(mut self, sight: f32) -> Self {
+        self.sight = sight;
+        self
     }
 
     /// Un bâtiment (catégorie `Structure` ajoutée) : armure et armes
@@ -195,6 +212,11 @@ impl CombatStats {
         }
         let longest = self.weapons.iter().map(|w| w.range).fold(0.0, f32::max);
         (longest + 3.0).max(6.0)
+    }
+
+    /// Rayon de vision effectif (voir [`CombatStats::sight`]).
+    pub fn sight(&self) -> f32 {
+        if self.sight > 0.0 { self.sight } else { self.acquire().max(DEFAULT_SIGHT) }
     }
 
     /// Portée de sa plus longue arme.
@@ -223,7 +245,8 @@ impl CombatRules {
         self.buildings.extend(other.buildings);
     }
 
-    fn stats(&self, kind: CombatKind) -> Option<&CombatStats> {
+    /// La fiche d'une unité ou d'un bâtiment de ce type, s'il en a une.
+    pub fn stats(&self, kind: CombatKind) -> Option<&CombatStats> {
         match kind {
             CombatKind::Unit(i) => self.units.get(i),
             CombatKind::Building(i) => self.buildings.get(i),
@@ -404,7 +427,8 @@ fn apply_combat_orders(
     mut groups: ResMut<MoveGroupCounter>,
     mut players: ResMut<Players>,
     mut units: Query<(&Owner, &Selectable, &SimPosition, Option<&mut Attacker>, Option<&PlannedSite>), With<MoveSpeed>>,
-    targets: Query<&Owner, With<Combatant>>,
+    targets: Query<(&Owner, Option<&SimPosition>, Option<&StaticObstacle>), With<Combatant>>,
+    fog: Option<Res<FogOfWar>>,
 ) {
     for issued in &tick.0 {
         let player = issued.player;
@@ -453,8 +477,11 @@ fn apply_combat_orders(
             }
             match command {
                 PlayerCommand::Attack { target, .. } => {
-                    // Seulement une entité adverse qui peut être attaquée.
-                    let valid = targets.get(*target).is_ok_and(|o| are_enemies(player, o.0));
+                    // Seulement une entité adverse qui peut être attaquée, et
+                    // que le joueur voit (ou un bâtiment dont il se souvient).
+                    let valid = targets.get(*target).is_ok_and(|(o, position, obstacle)| {
+                        are_enemies(player, o.0) && can_target(fog.as_deref(), player, *target, o.0, position, obstacle)
+                    });
                     if valid && armed {
                         e.insert(CombatOrder::Attack(*target)).remove::<(MoveTarget, NavPath, MoveGroup)>();
                     }
@@ -479,6 +506,23 @@ fn apply_combat_orders(
     }
 }
 
+/// Le joueur `player` peut-il désigner `target` (du joueur `owner`) comme
+/// cible ? Il doit la voir, ou, pour un bâtiment, s'en souvenir. Sans
+/// brouillard, tout est visible.
+fn can_target(
+    fog: Option<&FogOfWar>,
+    player: PlayerId,
+    target: Entity,
+    owner: PlayerId,
+    position: Option<&SimPosition>,
+    obstacle: Option<&StaticObstacle>,
+) -> bool {
+    let Some(fog) = fog else { return true };
+    let rect = obstacle.map(|o| o.0);
+    let at = position.map(|p| p.current).or(rect.map(|r| r.center())).unwrap_or_default();
+    fog.sees_entity(player, owner, at, rect) || (rect.is_some() && fog.remembers(player, target).is_some())
+}
+
 // ---------------------------------------------------------------------------
 // Ciblage et tirs.
 // ---------------------------------------------------------------------------
@@ -498,6 +542,8 @@ struct View {
     armor: f32,
     /// Elle attaque quelqu'un (priorité de ciblage).
     attacking: bool,
+    /// Les joueurs qui la voient (voir [`FogOfWar::seen_mask`]).
+    seen_by: u32,
 }
 
 impl View {
@@ -563,9 +609,12 @@ fn fight(
     mut hits: ResMut<PendingHits>,
     mut events: MessageWriter<CombatEvent>,
     mut fighters: Query<Fighter>,
+    fog: Option<Res<FogOfWar>>,
 ) {
     let Some(rules) = rules else { return };
     clock.0 += 1;
+    // Sans brouillard (tests, plugin absent), tout le monde voit tout.
+    let seen_mask = |position: Vec2, rect: Option<Rect>| fog.as_ref().map_or(u32::MAX, |f| f.seen_mask(position, rect));
 
     // 1. Ce qu'on sait de chaque entité attaquable, trié par identifiant.
     let mut views: Vec<View> = fighters
@@ -587,6 +636,7 @@ fn fight(
                 categories: f.combatant.categories,
                 armor: f.combatant.armor,
                 attacking: f.attacker.as_ref().is_some_and(|a| a.target.is_some()),
+                seen_by: seen_mask(position, rect),
             })
         })
         .collect();
@@ -669,18 +719,33 @@ fn fight(
                 gap <= acquire + 2.0
             }
         };
-        let hittable = |other: &View| stats.weapons.iter().any(|w| w.can_hit(other.air)) && are_enemies(me.owner, other.owner);
+        // Une cible possible : ennemie, à la portée de nos armes (sol, air)
+        // et visible par notre joueur.
+        let hittable = |other: &View| {
+            stats.weapons.iter().any(|w| w.can_hit(other.air)) && are_enemies(me.owner, other.owner) && mask_sees(other.seen_by, me.owner)
+        };
+        // Un bâtiment désigné reste une cible tant que le joueur s'en souvient.
+        let remembered = |other: &View| other.rect.is_some() && fog.as_ref().is_some_and(|f| f.remembers(me.owner, other.entity).is_some());
 
         // La cible actuelle est-elle toujours valable ?
         let mut target = explicit.or(attacker.target).and_then(|t| find(&views, t)).filter(|&t| {
             let other = &views[t];
-            hittable(other) && (explicit.is_some() || acceptable(other, me.gap(other)))
+            match explicit {
+                Some(_) => hittable(other) || (remembered(other) && are_enemies(me.owner, other.owner)),
+                None => hittable(other) && acceptable(other, me.gap(other)),
+            }
         });
         let mut commands_e = commands.entity(entity);
         if explicit.is_some() && target.is_none() {
-            // La cible désignée a disparu : l'ordre est terminé.
+            // La cible désignée a disparu, ou s'est cachée dans le
+            // brouillard : l'ordre est terminé. Dans le second cas, l'unité
+            // va voir là où elle l'a perdue de vue.
             commands_e.remove::<CombatOrder>();
             attacker.anchor = me.position;
+            if let Some(lost) = explicit.and_then(|t| find(&views, t)) {
+                let point = views[lost].position;
+                commands_e.insert((MoveTarget(point), CombatOrder::AttackMove { point, interrupted: false })).remove::<MoveGroup>();
+            }
         }
 
         if explicit.is_none() {
@@ -725,7 +790,9 @@ fn fight(
             Some(t) => {
                 let other = views[t];
                 let gap = me.gap(&other);
-                let in_range = stats.weapons.iter().any(|w| w.can_hit(other.air) && gap <= w.range);
+                // Un bâtiment dont on se souvient mais qu'on ne voit pas : on
+                // s'approche d'abord (on ne tire que sur ce qu'on voit).
+                let in_range = mask_sees(other.seen_by, me.owner) && stats.weapons.iter().any(|w| w.can_hit(other.air) && gap <= w.range);
                 if in_range {
                     if f.moving && !is_building {
                         commands_e.remove::<(MoveTarget, NavPath, MoveGroup)>();

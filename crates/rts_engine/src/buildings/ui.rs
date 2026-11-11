@@ -18,6 +18,7 @@ use crate::input::{ActionButton, BlocksPointer, GameAction, Hotkey, InputContext
 use crate::players::{LocalPlayer, Owner, Players};
 use crate::selection::Selected;
 use crate::units::Unit;
+use crate::vision::display::FogHidden;
 
 /// Marqueur : le panneau des boutons de construction.
 #[derive(Component, Debug)]
@@ -258,7 +259,8 @@ pub(crate) fn show_planned_sites(
 pub(crate) fn update_progress_bars(
     mut commands: Commands,
     camera: Single<(&Camera, &GlobalTransform), With<RtsCamera>>,
-    sites: Query<(Entity, &GlobalTransform, &UnderConstruction, &Children)>,
+    // Pas de barre pour un chantier caché par le brouillard.
+    sites: Query<(Entity, &GlobalTransform, &UnderConstruction, &Children), Without<FogHidden>>,
     bodies: Query<&BuildingBody>,
     mut bars: Query<(Entity, &ProgressBar, &mut Node, &mut Visibility, &Children), Without<ProgressFill>>,
     mut fills: Query<&mut Node, With<ProgressFill>>,
