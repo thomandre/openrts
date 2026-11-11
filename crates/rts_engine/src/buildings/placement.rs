@@ -10,9 +10,10 @@
 
 use bevy::prelude::*;
 
-use super::{completed_types, Building, BuildingCatalog, GhostPiece, PlacementGhost, UnderConstruction};
+use super::{completed_types, Building, BuildingCatalog, Footprint, GhostPiece, PlacementGhost, UnderConstruction};
 use crate::camera::{screen_to_ground, RtsCamera};
 use crate::cursor::Pointer;
+use crate::economy::{Notice, ResourceNode};
 use crate::input::{GameAction, InputContext};
 use crate::navigation::NavGrid;
 use crate::orders::{CommandQueue, PlayerCommand};
@@ -51,9 +52,11 @@ pub(crate) fn handle_build_actions(
     local: Res<LocalPlayer>,
     selected: Query<(Entity, &Unit, &Owner), With<Selected>>,
     buildings: Query<(&Building, &Owner, Has<UnderConstruction>)>,
+    nodes: Query<(Entity, &ResourceNode, &Footprint)>,
     mut placement: ResMut<Placement>,
     mut orders: ResMut<CommandQueue>,
     mut context: ResMut<InputContext>,
+    mut notices: MessageWriter<Notice>,
 ) {
     let Some(catalog) = catalog else {
         actions.clear();
@@ -73,10 +76,11 @@ pub(crate) fn handle_build_actions(
             GameAction::PlaceBuildingAt { screen_pos, keep_placing } => {
                 let (Some(type_index), Some(grid)) = (placement.active, grid.as_deref()) else { continue };
                 let Some(ground) = screen_to_ground(camera, camera_transform, screen_pos) else { continue };
-                let size = catalog.types[type_index].footprint;
-                let min_cell = grid.frame().min_cell_centered(ground.xz(), size);
-                // Emplacement interdit : on reste en mode pose (le fantôme est rouge).
-                if !grid.area_free(min_cell, size) {
+                let min_cell = catalog.snap_min_cell(type_index, ground.xz(), grid.frame(), nodes.iter());
+                // Emplacement interdit : on le dit, et on reste en mode pose
+                // (le fantôme est rouge). La simulation revérifiera de toute façon.
+                if let Err(kind) = catalog.check_placement(type_index, min_cell, grid, &completed, nodes.iter()) {
+                    notices.write(Notice { player: local.0, kind });
                     continue;
                 }
                 orders.push(local.0, PlayerCommand::Build { type_index, min_cell, builders: builders.clone() });
@@ -103,6 +107,7 @@ pub(crate) fn update_pointer_ghost(
     camera: Single<(&Camera, &GlobalTransform), With<RtsCamera>>,
     catalog: Option<Res<BuildingCatalog>>,
     grid: Option<Res<NavGrid>>,
+    nodes: Query<(Entity, &ResourceNode, &Footprint)>,
     mut ghosts: Query<(Entity, &mut PlacementGhost, &mut Visibility)>,
 ) {
     let (Some(catalog), Some(grid)) = (catalog, grid) else { return };
@@ -114,9 +119,8 @@ pub(crate) fn update_pointer_ghost(
         }
         return;
     };
-    let size = catalog.types[type_index].footprint;
     let ground = pointer.position.and_then(|pos| screen_to_ground(camera, camera_transform, pos));
-    let min_cell = ground.map(|g| grid.frame().min_cell_centered(g.xz(), size));
+    let min_cell = ground.map(|g| catalog.snap_min_cell(type_index, g.xz(), grid.frame(), nodes.iter()));
     match current {
         Some((_, mut ghost, mut visibility)) if ghost.type_index == type_index => {
             if let Some(min_cell) = min_cell {
@@ -142,13 +146,14 @@ pub(crate) fn update_pointer_ghost(
 }
 
 /// Place les fantômes sur leurs cases et les colore : vert si l'emplacement
-/// est libre (dans la carte, sans bâtiment ni obstacle) et les prérequis
-/// remplis, rouge sinon.
+/// est libre (dans la carte, sans bâtiment ni obstacle ; ou, pour un bâtiment
+/// d'extraction, pile sur une source libre) et les prérequis remplis, rouge sinon.
 pub(crate) fn refresh_ghosts(
     catalog: Option<Res<BuildingCatalog>>,
     grid: Option<Res<NavGrid>>,
     local: Res<LocalPlayer>,
     buildings: Query<(&Building, &Owner, Has<UnderConstruction>)>,
+    nodes: Query<(Entity, &ResourceNode, &Footprint)>,
     mut ghosts: Query<(&mut PlacementGhost, &mut Transform, &Children)>,
     mut pieces: Query<&mut MeshMaterial3d<StandardMaterial>, With<GhostPiece>>,
 ) {
@@ -158,7 +163,7 @@ pub(crate) fn refresh_ghosts(
         let size = catalog.types[ghost.type_index].footprint;
         let center = grid.frame().rect(ghost.min_cell, size).center();
         transform.translation = Vec3::new(center.x, 0.0, center.y);
-        let valid = grid.area_free(ghost.min_cell, size) && catalog.requirements_met(ghost.type_index, &completed);
+        let valid = catalog.check_placement(ghost.type_index, ghost.min_cell, &grid, &completed, nodes.iter()).is_ok();
         if ghost.valid == valid && !ghost.is_added() {
             continue;
         }

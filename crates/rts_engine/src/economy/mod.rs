@@ -1,10 +1,29 @@
-//! Économie : les deux ressources, les stocks des joueurs, les coûts.
+//! Économie : les deux ressources, les gisements, les stocks des joueurs,
+//! les coûts.
 //!
 //! Le moteur connaît deux sortes de ressources ([`ResourceKind`]) : une
-//! principale, abondante, et une rare. Leurs noms, couleurs et réglages
-//! viennent du jeu.
+//! principale, abondante, et une rare. Leurs noms, leurs couleurs et les
+//! réglages (charge d'un ouvrier, temps d'extraction…) viennent du jeu.
+//!
+//! Sur la carte, les ressources sont dans des **gisements**
+//! ([`ResourceNode`]) : des obstacles fixes qui contiennent une quantité
+//! finie. Ceux de ressource rare (les « sources ») ne se récoltent qu'une
+//! fois couverts par un bâtiment d'extraction terminé (voir
+//! [`crate::buildings::PlacementRule::OnResource`]).
+//!
+//! Tout ce qui change l'état du jeu (stocks, gisements) se fait dans la
+//! simulation à pas fixe ; les messages à l'écran ([`Notice`]) et les
+//! visuels ne font que refléter cet état.
 
 use std::ops::{Add, AddAssign};
+
+use bevy::prelude::*;
+
+use crate::buildings::Footprint;
+use crate::collision::StaticObstacle;
+use crate::navigation::GridFrame;
+use crate::players::PlayerId;
+use crate::simulation::SimSet;
 
 /// Les deux ressources du jeu (voir GAME_DESIGN.md, « Économie et ressources »).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -89,5 +108,168 @@ impl Add for Cost {
 impl AddAssign for Cost {
     fn add_assign(&mut self, other: Cost) {
         *self = *self + other;
+    }
+}
+
+/// Nom et couleur d'une ressource (données du jeu).
+#[derive(Debug, Clone)]
+pub struct ResourceInfo {
+    pub name: String,
+    /// Couleur lumineuse : charge portée par les ouvriers, compteurs.
+    pub color: Color,
+}
+
+/// Les règles économiques d'une faction, fournies par le jeu.
+#[derive(Resource, Debug, Clone)]
+pub struct EconomyRules {
+    /// Les deux ressources, dans l'ordre de [`ResourceKind::index`].
+    pub resources: [ResourceInfo; 2],
+}
+
+impl EconomyRules {
+    pub fn resource(&self, kind: ResourceKind) -> &ResourceInfo {
+        &self.resources[kind.index()]
+    }
+}
+
+/// Un gisement : une quantité finie d'une ressource, posée sur un bloc de
+/// cases de la grille (c'est un obstacle fixe, que les unités contournent).
+#[derive(Component, Debug, Clone, Copy, PartialEq)]
+pub struct ResourceNode {
+    pub kind: ResourceKind,
+    /// Ce qu'il reste à extraire.
+    pub amount: u32,
+    /// Quantité de départ (pour savoir à quel point il est entamé).
+    pub initial: u32,
+    /// Vrai pour une source qu'il faut couvrir d'un bâtiment d'extraction
+    /// avant de la récolter (ressource rare).
+    pub needs_extractor: bool,
+    /// Le bâtiment d'extraction posé dessus, s'il y en a un.
+    pub extractor: Option<Entity>,
+}
+
+impl ResourceNode {
+    /// Part restante, de 0 (épuisé) à 1 (intact).
+    pub fn fraction(&self) -> f32 {
+        if self.initial == 0 { 0.0 } else { self.amount as f32 / self.initial as f32 }
+    }
+}
+
+/// Fait apparaître un gisement de `amount` unités de `kind` sur le bloc de
+/// `size` cases dont le coin est `min_cell`. L'entité est placée au centre
+/// du bloc, au niveau du sol : le jeu y accroche ses visuels (en enfants),
+/// en marquant d'un [`DepletingVisual`] ceux qui rétrécissent quand le
+/// gisement s'épuise.
+pub fn spawn_resource_node(
+    commands: &mut Commands,
+    frame: GridFrame,
+    kind: ResourceKind,
+    min_cell: IVec2,
+    size: UVec2,
+    amount: u32,
+    needs_extractor: bool,
+) -> Entity {
+    let rect = frame.rect(min_cell, size);
+    let center = rect.center();
+    commands
+        .spawn((
+            Name::new("Gisement"),
+            ResourceNode { kind, amount, initial: amount, needs_extractor, extractor: None },
+            Footprint { min_cell, size },
+            StaticObstacle(rect),
+            Transform::from_xyz(center.x, 0.0, center.y),
+            Visibility::default(),
+        ))
+        .id()
+}
+
+/// Marqueur d'un visuel de gisement qui rétrécit à mesure qu'on le vide
+/// (enfant direct de l'entité du gisement).
+#[derive(Component, Debug, Clone, Copy)]
+pub struct DepletingVisual {
+    /// Échelle (largeur, hauteur) quand le gisement est presque vide ;
+    /// 1 quand il est plein.
+    pub min_scale: Vec2,
+}
+
+impl Default for DepletingVisual {
+    fn default() -> Self {
+        Self { min_scale: Vec2::new(0.55, 0.3) }
+    }
+}
+
+/// Un court message pour le joueur, quand la simulation refuse un ordre
+/// (ou que l'interface le refuse d'avance).
+///
+/// `#[derive(Message)]` : un « message » Bevy, que des systèmes écrivent
+/// (`MessageWriter`) et que d'autres lisent (`MessageReader`) pendant
+/// l'image suivante au plus tard.
+#[derive(Message, Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Notice {
+    /// Le joueur concerné : l'interface n'affiche que ceux du joueur local.
+    pub player: PlayerId,
+    pub kind: NoticeKind,
+}
+
+/// Les raisons d'un refus.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NoticeKind {
+    NotEnoughResources,
+    PopulationCap,
+    MustBeOnSource,
+    QueueFull,
+    MissingRequirement,
+    Blocked,
+}
+
+impl NoticeKind {
+    /// Le texte affiché.
+    pub fn text(self) -> &'static str {
+        match self {
+            NoticeKind::NotEnoughResources => "Ressources insuffisantes",
+            NoticeKind::PopulationCap => "Population maximale",
+            NoticeKind::MustBeOnSource => "Doit être posé sur une source",
+            NoticeKind::QueueFull => "File de production pleine",
+            NoticeKind::MissingRequirement => "Prérequis manquant",
+            NoticeKind::Blocked => "Emplacement occupé",
+        }
+    }
+}
+
+pub struct EconomyPlugin;
+
+impl Plugin for EconomyPlugin {
+    fn build(&self, app: &mut App) {
+        app.add_message::<Notice>()
+            .add_systems(FixedUpdate, release_lost_extractors.in_set(SimSet::Orders))
+            .add_systems(Update, shrink_nodes);
+    }
+}
+
+/// Une source dont le bâtiment d'extraction a disparu (chantier annulé,
+/// bâtiment détruit) redevient libre.
+fn release_lost_extractors(mut nodes: Query<&mut ResourceNode>, buildings: Query<()>) {
+    for mut node in &mut nodes {
+        if let Some(extractor) = node.extractor
+            && !buildings.contains(extractor)
+        {
+            node.extractor = None;
+        }
+    }
+}
+
+/// Affichage : les visuels d'un gisement rétrécissent à mesure qu'il se vide.
+fn shrink_nodes(
+    nodes: Query<(&ResourceNode, &Children), Changed<ResourceNode>>,
+    mut visuals: Query<(&DepletingVisual, &mut Transform)>,
+) {
+    for (node, children) in &nodes {
+        let fraction = node.fraction();
+        for child in children.iter() {
+            if let Ok((visual, mut transform)) = visuals.get_mut(child) {
+                let scale = visual.min_scale.lerp(Vec2::ONE, fraction);
+                transform.scale = Vec3::new(scale.x, scale.y, scale.x);
+            }
+        }
     }
 }

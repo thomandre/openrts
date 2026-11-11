@@ -42,9 +42,24 @@ use crate::RtsSystems;
 // `pub use` : le type `Cost` (défini dans `economy`) est aussi accessible
 // sous le nom `buildings::Cost`.
 pub use crate::economy::Cost;
+use crate::economy::{Notice, NoticeKind, ResourceKind, ResourceNode};
+
+/// Où un bâtiment peut se poser.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum PlacementRule {
+    /// Sur n'importe quel terrain libre.
+    #[default]
+    Anywhere,
+    /// Exactement sur une source libre de cette ressource (même empreinte
+    /// que la source) : c'est le bâtiment d'extraction de la ressource rare.
+    OnResource(ResourceKind),
+}
 
 /// Description d'un type de bâtiment, purement en données.
-#[derive(Debug, Clone)]
+///
+/// `Default` permet d'écrire `BuildingType { name: …, ..default() }` en ne
+/// donnant que les champs utiles : les autres prennent leur valeur par défaut.
+#[derive(Debug, Clone, Default)]
 pub struct BuildingType {
     pub name: String,
     /// Empreinte au sol en cases de la grille de navigation : (x, z).
@@ -62,6 +77,8 @@ pub struct BuildingType {
     /// Les pièces du modèle, pieds au sol (y = 0), centré sur l'empreinte,
     /// avant vers −z.
     pub parts: Vec<Part>,
+    /// Où il peut se poser.
+    pub placement: PlacementRule,
 }
 
 /// Façon de construire d'une faction.
@@ -159,6 +176,72 @@ impl BuildingCatalog {
     /// dit si le joueur possède un bâtiment terminé du type `i`.
     pub fn requirements_met(&self, type_index: usize, completed: &[bool]) -> bool {
         self.types[type_index].requires.iter().all(|&r| completed.get(r).copied().unwrap_or(false))
+    }
+
+    /// Le type `type_index` peut-il se poser sur le bloc de cases dont le coin
+    /// est `min_cell` ? Vérifie le terrain (ou la source, pour un bâtiment
+    /// d'extraction) et les prérequis (`completed`, voir [`completed_types`]).
+    /// En cas de succès, renvoie la source couverte, s'il y en a une.
+    pub fn check_placement<'a>(
+        &self,
+        type_index: usize,
+        min_cell: IVec2,
+        grid: &NavGrid,
+        completed: &[bool],
+        nodes: impl IntoIterator<Item = (Entity, &'a ResourceNode, &'a Footprint)>,
+    ) -> Result<Option<Entity>, NoticeKind> {
+        let building = &self.types[type_index];
+        if !self.requirements_met(type_index, completed) {
+            return Err(NoticeKind::MissingRequirement);
+        }
+        match building.placement {
+            PlacementRule::Anywhere => {
+                if grid.area_free(min_cell, building.footprint) {
+                    Ok(None)
+                } else {
+                    Err(NoticeKind::Blocked)
+                }
+            }
+            // La source est elle-même un obstacle : on ne regarde pas la
+            // grille, seulement s'il y a là une source libre de même taille.
+            PlacementRule::OnResource(kind) => nodes
+                .into_iter()
+                .find(|(_, node, footprint)| {
+                    node.kind == kind
+                        && node.needs_extractor
+                        && node.extractor.is_none()
+                        && footprint.min_cell == min_cell
+                        && footprint.size == building.footprint
+                })
+                .map(|(entity, ..)| Some(entity))
+                .ok_or(NoticeKind::MustBeOnSource),
+        }
+    }
+
+    /// Case de coin où poser le type `type_index` visé au point `ground` :
+    /// centré sous le pointeur, ou, pour un bâtiment d'extraction, aimanté
+    /// sur la source la plus proche (à moins de 3 m de son bord).
+    pub fn snap_min_cell<'a>(
+        &self,
+        type_index: usize,
+        ground: Vec2,
+        frame: GridFrame,
+        nodes: impl IntoIterator<Item = (Entity, &'a ResourceNode, &'a Footprint)>,
+    ) -> IVec2 {
+        let building = &self.types[type_index];
+        let centered = frame.min_cell_centered(ground, building.footprint);
+        let PlacementRule::OnResource(kind) = building.placement else { return centered };
+        nodes
+            .into_iter()
+            .filter(|(_, node, footprint)| node.kind == kind && node.needs_extractor && footprint.size == building.footprint)
+            .map(|(entity, _, footprint)| {
+                let rect = frame.rect(footprint.min_cell, footprint.size);
+                (distance_to_rect(ground, rect), entity, footprint.min_cell)
+            })
+            .filter(|(distance, ..)| *distance <= 3.0)
+            // Le plus proche ; à égalité, le plus petit identifiant.
+            .min_by(|a, b| a.0.total_cmp(&b.0).then(a.1.cmp(&b.1)))
+            .map_or(centered, |(.., min_cell)| min_cell)
     }
 
     /// Fait apparaître un bâtiment du type `type_index` sur le bloc de cases
@@ -459,6 +542,8 @@ fn apply_build_orders(
     grid: Option<Res<NavGrid>>,
     buildings: Query<(&Building, &Owner, Has<UnderConstruction>)>,
     mut builders: Query<(Entity, &Owner, &SimPosition, Option<&mut ConstructionTask>), With<Unit>>,
+    mut nodes: Query<(Entity, &mut ResourceNode, &Footprint)>,
+    mut notices: MessageWriter<Notice>,
 ) {
     // Pas encore de grille (tout premier pas) ou pas de bâtiments dans ce jeu.
     let (Some(grid), Some(catalog)) = (grid, catalog) else { return };
@@ -475,10 +560,15 @@ fn apply_build_orders(
         let completed = completed_types(&catalog, player, buildings.iter());
         let rect = grid.frame().rect(min_cell, building.footprint);
         let overlaps = placed.iter().any(|p| !p.intersect(rect).is_empty());
-        if !grid.area_free(min_cell, building.footprint) || overlaps || !catalog.requirements_met(type_index, &completed) {
-            info!("Pose refusée : {} en {}", building.name, min_cell);
-            continue;
-        }
+        let check = catalog.check_placement(type_index, min_cell, &grid, &completed, nodes.iter());
+        let source = match (check, overlaps) {
+            (Ok(source), false) => source,
+            (result, _) => {
+                info!("Pose refusée : {} en {}", building.name, min_cell);
+                notices.write(Notice { player, kind: result.err().unwrap_or(NoticeKind::Blocked) });
+                continue;
+            }
+        };
         // L'ouvrier : d'abord ceux qui n'ont rien à faire, puis le plus proche
         // du chantier, puis le plus petit identifiant (déterministe).
         let mine = owned_units(ordered, player, |e| builders.get(e).ok().map(|(_, o, ..)| *o));
@@ -495,6 +585,12 @@ fn apply_build_orders(
 
         let site = catalog.spawn(&mut commands, grid.frame(), player, type_index, min_cell, Some(0.0));
         placed.push(rect);
+        // Le bâtiment d'extraction se réserve sa source.
+        if let Some(source) = source
+            && let Ok((_, mut node, _)) = nodes.get_mut(source)
+        {
+            node.extractor = Some(site);
+        }
         match assigned.iter_mut().find(|(b, _)| *b == builder) {
             Some((_, sites)) => sites.push(site),
             None => assigned.push((builder, vec![site])),
@@ -617,6 +713,7 @@ mod tests {
     use super::*;
     use crate::collision::CollisionLayer;
     use crate::input::{GameAction, InputContext};
+    use crate::economy::EconomyPlugin;
     use crate::orders::{CommandQueue, OrdersPlugin};
     use crate::players::PlayersPlugin;
     use crate::simulation::{MoveSpeed, SimulationPlugin};
@@ -647,7 +744,7 @@ mod tests {
             .add_message::<GameAction>()
             .init_resource::<InputContext>()
             .init_resource::<crate::cursor::Pointer>()
-            .add_plugins((SimulationPlugin, PlayersPlugin, OrdersPlugin, BuildingsPlugin))
+            .add_plugins((SimulationPlugin, PlayersPlugin, OrdersPlugin, EconomyPlugin, BuildingsPlugin))
             // Chaque `update` avance le temps d'exactement un pas de simulation.
             .insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_secs_f64(1.0 / 32.0)));
         let (mut meshes, mut materials, mut images) = (Assets::default(), Assets::default(), Assets::default());
@@ -660,9 +757,17 @@ mod tests {
             cost: Cost::default(),
             requires: Vec::new(),
             hotkey: 'a',
-            parts: Vec::new(),
+            ..default()
         };
-        let catalog = BuildingCatalog::new(vec![building], vec![0], ConstructionStyle::WorkerStays, &units, &mut meshes, &mut materials);
+        // Un second type, qui se pose sur une source de ressource rare.
+        let extractor = BuildingType {
+            name: "Puits".into(),
+            footprint: UVec2::new(4, 4),
+            placement: PlacementRule::OnResource(ResourceKind::Rare),
+            ..building.clone()
+        };
+        let catalog =
+            BuildingCatalog::new(vec![building, extractor], vec![0], ConstructionStyle::WorkerStays, &units, &mut meshes, &mut materials);
         app.insert_resource(catalog);
         let worker = app
             .world_mut()
@@ -683,9 +788,40 @@ mod tests {
 
     /// Le joueur 0 demande un chantier en `min_cell`, confié à `worker`.
     fn build(app: &mut App, min_cell: IVec2, worker: Entity) {
+        build_type(app, 0, min_cell, worker);
+    }
+
+    fn build_type(app: &mut App, type_index: usize, min_cell: IVec2, worker: Entity) {
         app.world_mut()
             .resource_mut::<CommandQueue>()
-            .push(PlayerId(0), PlayerCommand::Build { type_index: 0, min_cell, builders: vec![worker] });
+            .push(PlayerId(0), PlayerCommand::Build { type_index, min_cell, builders: vec![worker] });
+    }
+
+    #[test]
+    fn extractor_must_cover_a_free_source() {
+        let (mut app, worker) = app();
+        let frame = app.world().resource::<NavGrid>().frame();
+        let source = {
+            let mut commands = app.world_mut().commands();
+            crate::economy::spawn_resource_node(&mut commands, frame, ResourceKind::Rare, IVec2::new(60, 60), UVec2::new(4, 4), 500, true)
+        };
+        app.world_mut().flush();
+        // À côté de la source : refusé.
+        build_type(&mut app, 1, IVec2::new(40, 40), worker);
+        app.update();
+        let world = app.world_mut();
+        assert_eq!(world.query::<&Building>().iter(world).count(), 0, "pas de source ici");
+        // Pile dessus : accepté, et la source est réservée.
+        build_type(&mut app, 1, IVec2::new(60, 60), worker);
+        app.update();
+        let world = app.world_mut();
+        assert_eq!(world.query::<&Building>().iter(world).count(), 1);
+        assert!(world.get::<ResourceNode>(source).unwrap().extractor.is_some());
+        // Une seconde fois : la source est prise.
+        build_type(&mut app, 1, IVec2::new(60, 60), worker);
+        app.update();
+        let world = app.world_mut();
+        assert_eq!(world.query::<&Building>().iter(world).count(), 1, "source déjà couverte");
     }
 
     #[test]

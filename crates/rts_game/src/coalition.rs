@@ -20,7 +20,8 @@
 use std::f32::consts::{FRAC_PI_2, PI};
 
 use bevy::prelude::*;
-use rts_engine::buildings::{BuildingType, Cost};
+use rts_engine::buildings::{BuildingType, Cost, PlacementRule};
+use rts_engine::economy::ResourceKind;
 use rts_engine::graphics::{Ambiance, EnvironmentSettings, FogSettings, ParticleSettings, SceneLight};
 use rts_engine::units::{
     HoverMotion, MaterialSlot, ModelBuilder, Motion, Palette, PartShape, Pulse, SurfaceDetail, SurfaceStyle, UnitType,
@@ -447,14 +448,16 @@ pub mod building {
 ///
 /// Chiffres provisoires (PV, temps en secondes, coût en ressource principale
 /// et rare), inspirés des ratios de SC2, à ajuster en test. L'Extracteur se
-/// pose pour l'instant n'importe où : les gisements de ressource rare
-/// n'existent pas encore.
+/// pose exactement sur une source de ressource rare (4 × 4 m, comme elle).
 pub fn building_types() -> Vec<BuildingType> {
     use building::*;
     vec![
         building_type("Quartier général", (7, 7), 1500.0, 70.0, (400, 0), &[], 'q', quartier_general()),
         building_type("Module d'habitat", (3, 3), 400.0, 20.0, (100, 0), &[], 'h', habitat()),
-        building_type("Extracteur", (4, 4), 500.0, 22.0, (75, 0), &[], 'e', extracteur()),
+        BuildingType {
+            placement: PlacementRule::OnResource(ResourceKind::Rare),
+            ..building_type("Extracteur", (4, 4), 500.0, 22.0, (75, 0), &[], 'e', extracteur())
+        },
         building_type("Caserne", (5, 6), 1000.0, 45.0, (150, 0), &[QUARTIER_GENERAL], 'c', caserne()),
         building_type("Tourelle", (2, 2), 250.0, 18.0, (100, 0), &[CASERNE], 't', tourelle()),
     ]
@@ -480,6 +483,7 @@ fn building_type(
         requires: requires.to_vec(),
         hotkey,
         parts: model.build(),
+        ..Default::default()
     }
 }
 

@@ -51,6 +51,7 @@ impl Plugin for RtsEnginePlugin {
                 simulation::SimulationPlugin,
                 players::PlayersPlugin,
                 orders::OrdersPlugin,
+                economy::EconomyPlugin,
                 buildings::BuildingsPlugin,
                 graphics::GraphicsPlugin,
                 devtools::DevToolsPlugin,

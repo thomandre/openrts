@@ -47,9 +47,12 @@ fn place(commands: &mut Commands, catalog: &BuildingCatalog, frame: GridFrame, t
     catalog.spawn(commands, frame, HUMAN, type_index, min_cell, None)
 }
 
+/// Centre du Quartier général de départ (les gisements se placent autour).
+pub const START_HQ: Vec2 = Vec2::new(0.0, -13.0);
+
 /// Partie normale : le Quartier général et quatre Techniciens.
 pub fn spawn_start(commands: &mut Commands, buildings: &BuildingCatalog, units: &UnitCatalog, frame: GridFrame) {
-    place(commands, buildings, frame, QUARTIER_GENERAL, Vec2::new(0.0, -13.0));
+    place(commands, buildings, frame, QUARTIER_GENERAL, START_HQ);
     for x in [-3.0, -1.0, 1.0, 3.0] {
         units.spawn_facing(commands, TECHNICIEN, Vec2::new(x, -7.8), std::f32::consts::PI);
     }
@@ -116,9 +119,9 @@ fn order_demo_group(
     orders.push(HUMAN, PlayerCommand::Move { units: members, target: Vec2::new(2.6, -16.7) });
 }
 
-/// `OPENRTS_FOCUS=x,z` : point du sol visé par la caméra au démarrage de la
-/// démonstration (pour une vue rapprochée d'un bâtiment).
-fn focus_camera(mut cameras: Query<&mut RtsCamera, Added<RtsCamera>>) {
+/// `OPENRTS_FOCUS=x,z` : point du sol visé par la caméra au démarrage (pour
+/// une vue rapprochée d'un bâtiment, d'un gisement…).
+pub fn focus_camera(mut cameras: Query<&mut RtsCamera, Added<RtsCamera>>) {
     let Ok(text) = std::env::var("OPENRTS_FOCUS") else { return };
     let values: Vec<f32> = text.split(',').filter_map(|v| v.trim().parse().ok()).collect();
     if let [x, z] = values[..] {
@@ -133,7 +136,7 @@ pub struct DemoPlugin;
 
 impl Plugin for DemoPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(Update, (order_demo_group, focus_camera));
+        app.add_systems(Update, order_demo_group);
     }
 }
 

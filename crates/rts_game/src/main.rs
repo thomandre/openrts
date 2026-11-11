@@ -18,6 +18,7 @@ mod base;
 mod coalition;
 mod collectif;
 mod collectif_or_rose;
+mod gisements;
 mod map;
 mod sylves;
 
@@ -30,6 +31,7 @@ use rts_engine::camera::RtsCamera;
 use rts_engine::collision::MapBounds;
 use rts_engine::cursor::CursorCaptureSettings;
 use rts_engine::devtools::AutoScreenshot;
+use rts_engine::economy::EconomyRules;
 use rts_engine::graphics::{Ambiance, GraphicsQuality, ReflectionPanels};
 use rts_engine::input::GameAction;
 use rts_engine::navigation::{GridFrame, NavSettings};
@@ -227,7 +229,8 @@ fn main() {
     .insert_resource(quality)
     .insert_resource(faction)
     .insert_resource(faction.ambiance())
-    .add_systems(Startup, (setup_world, spawn_units));
+    .add_systems(Startup, (setup_world, spawn_units))
+    .add_systems(Update, base::focus_camera);
 
     if let Some(panels) = faction.reflection_panels() {
         app.insert_resource(panels);
@@ -294,8 +297,12 @@ fn spawn_units(
             base::spawn_demo(&mut commands, &buildings, &catalog, frame);
         } else {
             base::spawn_start(&mut commands, &buildings, &catalog, frame);
+            // Les gisements de la base de départ, autour du Quartier général.
+            let deposits = gisements::DepositVisuals::new(&mut meshes, &mut materials);
+            gisements::spawn_base(&mut commands, &deposits, frame, &gisements::starting_base(base::START_HQ));
         }
         commands.insert_resource(buildings);
+        commands.insert_resource(EconomyRules { resources: gisements::resource_infos() });
         if demo {
             commands.insert_resource(catalog);
             return;
