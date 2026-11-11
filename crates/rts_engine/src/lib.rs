@@ -56,6 +56,7 @@ impl Plugin for RtsEnginePlugin {
                 economy::EconomyUiPlugin,
                 combat::CombatPlugin,
                 combat::ui::CombatUiPlugin,
+                combat::effects::CombatEffectsPlugin,
                 buildings::BuildingsPlugin,
                 graphics::GraphicsPlugin,
                 devtools::DevToolsPlugin,

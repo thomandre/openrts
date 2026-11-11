@@ -473,6 +473,27 @@ impl BuildingCatalog {
             .id()
     }
 
+    /// Hauteur du sommet du modèle d'un type de bâtiment (barres de vie).
+    pub(crate) fn model_top(&self, type_index: usize) -> f32 {
+        self.visuals.get(type_index).map_or(3.0, |v| v.top)
+    }
+
+    /// Ruine d'un bâtiment détruit (affichage seulement) : son modèle posé
+    /// au sol, centré en `center`, aux couleurs du joueur `owner`.
+    pub(crate) fn spawn_wreck(&self, commands: &mut Commands, owner: PlayerId, type_index: usize, center: Vec2) -> Option<Entity> {
+        let visual = self.visuals.get(type_index)?;
+        let materials = self.materials.get(usize::from(owner.0)).unwrap_or(&self.materials[0]);
+        let root = commands
+            .spawn((
+                Name::new("Ruine"),
+                Transform::from_xyz(center.x, 0.0, center.y).with_rotation(Quat::from_rotation_y(self.facing)),
+                Visibility::default(),
+            ))
+            .with_children(|body| spawn_model(body, visual, position_jitter(center), materials))
+            .id();
+        Some(root)
+    }
+
     pub(crate) fn ghost_material(&self, valid: bool) -> Handle<StandardMaterial> {
         self.ghost_materials[usize::from(!valid)].clone()
     }

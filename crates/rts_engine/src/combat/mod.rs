@@ -42,6 +42,7 @@
 //! pas sur [`RESCAN_TICKS`] (en décalé), ou quand sa cible disparaît : pas de
 //! comparaison de chaque unité avec toutes les autres.
 
+pub mod effects;
 pub mod ui;
 
 use bevy::ecs::query::QueryData;

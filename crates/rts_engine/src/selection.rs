@@ -72,7 +72,7 @@ impl Plugin for SelectionPlugin {
 ///
 /// Pour chaque entité, on regarde où le rayon traverse le plan horizontal
 /// passant par son centre : si c'est dans sa zone cliquable, elle est touchée.
-fn pick(ray: Ray3d, units: &Query<(Entity, &GlobalTransform, &Selectable)>) -> Option<Entity> {
+pub(crate) fn pick(ray: Ray3d, units: &Query<(Entity, &GlobalTransform, &Selectable)>) -> Option<Entity> {
     units
         .iter()
         .filter_map(|(entity, transform, selectable)| {

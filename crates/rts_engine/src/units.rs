@@ -597,6 +597,24 @@ impl UnitCatalog {
         self.enemy_ring_material.clone()
     }
 
+    /// Hauteur du sommet du modèle d'un type d'unité (barres de vie).
+    pub(crate) fn model_top(&self, type_index: usize) -> f32 {
+        self.visuals.get(type_index).map_or(1.5, |v| v.top)
+    }
+
+    /// Épave d'une unité détruite (affichage seulement) : son modèle, sans
+    /// rien de la simulation, posé au sol en `pos`, tourné de `yaw`. Mêmes
+    /// maillages et matériaux partagés que les unités vivantes.
+    pub(crate) fn spawn_wreck(&self, commands: &mut Commands, owner: PlayerId, type_index: usize, pos: Vec2, yaw: f32) -> Option<Entity> {
+        let visual = self.visuals.get(type_index)?;
+        let materials = self.materials_for(owner);
+        let root = commands
+            .spawn((Name::new("Épave"), Transform::from_xyz(pos.x, 0.0, pos.y).with_rotation(Quat::from_rotation_y(yaw)), Visibility::default()))
+            .with_children(|body| spawn_model(body, visual, position_jitter(pos), materials))
+            .id();
+        Some(root)
+    }
+
     /// Fait apparaître une unité du type `type_index` à la position (x, z) du sol.
     pub fn spawn(&self, commands: &mut Commands, type_index: usize, pos: Vec2) -> Entity {
         self.spawn_facing(commands, type_index, pos, 0.0)
