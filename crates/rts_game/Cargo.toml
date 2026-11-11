@@ -1,0 +1,13 @@
+[package]
+name = "rts_game"
+description = "Le jeu : factions, unités et cartes, au-dessus de rts_engine"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+bevy.workspace = true
+rts_engine.workspace = true

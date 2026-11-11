@@ -1,0 +1,12 @@
+[package]
+name = "rts_engine"
+description = "Moteur RTS générique construit sur Bevy"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+bevy.workspace = true

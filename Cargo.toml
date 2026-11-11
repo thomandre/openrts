@@ -1,0 +1,28 @@
+[workspace]
+resolver = "3"
+members = ["crates/rts_engine", "crates/rts_game"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+
+[workspace.dependencies]
+# `system_font_discovery` : l'interface utilise les polices du système (la
+# police intégrée par défaut de Bevy n'a pas les lettres accentuées).
+bevy = { version = "0.20.1", features = ["system_font_discovery"] }
+rts_engine = { path = "crates/rts_engine" }
+
+# Les systèmes Bevy prennent souvent beaucoup de paramètres aux types longs :
+# c'est normal en ECS, on désactive donc ces deux avertissements de Clippy.
+[workspace.lints.clippy]
+too_many_arguments = "allow"
+type_complexity = "allow"
+
+# Bevy est lent en mode debug : on optimise les dépendances même en dev,
+# tout en gardant notre propre code rapide à recompiler.
+[profile.dev]
+opt-level = 1
+
+[profile.dev.package."*"]
+opt-level = 3

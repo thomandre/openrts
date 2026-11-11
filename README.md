@@ -1,0 +1,114 @@
+# openRTS
+
+Un jeu de stratégie en temps réel (RTS) en 3D, jouable à la souris comme au doigt,
+écrit en Rust avec le moteur [Bevy](https://bevyengine.org) 0.20.
+
+Le design du jeu est décrit dans [GAME_DESIGN.md](GAME_DESIGN.md).
+
+## Organisation du dépôt
+
+| Dossier | Rôle |
+| --- | --- |
+| `crates/rts_engine` | Le moteur générique : entrées, caméra, sélection, simulation, collisions, navigation (grille, A\*), bâtiments (pose, chantiers), rendu (`graphics`). Aucun contenu de jeu. |
+| `crates/rts_game` | Le jeu : unités, bâtiments, factions, cartes (`coalition.rs`, `sylves.rs`, `collectif.rs`, `map.rs`, `base.rs`). Utilise `rts_engine`. |
+
+## Compiler et lancer
+
+Il faut Rust stable (installé avec [rustup](https://rustup.rs)), puis :
+
+```sh
+cargo run
+```
+
+La première compilation de Bevy prend plusieurs minutes ; les suivantes sont rapides.
+Sous Linux, il faut aussi les dépendances système de Bevy
+(voir le [guide Bevy pour Linux](https://github.com/bevyengine/bevy/blob/main/docs/linux_dependencies.md)).
+
+## Commandes (ordinateur)
+
+| Action | Commande |
+| --- | --- |
+| Sélectionner une unité | Clic gauche |
+| Sélection en rectangle | Glisser au clic gauche |
+| Ajouter / retirer de la sélection | Maj + clic ou Maj + rectangle |
+| Déplacer la sélection | Clic droit sur le sol |
+| Faire défiler la caméra | Flèches ou souris au bord de l'écran |
+| Zoomer | Molette ou trackpad |
+| Test de charge (300 unités) | F3 |
+| Construire (un Technicien sélectionné) | B puis la touche du bâtiment, ou un bouton de la barre en bas de l'écran |
+| Poser le bâtiment | Clic gauche (Maj + clic : en poser un autre) |
+| Annuler la pose | Clic droit ou Échap |
+| Libérer la souris | Échap (un clic dans le jeu la reprend ; pendant une pose, le premier Échap annule la pose) |
+| Quitter | Cmd + Q (macOS), Alt + F4 (Windows, Linux) |
+
+Le jeu s'ouvre en plein écran. Pour que les bords d'écran servent au défilement
+sans déclencher les coins actifs, la barre de menus ou le Dock de macOS, le curseur
+du système est verrouillé et le jeu dessine le sien, qui ne peut pas sortir de l'écran.
+
+Les unités ne se traversent pas : elles se bousculent, écartent les unités
+immobiles de leur chemin et s'arrêtent en groupe serré à l'arrivée. Elles
+contournent les bâtiments (grille de navigation de 1 m et A\*) ; les grosses
+unités évitent les passages trop étroits pour elles. Les unités volantes
+passent au-dessus de tout et ne gênent que les autres volantes.
+
+### Bâtiments de la Coalition
+
+| Touche (après B) | Bâtiment | Empreinte | Prérequis |
+| --- | --- | --- | --- |
+| Q | Quartier général | 7 × 7 m | — |
+| H | Module d'habitat | 3 × 3 m | — |
+| E | Extracteur | 4 × 4 m | — (posable partout tant qu'il n'y a pas de gisements) |
+| C | Caserne | 5 × 6 m | Quartier général |
+| T | Tourelle | 2 × 2 m | Caserne |
+
+Les raccourcis sont des lettres tapées : ils suivent ce qui est écrit sur les
+touches, en AZERTY comme en QWERTY. En mode pose, un fantôme suit le pointeur,
+aligné sur la grille : vert si l'emplacement est libre, rouge sinon. Le
+Technicien le plus proche se rend sur le chantier et y reste : le bâtiment
+monte du sol tant qu'il travaille. Les coûts sont affichés mais pas encore
+débités (pas d'économie pour l'instant). La partie démarre avec un Quartier
+général et quatre Techniciens.
+
+## Rendu et réglages graphiques
+
+Le moteur gère le rendu (module `graphics`) : HDR, tone mapping filmique (ACES),
+bloom sur les pièces lumineuses, ombres en cascade recadrées sur la zone visible,
+brouillard proportionnel au zoom, éclairage d'ambiance par image (IBL) calculé au
+démarrage, lumière principale et contre-jours colorés, particules d'ambiance.
+Les couleurs (lumières, ciel, brouillard) viennent d'une `Ambiance` fournie par le
+jeu ; l'apparence des unités est décrite en données, pièce par pièce
+(`ModelBuilder`), avec une `Palette` de matériaux par faction.
+
+Deux niveaux de qualité (`GraphicsQuality`) :
+
+| Qualité | Contenu | Cible |
+| --- | --- | --- |
+| Haute (défaut) | HDR + bloom, MSAA ×4, 3 cascades d'ombre filtrées en douceur | Ordinateur |
+| Basse | Sans HDR ni bloom, FXAA, 1 cascade d'ombre, 3 fois moins de particules | iPad, machines modestes |
+
+## Variables de développement
+
+| Variable | Effet |
+| --- | --- |
+| `OPENRTS_WINDOWED=1` | Fenêtre au lieu du plein écran, souris libre |
+| `OPENRTS_FACTION=sylves` | Faction affichée : `coalition` (défaut), `sylves` ou `collectif` (ambiance, sol, unités, test de charge) |
+| `OPENRTS_QUALITY=bas` | Qualité graphique Basse (`haut` par défaut) |
+| `OPENRTS_STRESS=1` | Lance le test de charge (300 unités) au démarrage |
+| `OPENRTS_ZOOM=12` | Distance de départ de la caméra (10 à 70 m) |
+| `OPENRTS_DEMO=buildings` | Coalition : scène de démonstration des bâtiments (les cinq bâtiments, un chantier en cours, un fantôme vert et un rouge, un groupe qui contourne la Caserne au bout de 11 s) ; avec `OPENRTS_FOCUS=x,z`, la caméra vise ce point du sol |
+| `OPENRTS_SCREENSHOT=capture.png` | Après 14 s : affiche les FPS moyens des 6 dernières secondes, enregistre une capture du rendu et quitte (synchronisation verticale coupée pour mesurer) |
+
+Exemples : `OPENRTS_WINDOWED=1 OPENRTS_STRESS=1 OPENRTS_SCREENSHOT=/tmp/charge.png cargo run --release`,
+`OPENRTS_WINDOWED=1 OPENRTS_DEMO=buildings OPENRTS_ZOOM=36 OPENRTS_SCREENSHOT=/tmp/batiments.png cargo run --release`.
+Pour mesurer les performances, compiler en `--release` : en mode debug, les
+vérifications internes de Bevy et de wgpu coûtent beaucoup d'images par seconde.
+
+## Licence
+
+Le code est sous double licence, au choix :
+
+- Apache License, Version 2.0 ([LICENSE-APACHE](LICENSE-APACHE))
+- MIT ([LICENSE-MIT](LICENSE-MIT))
+
+Sauf mention contraire, toute contribution envoyée pour être incluse dans le projet
+est placée sous cette même double licence, sans condition supplémentaire.

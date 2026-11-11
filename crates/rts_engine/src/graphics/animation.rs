@@ -1,0 +1,179 @@
+//! Animations des pièces d'unités : purement visuelles.
+//!
+//! Elles tournent dans `Update` (à chaque image) et ne touchent qu'à
+//! l'affichage : la simulation (`FixedUpdate`, positions, collisions) n'en
+//! sait rien, ce qui la garde déterministe.
+//!
+//! Deux sortes d'animations, décrites en données :
+//!
+//! - un [`Motion`] fait bouger un groupe de pièces autour d'un pivot (tourelle
+//!   qui balaie, radar qui tourne, flamme qui scintille). Le groupe devient un
+//!   maillage séparé, enfant du corps de l'unité : à utiliser avec parcimonie ;
+//! - une [`Pulse`] fait varier l'intensité d'un matériau émissif (réacteurs,
+//!   gyrophares). Le matériau est partagé par toutes les pièces qui pulsent de
+//!   la même façon : on ne modifie que lui, pas chaque unité (voir
+//!   [`animate_pulses`] pour les précautions de performance).
+
+use std::collections::HashMap;
+use std::f32::consts::TAU;
+
+use bevy::prelude::*;
+
+/// Mouvement d'un groupe de pièces animées, autour de son pivot.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Motion {
+    /// Balayage : rotation aller-retour de ±`amplitude` radians autour de
+    /// `axis`, `frequency` allers-retours par seconde.
+    Swing { axis: Vec3, amplitude: f32, frequency: f32 },
+    /// Rotation continue (radar, hélice) : `speed` radians par seconde.
+    Spin { axis: Vec3, speed: f32 },
+    /// Scintillement : l'échelle varie vite et irrégulièrement de ±`amplitude`
+    /// le long de `axis` (`Vec3::Y` : une flamme qui s'allonge et se raccourcit).
+    Flicker { axis: Vec3, amplitude: f32, frequency: f32 },
+}
+
+impl Motion {
+    /// Déplacement à l'instant `t` (en secondes), relatif à la position de repos.
+    pub fn sample(&self, t: f32) -> Transform {
+        match *self {
+            Motion::Swing { axis, amplitude, frequency } => {
+                // Un sinus plus une harmonique lente : le balayage n'est pas
+                // parfaitement régulier, comme un tireur qui cherche une cible.
+                let phase = t * frequency * TAU;
+                let angle = amplitude * (0.85 * phase.sin() + 0.15 * (phase * 0.5).sin());
+                Transform::from_rotation(Quat::from_axis_angle(axis.normalize_or(Vec3::Y), angle))
+            }
+            Motion::Spin { axis, speed } => {
+                Transform::from_rotation(Quat::from_axis_angle(axis.normalize_or(Vec3::Y), speed * t))
+            }
+            Motion::Flicker { axis, amplitude, frequency } => {
+                // Deux sinus de fréquences sans rapport simple : le motif ne se
+                // répète pas de façon visible.
+                let phase = t * frequency * TAU;
+                let wave = 0.6 * phase.sin() + 0.4 * (phase * 2.37 + 1.3).sin();
+                Transform::from_scale(Vec3::ONE + axis * amplitude * wave)
+            }
+        }
+    }
+}
+
+/// Pulsation de l'intensité d'un matériau émissif : elle varie entre `min` et
+/// `max` fois sa valeur d'origine, `frequency` fois par seconde.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Pulse {
+    pub min: f32,
+    pub max: f32,
+    pub frequency: f32,
+}
+
+/// Une entité animée par un [`Motion`] : sa transformation vaut à chaque
+/// image `rest` (le pivot) suivi du mouvement.
+#[derive(Component, Debug, Clone, Copy)]
+pub struct AnimatedPart {
+    pub motion: Motion,
+    pub rest: Transform,
+    /// Décalage dans le temps, en secondes : deux unités voisines ne bougent pas en chœur.
+    pub phase: f32,
+}
+
+pub(super) fn animate_parts(time: Res<Time>, mut parts: Query<(&AnimatedPart, &mut Transform)>) {
+    let t = time.elapsed_secs();
+    for (part, mut transform) in &mut parts {
+        // `Transform * Transform` : applique d'abord le mouvement, puis le pivot.
+        *transform = part.rest * part.motion.sample(t + part.phase);
+    }
+}
+
+impl Pulse {
+    /// Facteur d'intensité à l'instant `t`.
+    pub fn factor(&self, t: f32) -> f32 {
+        let wave = 0.5 + 0.5 * (t * self.frequency * TAU).sin();
+        self.min + (self.max - self.min) * wave
+    }
+}
+
+/// À placer sur une pièce dessinée avec un `StandardMaterial` émissif : le
+/// moteur remplace son matériau par une copie qui pulse (une seule copie par
+/// matériau d'origine, pulsation et décalage : le dessin en lot est préservé).
+#[derive(Component, Debug, Clone, Copy)]
+pub struct PulsingPiece {
+    pub pulse: Pulse,
+    /// Décalage dans le temps, en secondes. Garder peu de valeurs différentes
+    /// (chaque valeur crée un matériau).
+    pub phase: f32,
+}
+
+/// Un matériau qui pulse : sa couleur émise de référence et sa pulsation.
+struct PulsingMaterial {
+    handle: Handle<StandardMaterial>,
+    emissive: LinearRgba,
+    pulse: Pulse,
+    phase: f32,
+}
+
+/// Les matériaux qui pulsent, créés à la demande. La clé : le matériau
+/// d'origine, la pulsation et le décalage. Un `f32` n'est pas utilisable
+/// comme clé de `HashMap` (NaN ≠ NaN) : on se sert de ses bits, de simples entiers.
+#[derive(Resource, Default)]
+pub(super) struct PulsingMaterials {
+    by_key: HashMap<(AssetId<StandardMaterial>, [u32; 4]), usize>,
+    list: Vec<PulsingMaterial>,
+    /// Instant de la dernière mise à jour (voir [`animate_pulses`]).
+    last_update: f32,
+}
+
+/// Remplace, une seule fois, le matériau des nouvelles pièces qui pulsent.
+pub(super) fn apply_pulse_materials(
+    mut pieces: Query<(&PulsingPiece, &mut MeshMaterial3d<StandardMaterial>), Added<PulsingPiece>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+    mut pulsing: ResMut<PulsingMaterials>,
+) {
+    for (piece, mut material) in &mut pieces {
+        let Pulse { min, max, frequency } = piece.pulse;
+        let key = (material.id(), [min, max, frequency, piece.phase].map(f32::to_bits));
+        let index = match pulsing.by_key.get(&key) {
+            Some(&index) => index,
+            None => {
+                let Some(base) = materials.get(&material.0).cloned() else { continue };
+                let entry = PulsingMaterial {
+                    emissive: base.emissive,
+                    handle: materials.add(base),
+                    pulse: piece.pulse,
+                    phase: piece.phase,
+                };
+                pulsing.list.push(entry);
+                let index = pulsing.list.len() - 1;
+                pulsing.by_key.insert(key, index);
+                index
+            }
+        };
+        material.0 = pulsing.list[index].handle.clone();
+    }
+}
+
+/// Fait varier l'émission des matériaux qui pulsent.
+///
+/// Attention au coût : quand un matériau change, Bevy revérifie la
+/// configuration de dessin de *chaque* objet qui l'utilise. Mis à jour à
+/// chaque image pour toutes les visières de 300 unités, cela coûtait environ
+/// 15 ms par image. D'où deux précautions : seules quelques pièces pulsent
+/// (réacteurs, gyrophares : voir le contenu du jeu), et la mise à jour n'a
+/// lieu que 15 fois par seconde, ce qui suffit à l'œil pour une lueur.
+pub(super) fn animate_pulses(
+    time: Res<Time>,
+    mut pulsing: ResMut<PulsingMaterials>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+) {
+    const UPDATE_PERIOD: f32 = 1.0 / 15.0;
+    let t = time.elapsed_secs();
+    if pulsing.list.is_empty() || t - pulsing.last_update < UPDATE_PERIOD {
+        return;
+    }
+    pulsing.last_update = t;
+    for entry in &pulsing.list {
+        // `get_mut` signale à Bevy que le matériau a changé : il est renvoyé à la carte graphique.
+        if let Some(mut material) = materials.get_mut(&entry.handle) {
+            material.emissive = entry.emissive * entry.pulse.factor(t + entry.phase);
+        }
+    }
+}
