@@ -299,7 +299,9 @@ fn handle_actions(
             | GameAction::CancelQueued { .. }
             | GameAction::CancelConstruction
             | GameAction::ChooseOrder { .. }
-            | GameAction::CancelOrder => {}
+            | GameAction::CancelOrder
+            | GameAction::DismissOutcome
+            | GameAction::Quit => {}
         }
     }
 }

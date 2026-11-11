@@ -173,6 +173,14 @@ Tous les ordres (déplacer, récolter, poser, produire, rallier, annuler)
 passent par une file appliquée au pas de simulation suivant : c'est la base
 du futur multijoueur en lockstep (voir `crates/rts_engine/src/orders.rs`).
 
+### Fin de partie
+
+Un joueur est vaincu quand il n'a plus aucun bâtiment (chantiers compris).
+Quand il ne reste qu'un joueur en lice, la partie est finie : écran
+« Victoire » ou « Défaite » avec la durée de la partie. **Entrée** (ou
+« Continuer à regarder ») ferme l'écran, « Quitter » ferme le jeu. Une scène
+sans base adverse (démonstrations) ne se termine jamais.
+
 ## Rendu et réglages graphiques
 
 Le moteur gère le rendu (module `graphics`) : HDR, tone mapping filmique (ACES),

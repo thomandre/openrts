@@ -331,7 +331,8 @@ On avance par étapes courtes, chacune jouable et testée avant de passer à la 
 6. **Groupes de contrôle et interface** : barre de groupes, boutons d’ordres, raccourcis, minicarte.
 7. **Brouillard de guerre et IA adverse** basique qui construit et attaque par vagues.
    - *Fait (IA, propositions) :* une IA générique dans le moteur (`ai.rs`), qui ne lit que les données (dépôt, population, production, extraction) et joue donc les trois factions avec leur style de construction. Elle passe par la file des ordres comme un joueur et décide dans un ordre fixe (déterministe). Elle récolte (trois ouvriers par extracteur), monte à 16 ouvriers, pose ses bâtiments de population avant d'être bloquée, une puis deux productions, son extracteur, produit une armée variée, défend sa base et attaque par vagues à partir de 2 min 30 (10 unités, puis 4 de plus à chaque vague).
-   *Reste : brouillard de guerre, conditions de victoire et de défaite, niveaux de difficulté, IA qui s'étend vers d'autres bases et adapte sa composition.*
+   - *Fait (fin de partie) :* un joueur sans aucun bâtiment est vaincu ; le dernier en lice gagne (règle appliquée par la simulation) ; écran « Victoire » / « Défaite » avec la durée, qu'on peut fermer pour continuer à regarder.
+   *Reste : brouillard de guerre, niveaux de difficulté, IA qui s'étend vers d'autres bases et adapte sa composition.*
 8. **Première faction complète** : arbre technologique, unités distinctes, vrais modèles 3D.
 9. **Seconde faction asymétrique** et équilibrage.
 10. **Multijoueur** en lockstep déterministe.

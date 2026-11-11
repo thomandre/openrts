@@ -41,6 +41,10 @@ pub struct PlayerState {
     /// [`crate::units::UnitCatalog::add_faction`]). Il ne construit que les
     /// bâtiments de sa faction.
     pub faction: usize,
+    /// A déjà possédé au moins un bâtiment (voir `outcome`).
+    pub has_built: bool,
+    /// Vaincu : il n'a plus aucun bâtiment (voir `outcome`).
+    pub defeated: bool,
     /// Ressources en stock.
     pub stock: Stock,
     /// Population utilisée : unités vivantes et unités en file de production

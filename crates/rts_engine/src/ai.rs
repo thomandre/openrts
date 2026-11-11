@@ -209,6 +209,10 @@ fn think(
         let planned: Vec<(usize, Rect)> =
             plans.iter().filter(|(_, o)| o.0 == ai.player).map(|(p, _)| (p.type_index, catalog.plan_rect(frame, p))).collect();
         let state = players.get(ai.player);
+        // Un joueur vaincu ne joue plus.
+        if state.defeated {
+            continue;
+        }
         let mut plan = Plan { ai, view, settings: &settings, completed, fields, planned, stock: state.stock, orders: &mut orders };
         plan.run(seconds, state.population, state.population_cap, state.faction);
     }

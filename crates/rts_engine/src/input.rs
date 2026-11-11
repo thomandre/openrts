@@ -57,6 +57,10 @@ pub enum GameAction {
     Stop,
     /// Tenir la position (touche H ou bouton).
     HoldPosition,
+    /// Fermer l'écran de fin pour continuer à regarder (Entrée ou bouton).
+    DismissOutcome,
+    /// Quitter le jeu (bouton de l'écran de fin).
+    Quit,
 }
 
 /// Un ordre qui attend qu'on vise un point.
@@ -245,6 +249,11 @@ fn mouse_keyboard_backend(
         } else if opens_menu {
             context.key_menu = Some(c);
         }
+    }
+
+    // --- Entrée : ferme l'écran de fin (sans effet s'il n'est pas affiché) ---
+    if keys.just_pressed(KeyCode::Enter) {
+        actions.write(GameAction::DismissOutcome);
     }
 
     // --- Outil de test de charge ---
