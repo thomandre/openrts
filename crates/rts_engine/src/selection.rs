@@ -9,11 +9,12 @@ use bevy::prelude::*;
 
 use crate::camera::{ray_at_height, screen_ray, screen_to_ground};
 use crate::collision::StaticObstacle;
+use crate::combat::{Attacker, Combatant, OrderMarker};
 use crate::economy::production::ProductionQueue;
 use crate::economy::{EconomyRules, ResourceNode};
-use crate::input::{GameAction, SelectionDrag};
+use crate::input::{GameAction, SelectionDrag, TargetedOrder};
 use crate::orders::{CommandQueue, PlayerCommand};
-use crate::players::{LocalPlayer, Owner};
+use crate::players::{are_enemies, LocalPlayer, Owner};
 use crate::simulation::MoveSpeed;
 use crate::units::{Unit, UnitCatalog};
 use crate::RtsSystems;
@@ -111,7 +112,10 @@ fn handle_actions(
     local: Res<LocalPlayer>,
     mut orders: ResMut<CommandQueue>,
     catalog: Option<Res<UnitCatalog>>,
+    combat: (Query<(), With<Attacker>>, Query<(), With<Combatant>>),
+    mut markers: MessageWriter<OrderMarker>,
 ) {
+    let (armed, attackable) = combat;
     // `Single` garantit qu'il y a exactement une caméra ; `into_inner` donne ses composants.
     let (camera, camera_transform) = camera.into_inner();
 
@@ -195,6 +199,15 @@ fn handle_actions(
                     let unit = unit_types.get(*e).ok();
                     rules.as_ref().zip(unit).is_some_and(|(r, u)| r.harvesters.contains(&u.type_index))
                 };
+                // Sur un ennemi : on l'attaque (les unités sans arme s'y rendent).
+                let enemy = picked.filter(|&e| attackable.contains(e) && owners.get(e).is_ok_and(|o| are_enemies(local.0, o.0)));
+                if let Some(enemy) = enemy {
+                    let (fighters, others): (Vec<Entity>, Vec<Entity>) = movers.into_iter().partition(|e| armed.contains(*e));
+                    if !fighters.is_empty() {
+                        orders.push(local.0, PlayerCommand::Attack { units: fighters, target: enemy });
+                    }
+                    movers = others;
+                }
                 if let Some(node) = node {
                     // `partition` sépare une liste en deux selon un critère.
                     let (harvesters, others): (Vec<Entity>, Vec<Entity>) = movers.into_iter().partition(is_harvester);
@@ -203,8 +216,18 @@ fn handle_actions(
                     }
                     movers = others;
                 }
-                if !movers.is_empty() {
-                    orders.push(local.0, PlayerCommand::Move { units: movers, target: target.xz() });
+                // Sur le sol : **attaque-déplacement par défaut** pour les unités
+                // armées (voir GAME_DESIGN.md) ; les ouvriers et les unités sans
+                // arme se déplacent simplement.
+                let (fighters, walkers): (Vec<Entity>, Vec<Entity>) =
+                    movers.into_iter().partition(|e| armed.contains(*e) && !is_harvester(e));
+                if !fighters.is_empty() {
+                    orders.push(local.0, PlayerCommand::AttackMove { units: fighters, target: target.xz() });
+                    markers.write(OrderMarker { point: target.xz(), attack: true });
+                }
+                if !walkers.is_empty() {
+                    orders.push(local.0, PlayerCommand::Move { units: walkers, target: target.xz() });
+                    markers.write(OrderMarker { point: target.xz(), attack: false });
                 }
                 // Les bâtiments producteurs sélectionnés y mettent leur point de ralliement.
                 let mut producers: Vec<Entity> = selected
@@ -215,6 +238,50 @@ fn handle_actions(
                 if !producers.is_empty() {
                     let point = node.and_then(|n| nodes.get(n).ok()).map_or(target.xz(), |(_, _, o)| o.0.center());
                     orders.push(local.0, PlayerCommand::SetRally { buildings: producers, point, node });
+                }
+            }
+
+            GameAction::OrderAt { order, screen_pos, .. } => {
+                let Some(target) = screen_to_ground(camera, camera_transform, screen_pos) else { continue };
+                let mut movers: Vec<Entity> = selected
+                    .iter()
+                    .filter(|&e| mobile.contains(e) && owners.get(e).is_ok_and(|o| o.0 == local.0))
+                    .collect();
+                movers.sort_unstable();
+                if movers.is_empty() {
+                    continue;
+                }
+                let picked = screen_ray(camera, camera_transform, screen_pos).and_then(|ray| pick(ray, &units));
+                let enemy = picked.filter(|&e| attackable.contains(e) && owners.get(e).is_ok_and(|o| are_enemies(local.0, o.0)));
+                match (order, enemy) {
+                    // A puis clic sur un ennemi : l'attaquer.
+                    (TargetedOrder::AttackMove, Some(enemy)) => {
+                        orders.push(local.0, PlayerCommand::Attack { units: movers, target: enemy });
+                    }
+                    // A puis clic au sol : attaque-déplacement, ouvriers compris.
+                    (TargetedOrder::AttackMove, None) => {
+                        orders.push(local.0, PlayerCommand::AttackMove { units: movers, target: target.xz() });
+                        markers.write(OrderMarker { point: target.xz(), attack: true });
+                    }
+                    // M puis clic : déplacement simple, qui ignore les ennemis.
+                    (TargetedOrder::Move, _) => {
+                        orders.push(local.0, PlayerCommand::Move { units: movers, target: target.xz() });
+                        markers.write(OrderMarker { point: target.xz(), attack: false });
+                    }
+                }
+            }
+
+            GameAction::Stop | GameAction::HoldPosition => {
+                let mut list: Vec<Entity> = selected
+                    .iter()
+                    .filter(|&e| mobile.contains(e) && owners.get(e).is_ok_and(|o| o.0 == local.0))
+                    .collect();
+                list.sort_unstable();
+                if !list.is_empty() {
+                    orders.push(
+                        local.0,
+                        if *action == GameAction::Stop { PlayerCommand::Stop { units: list } } else { PlayerCommand::HoldPosition { units: list } },
+                    );
                 }
             }
 
@@ -230,7 +297,9 @@ fn handle_actions(
             | GameAction::CancelPlacement
             | GameAction::Train { .. }
             | GameAction::CancelQueued { .. }
-            | GameAction::CancelConstruction => {}
+            | GameAction::CancelConstruction
+            | GameAction::ChooseOrder { .. }
+            | GameAction::CancelOrder => {}
         }
     }
 }

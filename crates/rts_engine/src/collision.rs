@@ -642,6 +642,25 @@ impl SpatialGrid {
     }
 }
 
+impl SpatialGrid {
+    /// Appelle `visit` pour chaque point rangé dans une case qui touche le
+    /// carré de demi-côté `radius` autour de `p` (à l'appelant de vérifier
+    /// la distance exacte), toujours dans le même ordre. Contrairement à
+    /// [`SpatialGrid::for_each_near`], la portée ne dépend pas de la taille des cases.
+    pub fn for_each_within(&self, p: Vec2, radius: f32, mut visit: impl FnMut(usize)) {
+        let (min_c, min_r) = self.cell_of(p - Vec2::splat(radius));
+        let (max_c, max_r) = self.cell_of(p + Vec2::splat(radius));
+        for r in min_r..=max_r {
+            for c in min_c..=max_c {
+                let cell = r * self.columns + c;
+                for &index in &self.items[self.cell_start[cell]..self.cell_start[cell + 1]] {
+                    visit(index);
+                }
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

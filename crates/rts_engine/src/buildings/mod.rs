@@ -976,9 +976,18 @@ fn progress_construction(
     for site in worked {
         let Ok((entity, building, _, mut construction, mut health)) = sites.get_mut(site) else { continue };
         let build_time = catalog.types[building.type_index].build_time.max(0.1);
+        let before = construction.progress;
         construction.progress = (construction.progress + dt / build_time).min(1.0);
-        health.current = construction_health(health.max, construction.progress);
+        // Les PV montent avec la construction ; on ajoute ce que le pas a
+        // construit plutôt que de les recalculer, pour garder les dégâts subis.
+        let gained = construction_health(health.max, construction.progress) - construction_health(health.max, before);
+        health.current = (health.current + gained).min(health.max);
         if construction.progress >= 1.0 {
+            // Les petits écarts d'arrondi des additions successives ne
+            // doivent pas laisser un bâtiment intact à 99,99 % de ses PV.
+            if health.max - health.current < health.max * 1e-4 {
+                health.current = health.max;
+            }
             commands.entity(entity).remove::<UnderConstruction>();
             info!("Construction terminée : {}", catalog.types[building.type_index].name);
         }

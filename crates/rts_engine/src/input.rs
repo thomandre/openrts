@@ -45,6 +45,27 @@ pub enum GameAction {
     CancelQueued { slot: usize },
     /// Annuler les chantiers sélectionnés (remboursés).
     CancelConstruction,
+    /// Préparer un ordre qui vise un point (touche A ou M, ou bouton de la
+    /// barre d'ordres) : le prochain clic, ou tap, le donne.
+    ChooseOrder { order: TargetedOrder },
+    /// Donner l'ordre préparé au point visé (sur un ennemi : l'attaquer).
+    /// `keep` : rester en mode visée pour en donner un autre (Maj + clic).
+    OrderAt { order: TargetedOrder, screen_pos: Vec2, keep: bool },
+    /// Quitter le mode visée sans rien ordonner.
+    CancelOrder,
+    /// Tout arrêter (touche S ou bouton).
+    Stop,
+    /// Tenir la position (touche H ou bouton).
+    HoldPosition,
+}
+
+/// Un ordre qui attend qu'on vise un point.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TargetedOrder {
+    /// Attaque-déplacement : aller au point en combattant ce qu'on croise.
+    AttackMove,
+    /// Déplacement simple : aller au point en ignorant les ennemis (retraite).
+    Move,
 }
 
 /// Raccourci clavier d'un [`ActionButton`] : une touche, éventuellement
@@ -86,13 +107,16 @@ pub struct InputContext {
     /// Touche de menu enfoncée juste avant (« B » de « B puis Q »), en attente
     /// de la seconde touche.
     pub key_menu: Option<char>,
+    /// Ordre en attente de visée (tenu à jour par le module `combat`) : le
+    /// clic gauche le donne, le clic droit l'annule.
+    pub targeting: Option<TargetedOrder>,
 }
 
 impl InputContext {
     /// Échap a-t-il un rôle dans le jeu en ce moment (annuler la pose, fermer
     /// un menu de raccourcis) ? Sinon, il rend la souris au système (voir `cursor`).
     pub fn wants_escape(&self) -> bool {
-        self.placing || self.key_menu.is_some()
+        self.placing || self.key_menu.is_some() || self.targeting.is_some()
     }
 }
 
@@ -234,6 +258,9 @@ fn mouse_keyboard_backend(
         if context.placing {
             actions.write(GameAction::CancelPlacement);
         }
+        if context.targeting.is_some() {
+            actions.write(GameAction::CancelOrder);
+        }
         context.key_menu = None;
     }
 
@@ -304,6 +331,21 @@ fn mouse_keyboard_backend(
         }
         if mouse.just_pressed(MouseButton::Right) {
             actions.write(GameAction::CancelPlacement);
+        }
+        return;
+    }
+
+    // --- Mode visée (attaque-déplacement…) : clic gauche ordonne, clic droit annule ---
+    if let Some(order) = context.targeting {
+        *press = LeftPress::default();
+        drag.0 = None;
+        if let Some(pos) = cursor
+            && mouse.just_pressed(MouseButton::Left)
+        {
+            actions.write(GameAction::OrderAt { order, screen_pos: pos, keep: additive });
+        }
+        if mouse.just_pressed(MouseButton::Right) {
+            actions.write(GameAction::CancelOrder);
         }
         return;
     }

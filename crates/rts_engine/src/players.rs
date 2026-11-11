@@ -23,6 +23,12 @@ pub struct PlayerId(pub u8);
 #[derive(Component, Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct Owner(pub PlayerId);
 
+/// Deux joueurs sont-ils ennemis ? Pas encore d'alliances : tout autre
+/// joueur est un ennemi.
+pub fn are_enemies(a: PlayerId, b: PlayerId) -> bool {
+    a != b
+}
+
 /// Le joueur qui joue sur cette machine : l'interface montre ses stocks, et
 /// ses ordres partent sous son nom.
 #[derive(Resource, Debug, Clone, Copy, Default)]

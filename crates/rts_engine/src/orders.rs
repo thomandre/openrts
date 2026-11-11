@@ -54,6 +54,15 @@ pub enum PlayerCommand {
     /// Point de ralliement des unités produites : un point du sol, ou un
     /// gisement (les ouvriers produits vont alors directement le récolter).
     SetRally { buildings: Vec<Entity>, point: Vec2, node: Option<Entity> },
+    /// Attaquer cette entité adverse, en la poursuivant (voir `combat`).
+    Attack { units: Vec<Entity>, target: Entity },
+    /// Attaque-déplacement : aller au point visé en formation, en combattant
+    /// tout ennemi rencontré en chemin.
+    AttackMove { units: Vec<Entity>, target: Vec2 },
+    /// Tout arrêter : déplacement, attaque, récolte, construction.
+    Stop { units: Vec<Entity> },
+    /// Tenir la position : ne plus bouger, tirer sur ce qui passe à portée.
+    HoldPosition { units: Vec<Entity> },
 }
 
 /// Un ordre et le joueur qui l'a donné.

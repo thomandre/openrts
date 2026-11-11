@@ -19,6 +19,7 @@
 
 mod base;
 mod base_sylves;
+mod combat;
 mod garde;
 mod collectif;
 mod collectif_or_rose;
@@ -33,6 +34,7 @@ use bevy::prelude::*;
 use bevy::window::{MonitorSelection, PresentMode, WindowMode};
 use rts_engine::camera::RtsCamera;
 use rts_engine::collision::MapBounds;
+use rts_engine::combat::CombatRules;
 use rts_engine::cursor::CursorCaptureSettings;
 use rts_engine::devtools::AutoScreenshot;
 use rts_engine::economy::production::PopulationSettings;
@@ -126,6 +128,15 @@ impl Faction {
             Faction::Sylves => sylves::palette(team_color),
             Faction::Collectif => collectif::palette(team_color),
             Faction::CollectifOrRose => collectif_or_rose::palette(team_color),
+        }
+    }
+
+    /// Les fiches de combat (PV, armure, armes) des unités et des bâtiments.
+    fn combat_rules(self) -> CombatRules {
+        match self {
+            Faction::Garde => combat::garde(),
+            Faction::Sylves => combat::sylves(),
+            Faction::Collectif | Faction::CollectifOrRose => combat::collectif(),
         }
     }
 
@@ -245,6 +256,7 @@ fn main() {
     .insert_resource(quality)
     .insert_resource(faction)
     .insert_resource(faction.ambiance())
+    .insert_resource(faction.combat_rules())
     .add_systems(Startup, (setup_world, spawn_units))
     .add_systems(Update, base::focus_camera);
 

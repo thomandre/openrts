@@ -53,6 +53,8 @@ pub enum SimSet {
     Movement,
     /// Ce qui dépend des positions finales du pas (construction…).
     Construction,
+    /// Combat : ciblage, tirs, dégâts et morts (voir [`crate::combat`]).
+    Combat,
 }
 
 pub struct SimulationPlugin;
@@ -68,7 +70,8 @@ impl Plugin for SimulationPlugin {
             .init_resource::<MoveGroupCounter>()
             .configure_sets(
                 FixedUpdate,
-                (SimSet::CollectOrders, SimSet::Orders, SimSet::Navigation, SimSet::Movement, SimSet::Construction).chain(),
+                (SimSet::CollectOrders, SimSet::Orders, SimSet::Navigation, SimSet::Movement, SimSet::Construction, SimSet::Combat)
+                    .chain(),
             )
             .add_systems(
                 FixedUpdate,
