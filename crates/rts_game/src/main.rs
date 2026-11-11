@@ -23,6 +23,8 @@
 //! - `OPENRTS_DEMO=battle` : deux armées qui s'affrontent (300 contre 300
 //!   avec `OPENRTS_STRESS=1`) ;
 //! - `OPENRTS_POP_MAX=100` : plafond global de population ;
+//! - `OPENRTS_MENU=1` : affiche le menu de départ même quand une autre
+//!   variable (faction, démo, capture) le ferait sauter ;
 //! - `OPENRTS_AI=0` : l'adversaire ne joue pas (ses unités attendent) ;
 //! - `OPENRTS_AI_ATTACK=60` : délai (s) avant la première attaque de l'IA ;
 //! - `OPENRTS_SPEED=4` : accélère le temps de la partie (pour observer l'IA) ;
@@ -40,6 +42,7 @@ mod collectif;
 mod collectif_or_rose;
 mod gisements;
 mod map;
+mod menu;
 mod side;
 mod sylves;
 
@@ -66,6 +69,7 @@ use rts_engine::vision::VisionSettings;
 use rts_engine::RtsEnginePlugin;
 
 use map::{GroundPattern, GroundStyle};
+use menu::GameState;
 use side::{Side, StartPlan};
 
 /// Côté de la carte, en mètres.
@@ -338,6 +342,9 @@ fn main() {
         _ => GraphicsQuality::High,
     };
     let faction = Faction::from_env();
+    // (`OPENRTS_MENU=1` force le menu, par exemple pour le capturer.)
+    let skip_menu = std::env::var_os("OPENRTS_MENU").is_none()
+        && ["OPENRTS_FACTION", "OPENRTS_ENEMY", "OPENRTS_DEMO", "OPENRTS_SCREENSHOT"].iter().any(|v| std::env::var_os(v).is_some());
     let enemy = std::env::var("OPENRTS_ENEMY").ok().and_then(|f| Faction::parse(&f)).unwrap_or(faction.default_enemy());
 
     let half = MAP_SIZE / 2.0;
@@ -366,17 +373,17 @@ fn main() {
     .insert_resource(quality)
     .insert_resource(faction)
     .insert_resource(EnemyFaction(enemy))
-    .insert_resource(faction.ambiance())
-    .add_systems(Startup, (setup_world, spawn_units))
+    // D'abord le menu (choix des factions), sauf si une variable de
+    // développement décide déjà de la partie (démos, captures).
+    .insert_state(if skip_menu { GameState::Playing } else { GameState::Menu })
+    .add_plugins(menu::MenuPlugin)
+    .add_systems(OnEnter(GameState::Playing), (apply_ambiance, setup_world, spawn_units).chain())
     .add_systems(Update, base::focus_camera);
 
     // `OPENRTS_POP_MAX=100` : plafond global de population (200 par défaut),
     // pour adapter le nombre d'unités à l'appareil.
     if let Some(max) = std::env::var("OPENRTS_POP_MAX").ok().and_then(|m| m.parse().ok()) {
         app.insert_resource(PopulationSettings { max });
-    }
-    if let Some(panels) = faction.reflection_panels() {
-        app.insert_resource(panels);
     }
     if let Some(path) = screenshot {
         let delay_secs = std::env::var("OPENRTS_SCREENSHOT_DELAY").ok().and_then(|d| d.parse().ok()).unwrap_or(14.0);
@@ -403,7 +410,7 @@ fn main() {
         // La bataille fait elle-même son test de charge (300 contre 300).
         app.add_plugins(battle::BattlePlugin);
     } else if stress {
-        app.add_systems(Startup, |mut actions: MessageWriter<GameAction>| {
+        app.add_systems(OnEnter(GameState::Playing), |mut actions: MessageWriter<GameAction>| {
             actions.write(GameAction::SpawnStressTest);
         });
     }
@@ -420,6 +427,14 @@ fn main() {
         _ => {}
     }
     app.run();
+}
+
+/// L'ambiance (lumières, ciel, sol) de la faction du joueur, choisie au menu.
+fn apply_ambiance(mut commands: Commands, faction: Res<Faction>) {
+    commands.insert_resource(faction.ambiance());
+    if let Some(panels) = faction.reflection_panels() {
+        commands.insert_resource(panels);
+    }
 }
 
 fn setup_world(

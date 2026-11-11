@@ -55,6 +55,9 @@ fn check_defeats(
     mut players: ResMut<Players>,
     mut outcome: ResMut<GameOutcome>,
     mut defeated: MessageWriter<PlayerDefeated>,
+    // Instant où un premier joueur a eu une base : début de la partie
+    // (le temps passé dans un menu ne compte pas).
+    mut started: Local<Option<f32>>,
     buildings: Query<&Owner, With<Building>>,
     plans: Query<&Owner, With<PlannedSite>>,
 ) {
@@ -72,6 +75,7 @@ fn check_defeats(
         let state = players.get_mut(player);
         if count > 0 {
             state.has_built = true;
+            started.get_or_insert(time.elapsed_secs());
         } else if state.has_built && !state.defeated {
             state.defeated = true;
             info!("Joueur {index} vaincu : plus aucun bâtiment");
@@ -86,7 +90,7 @@ fn check_defeats(
     let alive: Vec<PlayerId> = contenders.iter().copied().filter(|&p| !players.get(p).defeated).collect();
     // Il faut avoir été au moins deux à lutter, et qu'il en reste au plus un.
     if contenders.len() >= 2 && alive.len() <= 1 {
-        outcome.0 = Some(Outcome { winner: alive.first().copied(), duration_secs: time.elapsed_secs() });
+        outcome.0 = Some(Outcome { winner: alive.first().copied(), duration_secs: time.elapsed_secs() - started.unwrap_or(0.0) });
     }
 }
 

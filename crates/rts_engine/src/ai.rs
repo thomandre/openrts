@@ -188,8 +188,12 @@ fn think(
     nodes: Query<(Entity, &ResourceNode, &Footprint)>,
     plans: Query<(&PlannedSite, &Owner)>,
 ) {
+    // Le temps de partie ne compte que s'il y a une IA (pas pendant un menu).
+    if ais.0.is_empty() {
+        return;
+    }
     *ticks += 1;
-    if ais.0.is_empty() || !(*ticks).is_multiple_of(settings.think_every.max(1)) {
+    if !(*ticks).is_multiple_of(settings.think_every.max(1)) {
         return;
     }
     let (Some(catalog), Some(rules), Some(grid)) = (catalog, rules, grid) else { return };

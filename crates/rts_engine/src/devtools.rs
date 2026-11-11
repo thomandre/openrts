@@ -61,7 +61,8 @@ fn create_offscreen_target(mut commands: Commands, mut images: ResMut<Assets<Ima
 fn render_cameras_offscreen(
     mut commands: Commands,
     target: Res<OffscreenTarget>,
-    cameras: Query<Entity, Added<Camera3d>>,
+    // La caméra 3D du jeu, ou la caméra 2D du menu de départ.
+    cameras: Query<Entity, Or<(Added<Camera3d>, Added<Camera2d>)>>,
 ) {
     for camera in &cameras {
         // `IsDefaultUiCamera` : l'interface (barres, boutons) est dessinée par
