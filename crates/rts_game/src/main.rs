@@ -1,11 +1,15 @@
 //! Le jeu : contenu au-dessus du moteur `rts_engine`.
 //!
-//! Pour l'instant : une carte plate, et une faction affichée à la fois — la
-//! Garde (par défaut), les Sylves ou le Collectif — avec
-//! son ambiance, son sol et une dizaine de ses unités sur le terrain.
+//! Pour l'instant : une carte plate et deux joueurs. Le joueur humain, au
+//! nord, joue la Garde (par défaut), les Sylves ou le Collectif, qui
+//! décide de l'ambiance et du sol ; l'adversaire, au sud, joue une autre
+//! faction (pas encore d'IA). Chacun a sa base de départ et une dizaine
+//! d'unités de présentation.
 //!
 //! Variables d'environnement utiles en développement :
-//! - `OPENRTS_FACTION=sylves` (ou `collectif`, `garde` ; l'ancien nom `coalition` reste accepté) : faction affichée ;
+//! - `OPENRTS_FACTION=sylves` (ou `collectif`, `garde` ; l'ancien nom `coalition` reste accepté) : faction du joueur ;
+//! - `OPENRTS_ENEMY=garde` (ou `sylves`, `collectif`) : faction de
+//!   l'adversaire ; par défaut, la suivante (Garde → Sylves → Collectif → Garde) ;
 //! - `OPENRTS_WINDOWED=1` : fenêtre au lieu du plein écran, souris libre ;
 //! - `OPENRTS_QUALITY=bas` (ou `haut`) : qualité graphique ;
 //! - `OPENRTS_STRESS=1` : lance le test de charge (300 unités) au démarrage ;
@@ -30,6 +34,7 @@ mod collectif;
 mod collectif_or_rose;
 mod gisements;
 mod map;
+mod side;
 mod sylves;
 
 use std::path::PathBuf;
@@ -37,13 +42,14 @@ use std::path::PathBuf;
 use bevy::diagnostic::{FrameTimeDiagnosticsPlugin, LogDiagnosticsPlugin};
 use bevy::prelude::*;
 use bevy::window::{MonitorSelection, PresentMode, WindowMode};
+use rts_engine::buildings::BuildingCatalog;
 use rts_engine::camera::RtsCamera;
 use rts_engine::collision::MapBounds;
 use rts_engine::combat::CombatRules;
 use rts_engine::cursor::CursorCaptureSettings;
 use rts_engine::devtools::AutoScreenshot;
 use rts_engine::economy::production::PopulationSettings;
-use rts_engine::economy::Cost;
+use rts_engine::economy::{Cost, EconomyRules};
 use rts_engine::players::{PlayerId, Players};
 use rts_engine::graphics::{Ambiance, GraphicsQuality, ReflectionPanels};
 use rts_engine::input::GameAction;
@@ -52,9 +58,13 @@ use rts_engine::units::{Palette, UnitCatalog, UnitType};
 use rts_engine::RtsEnginePlugin;
 
 use map::{GroundPattern, GroundStyle};
+use side::{Side, StartPlan};
 
 /// Côté de la carte, en mètres.
 const MAP_SIZE: f32 = 100.0;
+
+/// Le joueur humain.
+pub(crate) const HUMAN: PlayerId = PlayerId(0);
 
 /// Le joueur adverse (pas encore d'IA : ses unités attendent, et ripostent).
 pub(crate) const ENEMY: PlayerId = PlayerId(1);
@@ -66,8 +76,10 @@ const COLD_BLUE: Color = Color::srgb(0x2E as f32 / 255.0, 0x6C as f32 / 255.0, 0
 /// Couleur d'équipe de chaque joueur, dans l'ordre des numéros.
 const TEAM_COLORS: [Color; 2] = [garde::SIGNAL_ORANGE, COLD_BLUE];
 
-/// La faction affichée. Une seule à la fois pour l'instant : elle décide de
-/// l'ambiance, du sol, des matériaux et des types d'unités du catalogue.
+/// Une faction jouable : ses types d'unités et de bâtiments, ses règles,
+/// ses couleurs. La ressource `Faction` est celle du joueur humain (elle
+/// décide aussi de l'ambiance et du sol) ; [`EnemyFaction`], celle de
+/// l'adversaire.
 ///
 /// `#[derive(Resource)]` : la faction est rangée dans le monde de Bevy comme
 /// une ressource, que les systèmes de démarrage lisent avec `Res<Faction>`.
@@ -84,11 +96,91 @@ impl Faction {
     /// `OPENRTS_FACTION=sylves` choisit les Sylves, `collectif` le Collectif ;
     /// tout le reste, la Garde (y compris l'ancien nom `coalition`).
     fn from_env() -> Self {
-        match std::env::var("OPENRTS_FACTION").map(|f| f.to_lowercase()).as_deref() {
-            Ok("sylves") => Faction::Sylves,
-            Ok("collectif") => Faction::Collectif,
-            Ok("collectif-or-rose") => Faction::CollectifOrRose,
-            _ => Faction::Garde,
+        std::env::var("OPENRTS_FACTION").ok().and_then(|f| Self::parse(&f)).unwrap_or(Faction::Garde)
+    }
+
+    fn parse(name: &str) -> Option<Self> {
+        match name.to_lowercase().as_str() {
+            "garde" | "coalition" => Some(Faction::Garde),
+            "sylves" => Some(Faction::Sylves),
+            "collectif" => Some(Faction::Collectif),
+            "collectif-or-rose" => Some(Faction::CollectifOrRose),
+            _ => None,
+        }
+    }
+
+    /// La faction adverse par défaut : la suivante, pour que les deux camps
+    /// diffèrent. L'essai « or rose », sans bâtiments, affronte lui-même.
+    fn default_enemy(self) -> Self {
+        match self {
+            Faction::Garde => Faction::Sylves,
+            Faction::Sylves => Faction::Collectif,
+            Faction::Collectif => Faction::Garde,
+            Faction::CollectifOrRose => Faction::CollectifOrRose,
+        }
+    }
+
+    /// Ajoute les bâtiments de la faction (numéro `id` des catalogues) au
+    /// catalogue commun ; renvoie l'indice du premier, ou `None` pour une
+    /// faction sans bâtiments.
+    fn add_buildings(self, catalog: &mut BuildingCatalog, id: usize, units: &UnitCatalog, meshes: &mut Assets<Mesh>) -> Option<usize> {
+        let first = match self {
+            // Les Techniciens construisent, et restent sur le chantier jusqu'au bout.
+            Faction::Garde => catalog.add_faction(
+                id,
+                garde::building_types(),
+                vec![garde::kind::TECHNICIEN],
+                rts_engine::buildings::ConstructionStyle::WorkerStays,
+                units,
+                meshes,
+            ),
+            // Les Pousses construisent en devenant le bâtiment.
+            Faction::Sylves => catalog.add_faction(id, sylves::building_types(), vec![sylves::kind::POUSSE], sylves::CONSTRUCTION, units, meshes),
+            // Les Collecteurs sertissent à distance, et une gemme d'ancrage
+            // flotte au-dessus de chaque chantier.
+            Faction::Collectif => {
+                let first =
+                    catalog.add_faction(id, collectif::building_types(), vec![collectif::kind::COLLECTEUR], collectif::CONSTRUCTION, units, meshes);
+                catalog.set_anchor_marker(id, &collectif::anchor_gem(), units, meshes);
+                first
+            }
+            Faction::CollectifOrRose => return None,
+        };
+        Some(first)
+    }
+
+    /// Les règles économiques de la faction (`None` : pas d'économie).
+    fn economy_rules(self) -> Option<EconomyRules> {
+        let resources = gisements::resource_infos();
+        match self {
+            Faction::Garde => Some(garde::economy_rules(resources)),
+            Faction::Sylves => Some(sylves::economy_rules(resources)),
+            Faction::Collectif => Some(collectif::economy_rules(resources)),
+            Faction::CollectifOrRose => None,
+        }
+    }
+
+    /// La base de départ d'une partie normale (types locaux).
+    fn start_plan(self) -> Option<StartPlan> {
+        // Deux bâtiments de population (trois Résonateurs pour le Collectif) :
+        // l'armée de présentation occupe déjà plus que les 15 de population
+        // du bâtiment principal.
+        let pair = vec![Vec2::new(-8.5, -8.5), Vec2::new(8.5, -8.5)];
+        match self {
+            Faction::Garde => {
+                use garde::{building::*, kind::*};
+                Some(StartPlan { hq: QUARTIER_GENERAL, supply: HABITAT, supply_at: pair, worker: TECHNICIEN })
+            }
+            Faction::Sylves => {
+                use sylves::{building::*, kind::*};
+                Some(StartPlan { hq: ARBRE_MERE, supply: SOUCHE, supply_at: pair, worker: POUSSE })
+            }
+            Faction::Collectif => {
+                use collectif::{building::*, kind::*};
+                let supply_at = vec![Vec2::new(-8.5, -8.5), Vec2::new(8.5, -8.5), Vec2::new(14.0, -12.0)];
+                Some(StartPlan { hq: ECRIN, supply: RESONATEUR, supply_at, worker: COLLECTEUR })
+            }
+            Faction::CollectifOrRose => None,
         }
     }
 
@@ -223,6 +315,10 @@ impl Faction {
     }
 }
 
+/// La faction de l'adversaire (`OPENRTS_ENEMY`).
+#[derive(Resource, Debug, Clone, Copy)]
+struct EnemyFaction(Faction);
+
 fn main() {
     // Mode développeur : `OPENRTS_WINDOWED=1 cargo run` ouvre le jeu dans une
     // fenêtre et laisse la souris libre, pratique pour tester à côté d'un éditeur.
@@ -234,6 +330,7 @@ fn main() {
         _ => GraphicsQuality::High,
     };
     let faction = Faction::from_env();
+    let enemy = std::env::var("OPENRTS_ENEMY").ok().and_then(|f| Faction::parse(&f)).unwrap_or(faction.default_enemy());
 
     let half = MAP_SIZE / 2.0;
     let mut app = App::new();
@@ -260,8 +357,8 @@ fn main() {
     .insert_resource(MapBounds(Rect::new(-half, -half, half, half)))
     .insert_resource(quality)
     .insert_resource(faction)
+    .insert_resource(EnemyFaction(enemy))
     .insert_resource(faction.ambiance())
-    .insert_resource(faction.combat_rules())
     .add_systems(Startup, (setup_world, spawn_units))
     .add_systems(Update, base::focus_camera);
 
@@ -321,130 +418,122 @@ fn setup_world(
     if let Some(distance) = std::env::var("OPENRTS_ZOOM").ok().and_then(|d| d.parse::<f32>().ok()) {
         rts_camera.distance = distance.clamp(rts_camera.min_distance, rts_camera.max_distance);
     }
+    // Partie normale : la caméra regarde la base du joueur et son armée.
+    if base::demo_requested().is_none() && !battle::requested() {
+        let focus = side::match_focus();
+        rts_camera.focus = Vec3::new(focus.x, 0.0, focus.y);
+    }
     commands.spawn((Camera3d::default(), rts_camera.transform(), rts_camera));
 }
 
 fn spawn_units(
     mut commands: Commands,
     faction: Res<Faction>,
+    enemy: Res<EnemyFaction>,
     bounds: Res<MapBounds>,
     nav: Res<NavSettings>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut images: ResMut<Assets<Image>>,
 ) {
-    // Le premier joueur a l'orange signal comme couleur d'équipe, quelle que
-    // soit sa faction ; le second, le bleu froid (même faction : un seul
-    // catalogue par partie pour l'instant).
-    let palette = faction.palette(garde::SIGNAL_ORANGE);
-    let mut catalog = UnitCatalog::new(faction.unit_types(), &palette, &mut meshes, &mut materials, &mut images);
-    catalog.set_team_colors(&TEAM_COLORS, &mut materials, &mut images);
-
-    // `OPENRTS_DEMO=battle` : deux armées face à face (voir `battle`).
-    if battle::requested() {
-        let frame = GridFrame::new(bounds.0, &nav);
-        let buildings = match *faction {
-            Faction::Garde => Some(base::building_catalog(&catalog, &mut meshes, &mut materials)),
-            Faction::Sylves => Some(base_sylves::building_catalog(&catalog, &mut meshes, &mut materials)),
-            Faction::Collectif => Some(base_collectif::building_catalog(&catalog, &mut meshes, &mut materials)),
-            Faction::CollectifOrRose => None,
-        };
-        let stress = std::env::var_os("OPENRTS_STRESS").is_some();
-        battle::spawn(&mut commands, *faction, &catalog, buildings.as_ref(), frame, stress);
-        if let Some(buildings) = buildings {
-            commands.insert_resource(buildings);
-        }
-        commands.insert_resource(catalog);
-        return;
-    }
-
-    // Bâtiments et économie : la Garde, les Sylves et le Collectif (base
-    // de départ, ou scènes de démonstration avec `OPENRTS_DEMO`).
-    if *faction == Faction::Collectif {
-        let buildings = base_collectif::building_catalog(&catalog, &mut meshes, &mut materials);
-        let frame = GridFrame::new(bounds.0, &nav);
-        let demo = base::demo_requested() == Some(base::Demo::Buildings);
-        let deposits = gisements::DepositVisuals::new(&mut meshes, &mut materials);
-        // 50 de Cristal au départ, comme les autres ; la démonstration a de
-        // quoi payer l'Aiguillon que son Collecteur part sertir.
-        let mut players = Players::default();
-        players.get_mut(PlayerId(0)).stock = Cost::new(if demo { 300 } else { 50 }, 0);
-        if demo {
-            base_collectif::spawn_demo(&mut commands, &buildings, &catalog, &deposits, frame);
-        } else {
-            base_collectif::spawn_start(&mut commands, &buildings, &catalog, &deposits, frame);
-        }
-        commands.insert_resource(buildings);
-        commands.insert_resource(collectif::economy_rules(gisements::resource_infos()));
-        commands.insert_resource(players);
-        if demo {
-            commands.insert_resource(catalog);
-            return;
-        }
-    }
-    if *faction == Faction::Sylves {
-        let buildings = base_sylves::building_catalog(&catalog, &mut meshes, &mut materials);
-        let frame = GridFrame::new(bounds.0, &nav);
-        let demo = base::demo_requested() == Some(base::Demo::Buildings);
-        let deposits = gisements::DepositVisuals::new(&mut meshes, &mut materials);
-        // 50 de Cristal au départ, comme la Garde ; la démonstration a de
-        // quoi payer la Souche que sa Pousse part faire pousser.
-        let mut players = Players::default();
-        players.get_mut(PlayerId(0)).stock = Cost::new(if demo { 300 } else { 50 }, 0);
-        if demo {
-            base_sylves::spawn_demo(&mut commands, &buildings, &catalog, &deposits, frame);
-        } else {
-            base_sylves::spawn_start(&mut commands, &buildings, &catalog, &deposits, frame);
-        }
-        commands.insert_resource(buildings);
-        commands.insert_resource(sylves::economy_rules(gisements::resource_infos()));
-        commands.insert_resource(players);
-        if demo {
-            commands.insert_resource(catalog);
-            return;
-        }
-    }
-    if *faction == Faction::Garde {
-        let buildings = base::building_catalog(&catalog, &mut meshes, &mut materials);
-        let frame = GridFrame::new(bounds.0, &nav);
-        let demo = base::demo_requested();
-        let deposits = gisements::DepositVisuals::new(&mut meshes, &mut materials);
-        // Le joueur commence avec 50 de ressource principale (valeur proposée) ;
-        // la démonstration de l'économie, avec de quoi remplir sa file.
-        let mut stock = Cost::new(50, 0);
-        match demo {
-            Some(base::Demo::Buildings) => base::spawn_demo(&mut commands, &buildings, &catalog, frame),
-            Some(base::Demo::Economy) => {
-                base::spawn_economy_demo(&mut commands, &buildings, &catalog, &deposits, frame);
-                stock = Cost::new(400, 0);
-            }
-            None => base::spawn_start(&mut commands, &buildings, &catalog, &deposits, frame),
-        }
-        commands.insert_resource(buildings);
-        commands.insert_resource(garde::economy_rules(gisements::resource_infos()));
-        let mut players = Players::default();
-        players.get_mut(PlayerId(0)).stock = stock;
-        commands.insert_resource(players);
-        if demo.is_some() {
-            commands.insert_resource(catalog);
-            return;
-        }
-    }
-
-    // Une dizaine d'unités variées, tournées vers la caméra (+z). L'essai
-    // « or rose » les montre de trois quarts : les bijoux s'y lisent mieux.
-    let yaw = match *faction {
-        Faction::CollectifOrRose => std::f32::consts::PI + 0.75,
-        _ => std::f32::consts::PI,
+    // Les catalogues communs : la faction du joueur est la faction 0,
+    // celle de l'adversaire la 1 (si elle est différente). La palette donne
+    // l'orange signal à la couleur d'équipe ; `set_team_colors` donne
+    // ensuite à chaque joueur la sienne, dans toutes les factions.
+    let mut units = UnitCatalog::new(faction.unit_types(), &faction.palette(garde::SIGNAL_ORANGE), &mut meshes, &mut materials, &mut images);
+    let enemy_id = if enemy.0 == *faction {
+        0
+    } else {
+        units.add_faction(enemy.0.unit_types(), &enemy.0.palette(garde::SIGNAL_ORANGE), &mut meshes, &mut materials, &mut images)
     };
-    for (type_index, pos) in faction.army() {
-        catalog.spawn_facing(&mut commands, type_index, pos, yaw);
+    units.set_team_colors(&TEAM_COLORS, &mut materials, &mut images);
+    let mut sides = [(HUMAN, *faction, 0), (ENEMY, enemy.0, enemy_id)].map(|(player, faction, id)| Side {
+        player,
+        faction,
+        faction_id: id,
+        first_unit: units.first_type(id),
+        first_building: 0,
+        mirrored: player != HUMAN,
+    });
+
+    // Bâtiments et règles, une fois par faction présente.
+    let mut buildings = BuildingCatalog::empty(&units, &mut meshes, &mut materials);
+    let mut economy: Option<EconomyRules> = None;
+    let mut combat = CombatRules::default();
+    let distinct = if enemy_id == 0 { 1 } else { 2 };
+    for i in 0..distinct {
+        let side = sides[i];
+        let first_building = side.faction.add_buildings(&mut buildings, side.faction_id, &units, &mut meshes).unwrap_or(buildings.types.len());
+        combat.merge(side.faction.combat_rules(), side.first_unit, first_building);
+        if let Some(rules) = side.faction.economy_rules() {
+            // Les premières règles servent de base (ressources communes).
+            let base = economy.get_or_insert_with(|| EconomyRules { units: Vec::new(), harvesters: Vec::new(), ..rules.clone() });
+            base.merge(rules, side.first_unit);
+        }
+        for side in sides.iter_mut().filter(|s| s.faction_id == i) {
+            side.first_building = first_building;
+        }
     }
-    // La même armée chez l'adversaire, en miroir à 26 m vers le sud (+z),
-    // tournée vers la nôtre.
-    for (type_index, pos) in faction.army() {
-        catalog.spawn_owned(&mut commands, ENEMY, type_index, Vec2::new(pos.x, 26.0 - pos.y), yaw - std::f32::consts::PI);
+    // Les champs de résonance du Collectif, dessinés au sol pendant la pose.
+    if sides.iter().any(|s| s.faction == Faction::Collectif) {
+        buildings.set_construction_field(collectif::FIELD_COLOR, &mut meshes, &mut materials);
+    }
+    let has_buildings = !buildings.types.is_empty();
+    let mut players = Players::default();
+    for side in &sides {
+        let state = players.get_mut(side.player);
+        state.faction = side.faction_id;
+        // 50 de ressource principale au départ (valeur proposée).
+        state.stock = Cost::new(50, 0);
+    }
+    let frame = GridFrame::new(bounds.0, &nav);
+    let deposits = gisements::DepositVisuals::new(&mut meshes, &mut materials);
+
+    match (battle::requested(), base::demo_requested()) {
+        // `OPENRTS_DEMO=battle` : deux armées face à face (voir `battle`).
+        (true, _) => {
+            let stress = std::env::var_os("OPENRTS_STRESS").is_some();
+            battle::spawn(&mut commands, sides, &units, has_buildings.then_some(&buildings), frame, stress);
+        }
+        // Scènes de démonstration : le joueur seul, sa faction en vitrine.
+        (false, Some(demo)) => {
+            let stock = match (*faction, demo) {
+                (Faction::Garde, base::Demo::Buildings) => {
+                    base::spawn_demo(&mut commands, &buildings, &units, frame);
+                    50
+                }
+                (Faction::Garde, base::Demo::Economy) => {
+                    base::spawn_economy_demo(&mut commands, &buildings, &units, &deposits, frame);
+                    400
+                }
+                // De quoi payer le bâtiment que l'ouvrier de la scène part poser.
+                (Faction::Sylves, _) => {
+                    base_sylves::spawn_demo(&mut commands, &buildings, &units, &deposits, frame);
+                    300
+                }
+                (Faction::Collectif, _) => {
+                    base_collectif::spawn_demo(&mut commands, &buildings, &units, &deposits, frame);
+                    300
+                }
+                (Faction::CollectifOrRose, _) => 50,
+            };
+            players.get_mut(HUMAN).stock = Cost::new(stock, 0);
+        }
+        // Partie normale : chaque camp, sa base et son armée.
+        (false, None) => {
+            for side in sides {
+                side::spawn_start(&mut commands, side, &buildings, &units, &deposits, frame);
+            }
+        }
     }
 
-    commands.insert_resource(catalog);
+    if has_buildings {
+        commands.insert_resource(buildings);
+    }
+    if let Some(economy) = economy {
+        commands.insert_resource(economy);
+    }
+    commands.insert_resource(combat);
+    commands.insert_resource(players);
+    commands.insert_resource(units);
 }

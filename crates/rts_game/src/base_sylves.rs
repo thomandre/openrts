@@ -24,41 +24,7 @@ use rts_engine::units::UnitCatalog;
 
 use crate::base::{harvest_at_start, place, HUMAN, START_HQ};
 use crate::gisements::{self, DepositVisuals};
-use crate::sylves::{self, building::*, kind::*};
-
-/// Le catalogue des bâtiments des Sylves : les Pousses construisent en
-/// devenant le bâtiment (voir [`sylves::CONSTRUCTION`]).
-pub fn building_catalog(
-    units: &UnitCatalog,
-    meshes: &mut Assets<Mesh>,
-    materials: &mut Assets<StandardMaterial>,
-) -> BuildingCatalog {
-    BuildingCatalog::new(sylves::building_types(), vec![POUSSE], sylves::CONSTRUCTION, units, meshes, materials)
-}
-
-/// Partie normale : l'Arbre-mère, deux Souches nourricières, les gisements
-/// et quatre Pousses qui se mettent tout de suite à récolter.
-pub fn spawn_start(
-    commands: &mut Commands,
-    buildings: &BuildingCatalog,
-    units: &UnitCatalog,
-    deposits: &DepositVisuals,
-    frame: GridFrame,
-) {
-    place(commands, buildings, frame, ARBRE_MERE, START_HQ);
-    // Deux Souches : l'armée de présentation occupe déjà plus que les 15 de
-    // population de l'Arbre-mère.
-    for x in [-8.5, 8.5] {
-        place(commands, buildings, frame, SOUCHE, Vec2::new(x, -8.5));
-    }
-    let (nodes, _) = gisements::spawn_base(commands, deposits, frame, &gisements::starting_base(START_HQ));
-    let mut orders = Vec::new();
-    for (i, x) in [-3.0, -1.0, 1.0, 3.0].into_iter().enumerate() {
-        let worker = units.spawn_facing(commands, POUSSE, START_HQ + Vec2::new(x, -4.6), 0.0);
-        orders.push((worker, nodes[2 + i]));
-    }
-    harvest_at_start(commands, orders);
-}
+use crate::sylves::{building::*, kind::*};
 
 /// Marqueur : la Pousse de la démonstration qui partira s'enraciner.
 #[derive(Component)]
@@ -121,7 +87,7 @@ pub fn spawn_demo(
             node.extractor = Some(calice);
         }
     });
-    harvest_at_start(commands, harvest);
+    harvest_at_start(commands, HUMAN, harvest);
 }
 
 /// Envoie la Pousse de la démonstration s'enraciner, une seule fois, au bout

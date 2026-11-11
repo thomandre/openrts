@@ -59,6 +59,15 @@ pub struct BaseLayout {
     pub rare: Vec<(Vec2, u32)>,
 }
 
+impl BaseLayout {
+    /// La même disposition, chaque centre passé par `f` (voir `Side::at`).
+    /// Un miroir par rapport au centre garde les centres sur la grille.
+    pub fn mapped(&self, f: impl Fn(Vec2) -> Vec2) -> BaseLayout {
+        let map = |list: &[(Vec2, u32)]| list.iter().map(|&(center, amount)| (f(center), amount)).collect();
+        BaseLayout { primary: map(&self.primary), rare: map(&self.rare) }
+    }
+}
+
 /// La base de départ : une ligne de huit gisements de Cristal en arc, de 2 à
 /// 4 m derrière le Quartier général (vers −z, le haut de l'écran), et deux
 /// sources d'Éther à 4,5 m de ses flancs.

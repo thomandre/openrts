@@ -145,7 +145,7 @@ fn spawn_shot_effects(
     // Une fois : un matériau de trait par couleur d'équipe.
     if !*ready && let Some(catalog) = &catalog {
         let colors: Vec<Color> = (0..8u8)
-            .map(|p| materials.get(&catalog.materials_for(PlayerId(p)).get(MaterialSlot::Team)).map_or(Color::WHITE, |m| m.base_color))
+            .map(|p| materials.get(&catalog.materials_for(0, PlayerId(p)).get(MaterialSlot::Team)).map_or(Color::WHITE, |m| m.base_color))
             .collect();
         assets.tracers = colors
             .into_iter()

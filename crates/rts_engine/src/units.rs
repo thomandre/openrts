@@ -479,18 +479,22 @@ const PULSE_PHASES: usize = 3;
 /// `Hazard`) sont recréés pour chaque joueur : quelques matériaux par
 /// joueur, jamais un par unité.
 ///
-/// Limite actuelle : un seul catalogue (donc une seule faction) par partie ;
-/// deux joueurs de factions différentes demanderont un catalogue par joueur.
+/// **Plusieurs factions** : le catalogue est commun à toute la partie. Chaque
+/// faction y ajoute ses types à la suite des autres
+/// ([`UnitCatalog::add_faction`]), avec sa propre palette : un type d'unité
+/// est donc un indice unique dans toute la partie, et la faction d'un joueur
+/// (voir [`crate::players::PlayerState::faction`]) dit lesquels sont à lui.
+/// La faction 0 est celle passée à [`UnitCatalog::new`].
 #[derive(Resource)]
 pub struct UnitCatalog {
     pub types: Vec<UnitType>,
-    /// La palette de la faction (gardée pour préparer d'autres modèles, comme
-    /// les bâtiments, avec les mêmes matériaux).
-    palette: Palette,
+    /// La faction de chaque type (indice dans `factions`).
+    type_faction: Vec<usize>,
+    /// Palette et matériaux de chaque faction.
+    factions: Vec<FactionLook>,
+    /// Couleur d'équipe de chaque joueur (voir [`UnitCatalog::set_team_colors`]).
+    team_colors: Vec<Color>,
     visuals: Vec<TypeVisual>,
-    /// Les matériaux de chaque joueur (indice : numéro du joueur). Le premier
-    /// est celui de la palette ; un joueur au-delà de la liste prend le premier.
-    team_materials: Vec<ModelMaterials>,
     /// Textures de détail déjà créées (partagées par les matériaux qui les utilisent).
     detail_textures: HashMap<SurfaceDetail, Option<(Handle<Image>, Handle<Image>)>>,
     ring_mesh: Handle<Mesh>,
@@ -499,8 +503,17 @@ pub struct UnitCatalog {
     enemy_ring_material: Handle<StandardMaterial>,
 }
 
+/// La palette d'une faction et ses matériaux pour chaque joueur (indice :
+/// numéro du joueur). Le premier est celui de la palette ; un joueur au-delà
+/// de la liste prend le premier.
+struct FactionLook {
+    palette: Palette,
+    team_materials: Vec<ModelMaterials>,
+}
+
 impl UnitCatalog {
-    /// Prépare les maillages de chaque type et les matériaux de la palette.
+    /// Prépare les maillages de chaque type et les matériaux de la palette :
+    /// c'est la faction 0.
     pub fn new(
         types: Vec<UnitType>,
         palette: &Palette,
@@ -508,21 +521,13 @@ impl UnitCatalog {
         materials: &mut Assets<StandardMaterial>,
         images: &mut Assets<Image>,
     ) -> Self {
-        let visuals: Vec<TypeVisual> = types.iter().map(|t| build_visual(&t.parts, palette, meshes)).collect();
-
-        // Les textures de détail sont partagées par tous les matériaux qui les utilisent.
-        let mut detail_textures = HashMap::new();
-        let materials_by_slot: HashMap<MaterialSlot, Handle<StandardMaterial>> = MaterialSlot::ALL
-            .iter()
-            .map(|&slot| (slot, materials.add(slot_material(palette, slot, &mut detail_textures, images))))
-            .collect();
-
-        Self {
-            types,
-            palette: palette.clone(),
-            visuals,
-            team_materials: vec![ModelMaterials(materials_by_slot)],
-            detail_textures,
+        let mut catalog = Self {
+            types: Vec::new(),
+            type_faction: Vec::new(),
+            factions: Vec::new(),
+            team_colors: Vec::new(),
+            visuals: Vec::new(),
+            detail_textures: HashMap::new(),
             // Anneau de rayon 1, mis à l'échelle de chaque unité. Assez épais
             // pour rester lisible en dézoom.
             ring_mesh: meshes.add(Annulus::new(0.8, 1.0)),
@@ -538,20 +543,82 @@ impl UnitCatalog {
                 fog_enabled: false,
                 ..default()
             }),
+        };
+        catalog.add_faction(types, palette, meshes, materials, images);
+        catalog
+    }
+
+    /// Ajoute une faction : ses types, à la suite de ceux déjà là, et sa
+    /// palette. Renvoie son numéro de faction ; ses types commencent à
+    /// l'indice [`UnitCatalog::first_type`] de ce numéro.
+    pub fn add_faction(
+        &mut self,
+        types: Vec<UnitType>,
+        palette: &Palette,
+        meshes: &mut Assets<Mesh>,
+        materials: &mut Assets<StandardMaterial>,
+        images: &mut Assets<Image>,
+    ) -> usize {
+        let faction = self.factions.len();
+        // Les textures de détail sont partagées par tous les matériaux qui les utilisent.
+        let materials_by_slot: HashMap<MaterialSlot, Handle<StandardMaterial>> = MaterialSlot::ALL
+            .iter()
+            .map(|&slot| (slot, materials.add(slot_material(palette, slot, &mut self.detail_textures, images))))
+            .collect();
+        self.factions.push(FactionLook { palette: palette.clone(), team_materials: vec![ModelMaterials(materials_by_slot)] });
+        self.visuals.extend(types.iter().map(|t| build_visual(&t.parts, palette, meshes)));
+        self.type_faction.extend(std::iter::repeat_n(faction, types.len()));
+        self.types.extend(types);
+        // Une faction ajoutée après coup reçoit, elle aussi, les couleurs d'équipe.
+        if !self.team_colors.is_empty() {
+            self.apply_team_colors(faction, materials, images);
         }
+        faction
+    }
+
+    /// Nombre de factions du catalogue.
+    pub fn faction_count(&self) -> usize {
+        self.factions.len()
+    }
+
+    /// La faction du type `type_index` (0 pour un indice inconnu).
+    pub fn faction_of(&self, type_index: usize) -> usize {
+        self.type_faction.get(type_index).copied().unwrap_or(0)
+    }
+
+    /// Les indices des types de la faction `faction` (ils se suivent).
+    pub fn faction_types(&self, faction: usize) -> std::ops::Range<usize> {
+        let start = self.type_faction.iter().position(|&f| f == faction).unwrap_or(self.types.len());
+        let end = self.type_faction.iter().rposition(|&f| f == faction).map_or(start, |i| i + 1);
+        start..end
+    }
+
+    /// Indice du premier type de la faction `faction` : son type local `k`
+    /// (dans sa propre liste) est le type `first_type(faction) + k` du catalogue.
+    pub fn first_type(&self, faction: usize) -> usize {
+        self.faction_types(faction).start
     }
 
     /// Donne à chaque joueur sa couleur d'équipe : `colors[i]` est celle du
-    /// joueur `i` (le joueur 0 garde la palette s'il manque des couleurs).
-    /// À appeler **avant** de créer le catalogue des bâtiments, qui reprend
-    /// ces matériaux.
+    /// joueur `i` (le joueur 0 garde la palette s'il manque des couleurs),
+    /// dans toutes les factions. À appeler **avant** de créer le catalogue
+    /// des bâtiments, qui reprend ces matériaux.
     ///
     /// `&mut self` : la méthode modifie le catalogue (emprunt exclusif).
     pub fn set_team_colors(&mut self, colors: &[Color], materials: &mut Assets<StandardMaterial>, images: &mut Assets<Image>) {
-        let base = self.team_materials[0].clone();
-        self.team_materials = vec![base.clone()];
-        for (index, &color) in colors.iter().enumerate() {
-            let mut palette = self.palette.clone();
+        self.team_colors = colors.to_vec();
+        for faction in 0..self.factions.len() {
+            self.apply_team_colors(faction, materials, images);
+        }
+    }
+
+    /// Recrée les matériaux de couleur d'équipe de la faction `faction`.
+    fn apply_team_colors(&mut self, faction: usize, materials: &mut Assets<StandardMaterial>, images: &mut Assets<Image>) {
+        let look = &mut self.factions[faction];
+        let base = look.team_materials[0].clone();
+        look.team_materials = vec![base.clone()];
+        for (index, &color) in self.team_colors.iter().enumerate() {
+            let mut palette = look.palette.clone();
             palette.team.color = color;
             let mut team = base.clone();
             // Seuls les emplacements qui dérivent de la couleur d'équipe changent.
@@ -559,32 +626,35 @@ impl UnitCatalog {
                 team.0.insert(slot, materials.add(slot_material(&palette, slot, &mut self.detail_textures, images)));
             }
             if index == 0 {
-                self.team_materials[0] = team;
+                look.team_materials[0] = team;
             } else {
-                self.team_materials.push(team);
+                look.team_materials.push(team);
             }
         }
     }
 
-    /// Les matériaux du joueur `owner`.
-    pub(crate) fn materials_for(&self, owner: PlayerId) -> &ModelMaterials {
-        self.team_materials.get(usize::from(owner.0)).unwrap_or(&self.team_materials[0])
+    /// Les matériaux du joueur `owner` pour un modèle de la faction `faction`.
+    pub(crate) fn materials_for(&self, faction: usize, owner: PlayerId) -> &ModelMaterials {
+        let team = &self.factions[faction.min(self.factions.len() - 1)].team_materials;
+        team.get(usize::from(owner.0)).unwrap_or(&team[0])
     }
 
     /// Prépare les maillages d'un autre modèle (un bâtiment) avec la palette
-    /// de ce catalogue.
-    pub(crate) fn make_visual(&self, parts: &[Part], meshes: &mut Assets<Mesh>) -> TypeVisual {
-        build_visual(parts, &self.palette, meshes)
+    /// de la faction `faction`.
+    pub(crate) fn make_visual(&self, faction: usize, parts: &[Part], meshes: &mut Assets<Mesh>) -> TypeVisual {
+        build_visual(parts, &self.factions[faction].palette, meshes)
     }
 
-    /// Le matériau partagé d'un emplacement de la palette (premier joueur).
-    pub(crate) fn material(&self, slot: MaterialSlot) -> Handle<StandardMaterial> {
-        self.team_materials[0].get(slot)
+    /// Le matériau partagé d'un emplacement de la palette de la faction
+    /// `faction` (premier joueur).
+    pub(crate) fn material(&self, faction: usize, slot: MaterialSlot) -> Handle<StandardMaterial> {
+        self.factions[faction].team_materials[0].get(slot)
     }
 
-    /// Les matériaux de tous les joueurs (des poignées : la copie ne duplique rien).
-    pub(crate) fn all_team_materials(&self) -> Vec<ModelMaterials> {
-        self.team_materials.clone()
+    /// Les matériaux de tous les joueurs pour la faction `faction` (des
+    /// poignées : la copie ne duplique rien).
+    pub(crate) fn all_team_materials(&self, faction: usize) -> Vec<ModelMaterials> {
+        self.factions[faction].team_materials.clone()
     }
 
     /// Le matériau de l'anneau de sélection.
@@ -607,7 +677,7 @@ impl UnitCatalog {
     /// maillages et matériaux partagés que les unités vivantes.
     pub(crate) fn spawn_wreck(&self, commands: &mut Commands, owner: PlayerId, type_index: usize, pos: Vec2, yaw: f32) -> Option<Entity> {
         let visual = self.visuals.get(type_index)?;
-        let materials = self.materials_for(owner);
+        let materials = self.materials_for(self.faction_of(type_index), owner);
         let root = commands
             .spawn((Name::new("Épave"), Transform::from_xyz(pos.x, 0.0, pos.y).with_rotation(Quat::from_rotation_y(yaw)), Visibility::default()))
             .with_children(|body| spawn_model(body, visual, position_jitter(pos), materials))
@@ -684,7 +754,7 @@ impl UnitCatalog {
                         base_height: -center,
                     });
                 }
-                body.with_children(|body| spawn_model(body, visual, jitter, self.materials_for(owner)));
+                body.with_children(|body| spawn_model(body, visual, jitter, self.materials_for(self.faction_of(type_index), owner)));
             })
             .id()
     }
@@ -897,14 +967,14 @@ mod tests {
         let blue = Color::srgb(0.18, 0.42, 0.94);
         catalog.set_team_colors(&[orange, blue], &mut materials, &mut images);
         let color = |player: u8, slot: MaterialSlot| {
-            let handle = catalog.materials_for(PlayerId(player)).get(slot);
+            let handle = catalog.materials_for(0, PlayerId(player)).get(slot);
             materials.get(&handle).unwrap().base_color
         };
         assert_eq!(color(0, MaterialSlot::Team), orange);
         assert_eq!(color(1, MaterialSlot::Team), blue);
         assert_eq!(color(1, MaterialSlot::Hazard), blue);
         // Les autres matériaux restent partagés par tous les joueurs (dessin en lot).
-        let paint = |player: u8| catalog.materials_for(PlayerId(player)).get(MaterialSlot::Paint);
+        let paint = |player: u8| catalog.materials_for(0, PlayerId(player)).get(MaterialSlot::Paint);
         assert_eq!(paint(0), paint(1));
         // Un joueur sans couleur prend celle du premier.
         assert_eq!(color(5, MaterialSlot::Team), orange);

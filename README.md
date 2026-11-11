@@ -195,7 +195,8 @@ Deux niveaux de qualité (`GraphicsQuality`) :
 | Variable | Effet |
 | --- | --- |
 | `OPENRTS_WINDOWED=1` | Fenêtre au lieu du plein écran, souris libre |
-| `OPENRTS_FACTION=sylves` | Faction affichée : `garde` (défaut ; `coalition` accepté), `sylves` ou `collectif` (ambiance, sol, unités, test de charge) |
+| `OPENRTS_FACTION=sylves` | Faction du joueur : `garde` (défaut ; `coalition` accepté), `sylves` ou `collectif` (ambiance, sol, unités, test de charge) |
+| `OPENRTS_ENEMY=garde` | Faction de l'adversaire (bleu, base en miroir au sud) : par défaut la suivante, Garde → Sylves → Collectif → Garde |
 | `OPENRTS_QUALITY=bas` | Qualité graphique Basse (`haut` par défaut) |
 | `OPENRTS_STRESS=1` | Lance le test de charge (300 unités) au démarrage |
 | `OPENRTS_ZOOM=12` | Distance de départ de la caméra (10 à 70 m) |
@@ -204,7 +205,7 @@ Deux niveaux de qualité (`GraphicsQuality`) :
 | `OPENRTS_FACTION=collectif OPENRTS_DEMO=buildings` | Collectif : les cinq bâtiments, les champs de résonance au sol, un Creuset et la ligne de Cristal récoltés par des Collecteurs, une Orfèvrerie en cours d'assemblage sous sa gemme, un fantôme vert dans un champ et un rouge hors champ, un Collecteur sélectionné qui part sertir un Aiguillon au bout de 10 s puis repart récolter |
 | `OPENRTS_FOCUS=x,z` | La caméra vise ce point du sol au démarrage |
 | `OPENRTS_DEMO=economy` | Garde : l'économie en marche (douze Techniciens sur la ligne de Cristal, trois à un Extracteur, Quartier général sélectionné avec trois Techniciens en file et son point de ralliement, compteurs) |
-| `OPENRTS_DEMO=battle` | Deux armées de la même faction (joueur 1 orange au sud, joueur 2 bleu au nord), chacune devant deux défenses fixes (Tourelles, Épineux ; le Collectif n'a pas encore de bâtiments), qui partent à l'attaque-déplacement au bout de 8 s et se rencontrent au milieu. `OPENRTS_FACTION` choisit la faction, `OPENRTS_STRESS=1` donne 300 contre 300 |
+| `OPENRTS_DEMO=battle` | Deux armées (joueur 1 orange au sud, joueur 2 bleu au nord), chacune devant deux défenses fixes (Tourelles, Épineux, Aiguillons), qui partent à l'attaque-déplacement au bout de 8 s et se rencontrent au milieu. `OPENRTS_FACTION` et `OPENRTS_ENEMY` choisissent les factions, `OPENRTS_STRESS=1` donne 300 contre 300 |
 | `OPENRTS_POP_MAX=100` | Plafond global de population (200 par défaut) |
 | `OPENRTS_SCREENSHOT=capture.png` | Après 14 s : affiche les FPS moyens des 6 dernières secondes, enregistre une capture du rendu et quitte (synchronisation verticale coupée pour mesurer) |
 

@@ -114,6 +114,26 @@ pub struct BuildingType {
     pub needs_field: bool,
 }
 
+impl BuildingType {
+    /// Le même type, ses indices décalés : `units` pour les types d'unités
+    /// produits, `buildings` pour les bâtiments requis (voir
+    /// [`BuildingCatalog::add_faction`]).
+    fn shifted(mut self, units: usize, buildings: usize) -> Self {
+        for required in &mut self.requires {
+            *required += buildings;
+        }
+        for option in &mut self.production {
+            option.unit_type += units;
+            for requirement in &mut option.requires {
+                if let Requirement::Building(index) = requirement {
+                    *index += buildings;
+                }
+            }
+        }
+        self
+    }
+}
+
 /// Une unité qu'un bâtiment sait produire.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ProductionOption {
@@ -204,13 +224,23 @@ impl ConstructionStyle {
     }
 }
 
-/// Tous les types de bâtiments d'une faction, avec leurs maillages prêts.
+/// Tous les types de bâtiments de la partie, avec leurs maillages prêts.
+///
+/// Comme le catalogue d'unités, il est commun à toute la partie : chaque
+/// faction y ajoute ses bâtiments à la suite ([`BuildingCatalog::add_faction`]),
+/// avec son style de construction et ses matériaux. Un joueur ne construit
+/// que les bâtiments de sa faction.
 #[derive(Resource)]
 pub struct BuildingCatalog {
     pub types: Vec<BuildingType>,
-    /// Types d'unités (indices du catalogue d'unités) qui savent construire.
+    /// Types d'unités (indices du catalogue d'unités) qui savent construire,
+    /// toutes factions confondues.
     pub builders: Vec<usize>,
-    pub style: ConstructionStyle,
+    /// La faction de chaque type (numéro de faction des catalogues).
+    type_faction: Vec<usize>,
+    /// Ce qui est propre à chaque faction, rangé par numéro de faction
+    /// (`None` : une faction sans bâtiments).
+    factions: Vec<Option<FactionBuildings>>,
     /// Touche qui ouvre le menu de construction (« B » puis la touche du bâtiment).
     pub menu_key: char,
     /// Orientation des bâtiments posés, en radians autour de la verticale :
@@ -218,26 +248,32 @@ pub struct BuildingCatalog {
     /// Seuls 0 et π gardent l'empreinte telle quelle.
     pub facing: f32,
     visuals: Vec<TypeVisual>,
-    /// Les matériaux de la faction pour chaque joueur (couleur d'équipe),
-    /// partagés avec les unités.
-    materials: Vec<ModelMaterials>,
     /// Pour chaque type : le cadre de sélection, le cadre du chantier et la
     /// dalle (fantôme) à ses dimensions.
     outlines: Vec<Handle<Mesh>>,
     site_frames: Vec<Handle<Mesh>>,
     pads: Vec<Handle<Mesh>>,
     ring_material: Handle<StandardMaterial>,
-    /// Cadre des chantiers : emplacement de la palette (chevrons de danger
-    /// aux couleurs du joueur, ou simple anneau).
-    site_slot: MaterialSlot,
     /// Échafaudage des chantiers : poteau (cylindre de 1 m de haut, mis à
-    /// l'échelle) et son matériau.
+    /// l'échelle).
     pole_mesh: Handle<Mesh>,
-    pole_material: Handle<StandardMaterial>,
     /// Fantôme : vert (emplacement libre) ou rouge (emplacement interdit).
     ghost_materials: [Handle<StandardMaterial>; 2],
     /// Dessin au sol des champs de construction (si la faction en a).
     pub(crate) field_visuals: Option<FieldVisuals>,
+}
+
+/// Ce qui, dans le catalogue des bâtiments, est propre à une faction.
+struct FactionBuildings {
+    style: ConstructionStyle,
+    /// Les matériaux de la faction pour chaque joueur (couleur d'équipe),
+    /// partagés avec ses unités.
+    materials: Vec<ModelMaterials>,
+    /// Cadre des chantiers : emplacement de la palette (chevrons de danger
+    /// aux couleurs du joueur, ou simple anneau).
+    site_slot: MaterialSlot,
+    /// Matériau des poteaux d'échafaudage.
+    pole_material: Handle<StandardMaterial>,
     /// Sertissage à distance : le modèle de la gemme d'ancrage, qui flotte
     /// au-dessus d'un chantier pendant qu'il s'assemble.
     anchor_visual: Option<TypeVisual>,
@@ -247,8 +283,8 @@ pub struct BuildingCatalog {
 const OUTLINE_MARGIN: f32 = 0.25;
 
 impl BuildingCatalog {
-    /// Prépare les maillages des bâtiments avec les matériaux du catalogue
-    /// d'unités de la même faction (mêmes couleurs, couleur d'équipe comprise).
+    /// Un catalogue d'une seule faction (la faction 0 du catalogue d'unités
+    /// `units`) : voir [`BuildingCatalog::add_faction`].
     pub fn new(
         types: Vec<BuildingType>,
         builders: Vec<usize>,
@@ -257,14 +293,13 @@ impl BuildingCatalog {
         meshes: &mut Assets<Mesh>,
         materials: &mut Assets<StandardMaterial>,
     ) -> Self {
-        let visuals = types.iter().map(|t| units.make_visual(&t.parts, meshes)).collect();
-        let half_sizes: Vec<Vec2> = types.iter().map(|t| t.footprint.as_vec2() / 2.0).collect();
-        let outlines = half_sizes.iter().map(|h| meshes.add(frame_mesh(*h + OUTLINE_MARGIN, 0.18))).collect();
-        let site_frames = half_sizes.iter().map(|h| meshes.add(frame_mesh(*h + 0.35, 0.45))).collect();
-        let pads = half_sizes
-            .iter()
-            .map(|h| meshes.add(Plane3d::default().mesh().size(h.x * 2.0, h.y * 2.0).build()))
-            .collect();
+        let mut catalog = Self::empty(units, meshes, materials);
+        catalog.add_faction(0, types, builders, style, units, meshes);
+        catalog
+    }
+
+    /// Un catalogue sans aucun bâtiment, auquel les factions s'ajoutent.
+    pub fn empty(units: &UnitCatalog, meshes: &mut Assets<Mesh>, materials: &mut Assets<StandardMaterial>) -> Self {
         let ghost = |color: Color| StandardMaterial {
             base_color: color,
             emissive: color.to_linear() * 0.6,
@@ -274,53 +309,110 @@ impl BuildingCatalog {
             ..default()
         };
         Self {
-            types,
-            builders,
-            style,
+            types: Vec::new(),
+            builders: Vec::new(),
+            type_faction: Vec::new(),
+            factions: Vec::new(),
             menu_key: 'b',
             facing: std::f32::consts::PI,
-            visuals,
-            materials: units.all_team_materials(),
-            outlines,
-            site_frames,
-            pads,
+            visuals: Vec::new(),
+            outlines: Vec::new(),
+            site_frames: Vec::new(),
+            pads: Vec::new(),
             ring_material: units.ring_material(),
-            // Cadre de chantier : chevrons de danger pour un chantier
-            // d'ouvriers ; un simple anneau (de mousse, chez les Sylves) autour
-            // d'un bâtiment qui pousse seul.
-            site_slot: if style.builds_alone() { MaterialSlot::Steel } else { MaterialSlot::Hazard },
             pole_mesh: meshes.add(Cylinder::new(0.07, 1.0)),
-            pole_material: units.material(MaterialSlot::Dark),
             ghost_materials: [
                 materials.add(ghost(Color::srgba(0.25, 1.0, 0.45, 0.38))),
                 materials.add(ghost(Color::srgba(1.0, 0.18, 0.12, 0.42))),
             ],
             field_visuals: None,
-            anchor_visual: None,
         }
     }
 
-    /// Prépare le dessin au sol des champs de construction, de la couleur
-    /// `color` (celle de la faction). S'utilise en chaîne après `new` :
-    /// `BuildingCatalog::new(…).with_construction_field(…)`. `self` (sans
-    /// `&`) : la fonction prend le catalogue, le modifie et le rend.
-    pub fn with_construction_field(
-        mut self,
-        color: Color,
+    /// Ajoute les bâtiments de la faction `faction` (son numéro dans le
+    /// catalogue d'unités `units`), avec ses matériaux (mêmes couleurs que
+    /// ses unités, couleur d'équipe comprise) et son style de construction.
+    ///
+    /// `types` et `builders` sont donnés **dans la numérotation de la
+    /// faction** (indices dans ses propres listes) : ils sont décalés ici à
+    /// leur place dans les catalogues communs (prérequis, unités produites,
+    /// ouvriers). Renvoie l'indice du premier bâtiment ajouté.
+    pub fn add_faction(
+        &mut self,
+        faction: usize,
+        types: Vec<BuildingType>,
+        builders: Vec<usize>,
+        style: ConstructionStyle,
+        units: &UnitCatalog,
         meshes: &mut Assets<Mesh>,
-        materials: &mut Assets<StandardMaterial>,
-    ) -> Self {
+    ) -> usize {
+        let first_building = self.types.len();
+        let first_unit = units.first_type(faction);
+        let types: Vec<BuildingType> = types.into_iter().map(|t| t.shifted(first_unit, first_building)).collect();
+        self.visuals.extend(types.iter().map(|t| units.make_visual(faction, &t.parts, meshes)));
+        let half_sizes: Vec<Vec2> = types.iter().map(|t| t.footprint.as_vec2() / 2.0).collect();
+        self.outlines.extend(half_sizes.iter().map(|h| meshes.add(frame_mesh(*h + OUTLINE_MARGIN, 0.18))));
+        self.site_frames.extend(half_sizes.iter().map(|h| meshes.add(frame_mesh(*h + 0.35, 0.45))));
+        self.pads.extend(half_sizes.iter().map(|h| meshes.add(Plane3d::default().mesh().size(h.x * 2.0, h.y * 2.0).build())));
+        // Le dessin des champs de construction a une entrée par type.
+        if let Some(fields) = self.field_visuals.as_mut() {
+            fields.meshes.extend(std::iter::repeat_n(None, types.len()));
+        }
+        self.type_faction.extend(std::iter::repeat_n(faction, types.len()));
+        self.types.extend(types);
+        self.builders.extend(builders.into_iter().map(|b| b + first_unit));
+        if self.factions.len() <= faction {
+            self.factions.resize_with(faction + 1, || None);
+        }
+        self.factions[faction] = Some(FactionBuildings {
+            style,
+            materials: units.all_team_materials(faction),
+            // Cadre de chantier : chevrons de danger pour un chantier
+            // d'ouvriers ; un simple anneau (de mousse, chez les Sylves) autour
+            // d'un bâtiment qui pousse seul.
+            site_slot: if style.builds_alone() { MaterialSlot::Steel } else { MaterialSlot::Hazard },
+            pole_material: units.material(faction, MaterialSlot::Dark),
+            anchor_visual: None,
+        });
+        first_building
+    }
+
+    /// La faction du type `type_index`.
+    pub fn faction_of(&self, type_index: usize) -> usize {
+        self.type_faction.get(type_index).copied().unwrap_or(0)
+    }
+
+    /// Le style de construction du type `type_index` (celui de sa faction).
+    pub fn style_of(&self, type_index: usize) -> ConstructionStyle {
+        self.faction(self.faction_of(type_index)).map_or(ConstructionStyle::WorkerStays, |f| f.style)
+    }
+
+    fn faction(&self, faction: usize) -> Option<&FactionBuildings> {
+        self.factions.get(faction).and_then(Option::as_ref)
+    }
+
+    /// Les matériaux du joueur `owner` pour un bâtiment du type `type_index`.
+    fn materials_for(&self, type_index: usize, owner: PlayerId) -> &ModelMaterials {
+        let materials = &self.faction(self.faction_of(type_index)).expect("type de bâtiment sans faction").materials;
+        materials.get(usize::from(owner.0)).unwrap_or(&materials[0])
+    }
+
+    /// Prépare le dessin au sol des champs de construction, de la couleur
+    /// `color` (celle de la faction qui en a). À appeler après avoir ajouté
+    /// les factions : il prend les rayons de tous les types déjà là.
+    pub fn set_construction_field(&mut self, color: Color, meshes: &mut Assets<Mesh>, materials: &mut Assets<StandardMaterial>) {
         let radii = self.types.iter().map(|t| t.field_radius);
         self.field_visuals = Some(FieldVisuals::new(radii, color, meshes, materials));
-        self
     }
 
     /// Sertissage à distance : le modèle (`parts`, pieds en y = 0) de la
-    /// gemme d'ancrage qui flotte au-dessus des chantiers, avec la palette du
-    /// catalogue d'unités `units`.
-    pub fn with_anchor_marker(mut self, parts: &[Part], units: &UnitCatalog, meshes: &mut Assets<Mesh>) -> Self {
-        self.anchor_visual = Some(units.make_visual(parts, meshes));
-        self
+    /// gemme d'ancrage qui flotte au-dessus des chantiers de la faction
+    /// `faction`, avec sa palette (catalogue d'unités `units`).
+    pub fn set_anchor_marker(&mut self, faction: usize, parts: &[Part], units: &UnitCatalog, meshes: &mut Assets<Mesh>) {
+        let visual = units.make_visual(faction, parts, meshes);
+        if let Some(Some(entry)) = self.factions.get_mut(faction) {
+            entry.anchor_visual = Some(visual);
+        }
     }
 
     /// Les prérequis du type `type_index` sont-ils remplis ? `completed[i]`
@@ -425,8 +517,9 @@ impl BuildingCatalog {
             None => building.max_health,
         };
         let jitter = position_jitter(center);
-        let materials = self.materials.get(usize::from(owner.0)).unwrap_or(&self.materials[0]);
-        let site_material = materials.get(self.site_slot);
+        let faction = self.faction(self.faction_of(type_index)).expect("type de bâtiment sans faction");
+        let materials = self.materials_for(type_index, owner);
+        let site_material = materials.get(faction.site_slot);
 
         let mut entity = commands.spawn((
             Name::new(building.name.clone()),
@@ -456,7 +549,7 @@ impl BuildingCatalog {
                 NotShadowCaster,
                 Visibility::Hidden,
             ));
-            if progress.is_some() && self.style.builds_alone() {
+            if progress.is_some() && faction.style.builds_alone() {
                 // Un bâtiment qui pousse ou s'assemble seul n'a pas
                 // d'échafaudage : juste un anneau au sol qui marque l'empreinte
                 // pendant la construction. En sertissage à distance, la gemme
@@ -472,7 +565,7 @@ impl BuildingCatalog {
                         NotShadowCaster,
                     ))
                     .with_children(|frame| {
-                        if let (ConstructionStyle::RemoteAnchor { .. }, Some(anchor)) = (self.style, &self.anchor_visual) {
+                        if let (ConstructionStyle::RemoteAnchor { .. }, Some(anchor)) = (faction.style, &faction.anchor_visual) {
                             frame
                                 .spawn((Name::new("Gemme d'ancrage"), Transform::from_xyz(0.0, top * 0.55, 0.0), Visibility::default()))
                                 .with_children(|gem| spawn_model(gem, anchor, jitter, materials));
@@ -497,7 +590,7 @@ impl BuildingCatalog {
                         for (x, z) in [(-1.0, -1.0), (1.0, -1.0), (1.0, 1.0), (-1.0, 1.0)] {
                             frame.spawn((
                                 Mesh3d(self.pole_mesh.clone()),
-                                MeshMaterial3d(self.pole_material.clone()),
+                                MeshMaterial3d(faction.pole_material.clone()),
                                 Transform::from_xyz(x * corner.x, top / 2.0, z * corner.y).with_scale(Vec3::new(1.0, top, 1.0)),
                             ));
                         }
@@ -511,7 +604,7 @@ impl BuildingCatalog {
             parent
                 .spawn((
                     Name::new("Corps"),
-                    BuildingBody { center_height: height, top: visual.top, grows: self.style.consumes_worker() },
+                    BuildingBody { center_height: height, top: visual.top, grows: faction.style.consumes_worker() },
                     Transform::from_xyz(0.0, -height, 0.0),
                     Visibility::default(),
                 ))
@@ -566,7 +659,7 @@ impl BuildingCatalog {
     /// au sol, centré en `center`, aux couleurs du joueur `owner`.
     pub(crate) fn spawn_wreck(&self, commands: &mut Commands, owner: PlayerId, type_index: usize, center: Vec2) -> Option<Entity> {
         let visual = self.visuals.get(type_index)?;
-        let materials = self.materials.get(usize::from(owner.0)).unwrap_or(&self.materials[0]);
+        let materials = self.materials_for(type_index, owner);
         let root = commands
             .spawn((
                 Name::new("Ruine"),
@@ -819,8 +912,6 @@ pub(crate) fn apply_build_orders(
 ) {
     // Pas encore de grille (tout premier pas) ou pas de bâtiments dans ce jeu.
     let (Some(grid), Some(catalog)) = (grid, catalog) else { return };
-    // Styles où l'emplacement est d'abord promis à un ouvrier libre.
-    let promises = catalog.style.promises_site();
     // Chantiers posés pendant ce pas : la grille ne les connaîtra qu'au
     // prochain, il faut donc aussi vérifier qu'ils ne se chevauchent pas.
     // On y ajoute les emplacements déjà promis à un ouvrier en route.
@@ -834,6 +925,13 @@ pub(crate) fn apply_build_orders(
         let PlayerCommand::Build { type_index, min_cell, builders: ordered } = &issued.command else { continue };
         let (type_index, min_cell, player) = (*type_index, *min_cell, issued.player);
         let Some(building) = catalog.types.get(type_index) else { continue };
+        // Un joueur ne construit que les bâtiments de sa faction.
+        if catalog.faction_of(type_index) != players.get(player).faction {
+            continue;
+        }
+        // Styles où l'emplacement est d'abord promis à un ouvrier libre.
+        let style = catalog.style_of(type_index);
+        let promises = style.promises_site();
         let completed = completed_types(&catalog, player, buildings.iter());
         let fields = ConstructionFields::of_player(&catalog, grid.frame(), player, field_buildings.iter());
         let rect = grid.frame().rect(min_cell, building.footprint);
@@ -887,7 +985,7 @@ pub(crate) fn apply_build_orders(
                 .insert(PlannedSite { type_index, min_cell, paid: building.cost })
                 .remove::<(Harvesting, ConstructionTask, MoveTarget, NavPath, MoveGroup)>();
             match resume {
-                Some(job) if !catalog.style.consumes_worker() => worker.insert(ResumeHarvest(job)),
+                Some(job) if !style.consumes_worker() => worker.insert(ResumeHarvest(job)),
                 _ => worker.remove::<ResumeHarvest>(),
             };
             promised.push(builder);
@@ -987,7 +1085,7 @@ fn root_planned_sites(
         match (catalog.check_placement(plan.type_index, plan.min_cell, &grid, &completed, &fields, nodes.iter()), overlaps) {
             (Ok(source), false) => {
                 let site = catalog.spawn(&mut commands, frame, player, plan.type_index, plan.min_cell, Some(0.0));
-                if catalog.style.consumes_worker() {
+                if catalog.style_of(plan.type_index).consumes_worker() {
                     // `despawn` retire l'ouvrier du monde (et ses enfants : son
                     // modèle, son anneau de sélection).
                     commands.entity(entity).despawn();
@@ -1132,20 +1230,19 @@ fn progress_construction(
     builders: Query<(&SimPosition, &Collider, &ConstructionTask)>,
 ) {
     let Some(catalog) = catalog else { return };
-    let mut worked: Vec<Entity> = if catalog.style.builds_alone() {
-        // Les bâtiments qui poussent ou s'assemblent seuls avancent tous, sans ouvrier.
-        sites.iter().map(|(entity, ..)| entity).collect()
-    } else {
-        // Chantiers sur lesquels un ouvrier travaille : son premier chantier, au contact.
-        builders
-            .iter()
-            .filter_map(|(position, collider, task)| {
-                let site = *task.sites.first()?;
-                let (_, _, obstacle, ..) = sites.get(site).ok()?;
-                (distance_to_rect(position.current, obstacle.0) <= collider.radius + CONTACT_MARGIN).then_some(site)
-            })
-            .collect()
-    };
+    // Les bâtiments qui poussent ou s'assemblent seuls avancent tous, sans ouvrier.
+    let mut worked: Vec<Entity> = sites
+        .iter()
+        .filter(|(_, building, ..)| catalog.style_of(building.type_index).builds_alone())
+        .map(|(entity, ..)| entity)
+        .collect();
+    // Les autres, quand un ouvrier y travaille : son premier chantier, au contact.
+    worked.extend(builders.iter().filter_map(|(position, collider, task)| {
+        let site = *task.sites.first()?;
+        let (_, building, obstacle, ..) = sites.get(site).ok()?;
+        let in_contact = distance_to_rect(position.current, obstacle.0) <= collider.radius + CONTACT_MARGIN;
+        (in_contact && !catalog.style_of(building.type_index).builds_alone()).then_some(site)
+    }));
     worked.sort_unstable();
     worked.dedup();
     let dt = time.delta_secs();
@@ -1314,6 +1411,43 @@ mod tests {
         app.update();
         let world = app.world_mut();
         assert_eq!(world.query::<&Building>().iter(world).count(), 1, "source déjà couverte");
+    }
+
+    #[test]
+    fn second_faction_is_shifted_and_only_its_players_build_it() {
+        let (mut app, worker) = app();
+        // Une seconde faction : un ouvrier, une hutte, et une halle qui exige
+        // la hutte et produit l'ouvrier (indices locaux à la faction).
+        let (mut meshes, mut materials, mut images) = (Assets::default(), Assets::default(), Assets::default());
+        let mut units = app.world_mut().remove_resource::<UnitCatalog>().unwrap();
+        let mut catalog = app.world_mut().remove_resource::<BuildingCatalog>().unwrap();
+        let worker_type = units.types[0].clone();
+        let faction = units.add_faction(vec![worker_type], &palette(), &mut meshes, &mut materials, &mut images);
+        let hut = BuildingType { name: "Hutte".into(), footprint: UVec2::new(2, 2), build_time: 2.0, max_health: 50.0, ..default() };
+        let option = ProductionOption { unit_type: 0, hotkey: 'o', requires: vec![Requirement::Building(0)] };
+        let hall = BuildingType { name: "Halle".into(), requires: vec![0], production: vec![option], ..hut.clone() };
+        let first = catalog.add_faction(faction, vec![hut, hall], vec![0], ConstructionStyle::WorkerConsumed { refund_percent: 75 }, &units, &mut meshes);
+
+        // Les indices sont décalés à leur place dans les catalogues communs.
+        assert_eq!((faction, first, units.first_type(faction)), (1, 5, 1));
+        assert_eq!(catalog.types[6].requires, vec![5]);
+        assert_eq!(catalog.types[6].production[0].unit_type, 1);
+        assert_eq!(catalog.types[6].production[0].requires, vec![Requirement::Building(5)]);
+        assert_eq!(catalog.builders, vec![0, 1]);
+        // Chaque faction garde son style de construction.
+        assert_eq!(catalog.style_of(0), ConstructionStyle::WorkerStays);
+        assert!(catalog.style_of(5).consumes_worker());
+        app.insert_resource(units).insert_resource(catalog);
+
+        // Le joueur 0 joue la faction 0 : la hutte de l'autre lui est refusée.
+        build_type(&mut app, 5, IVec2::new(55, 49), worker);
+        app.update();
+        assert!(app.world().get::<PlannedSite>(worker).is_none(), "bâtiment d'une autre faction");
+        // Passé à la faction 1, il peut la faire pousser.
+        app.world_mut().resource_mut::<Players>().get_mut(PlayerId(0)).faction = 1;
+        build_type(&mut app, 5, IVec2::new(55, 49), worker);
+        app.update();
+        assert!(app.world().get::<PlannedSite>(worker).is_some());
     }
 
     #[test]

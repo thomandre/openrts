@@ -1,6 +1,7 @@
-//! Démonstration de bataille (`OPENRTS_DEMO=battle`) : deux armées de la
-//! même faction (`OPENRTS_FACTION`, la Garde par défaut), le joueur 1 en
-//! orange au sud, le joueur 2 en bleu au nord, chacune devant deux défenses
+//! Démonstration de bataille (`OPENRTS_DEMO=battle`) : l'armée du joueur
+//! (`OPENRTS_FACTION`, la Garde par défaut) en orange au sud, celle de
+//! l'adversaire (`OPENRTS_ENEMY`, la faction suivante par défaut) en bleu
+//! au nord, chacune devant deux défenses
 //! fixes (Tourelles de la Garde, Épineux des Sylves, Aiguillons du
 //! Collectif). Au bout de quelques secondes, les deux armées
 //! reçoivent un ordre d'attaque-déplacement vers la base adverse, par la file
@@ -12,14 +13,12 @@ use bevy::prelude::*;
 use rts_engine::buildings::BuildingCatalog;
 use rts_engine::navigation::GridFrame;
 use rts_engine::orders::{CommandQueue, PlayerCommand};
-use rts_engine::players::{Owner, PlayerId};
+use rts_engine::players::Owner;
 use rts_engine::selection::Selected;
 use rts_engine::units::{Unit, UnitCatalog};
 
-use crate::{garde, sylves, collectif, Faction, ENEMY};
-
-/// Le joueur humain.
-const HUMAN: PlayerId = PlayerId(0);
+use crate::side::Side;
+use crate::{garde, sylves, collectif, Faction, ENEMY, HUMAN};
 
 /// Instant (secondes après le lancement) de l'ordre d'attaque.
 const ATTACK_AT: f32 = 8.0;
@@ -32,7 +31,8 @@ pub fn requested() -> bool {
     std::env::var("OPENRTS_DEMO").is_ok_and(|d| d.eq_ignore_ascii_case("battle"))
 }
 
-/// La composition d'une armée (types d'unités, des premiers rangs aux derniers).
+/// La composition d'une armée (types d'unités locaux à la faction, des
+/// premiers rangs aux derniers).
 fn army(faction: Faction, stress: bool) -> Vec<usize> {
     // (type, nombre) pour l'armée normale, d'une trentaine d'unités.
     let mix: Vec<(usize, usize)> = match faction {
@@ -89,11 +89,12 @@ fn layout(catalog: &UnitCatalog, list: &[usize], front: f32, back: f32, width: f
 }
 
 /// Les deux armées et leurs défenses.
-pub fn spawn(commands: &mut Commands, faction: Faction, units: &UnitCatalog, buildings: Option<&BuildingCatalog>, frame: GridFrame, stress: bool) {
-    let list = army(faction, stress);
+pub fn spawn(commands: &mut Commands, sides: [Side; 2], units: &UnitCatalog, buildings: Option<&BuildingCatalog>, frame: GridFrame, stress: bool) {
     let width = if stress { 34.0 } else { 22.0 };
     // Joueur 1 au sud (+z, côté caméra), regard vers le nord (−z) ; joueur 2 en face.
-    for (player, back, yaw) in [(HUMAN, 1.0, 0.0), (ENEMY, -1.0, std::f32::consts::PI)] {
+    for (side, back, yaw) in [(sides[0], 1.0, 0.0), (sides[1], -1.0, std::f32::consts::PI)] {
+        let player = side.player;
+        let list: Vec<usize> = army(side.faction, stress).into_iter().map(|kind| side.unit(kind)).collect();
         for (&kind, slot) in list.iter().zip(layout(units, &list, back * FRONT, back, width)) {
             let unit = units.spawn_owned(commands, player, kind, slot, yaw);
             // L'armée du joueur est sélectionnée (anneaux, barre d'ordres),
@@ -103,13 +104,13 @@ pub fn spawn(commands: &mut Commands, faction: Faction, units: &UnitCatalog, bui
             }
         }
         // Deux défenses fixes en retrait de l'armée.
-        let defense = match faction {
+        let defense = match side.faction {
             Faction::Garde => Some(garde::building::TOURELLE),
             Faction::Sylves => Some(sylves::building::EPINEUX),
             Faction::Collectif => Some(collectif::building::AIGUILLON),
             Faction::CollectifOrRose => None,
         };
-        if let (Some(catalog), Some(defense)) = (buildings, defense) {
+        if let (Some(catalog), Some(defense)) = (buildings, defense.map(|d| side.building(d))) {
             for x in [-9.0, 9.0] {
                 let depth = if stress { 44.0 } else { FRONT + 12.0 };
                 let min_cell = frame.min_cell_centered(Vec2::new(x, back * depth), catalog.types[defense].footprint);

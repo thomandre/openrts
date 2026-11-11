@@ -206,7 +206,7 @@ Valeurs de combat (Garde : PV, dégâts et portées du tableau ci-dessous ; **le
 
 Autres bâtiments : leurs PV de l'étape 4, armure 1, sans arme (ceux du Collectif, à venir, prennent cette valeur par défaut).
 
-- [ ] Une partie à deux factions différentes : un catalogue d'unités par joueur (aujourd'hui un seul catalogue par partie ; chaque joueur a déjà sa couleur d'équipe).
+- [x] Une partie à deux factions différentes : catalogues et règles communs à la partie, où chaque faction ajoute ses types à la suite ; chaque joueur a sa faction et ne construit que ses bâtiments. Partie normale : le joueur au nord, l'adversaire (`OPENRTS_ENEMY`) au sud, base en miroir.
 - [ ] Projectiles simulés (temps de vol, esquive) si le jeu en a besoin ; tirs instantanés pour l'instant.
 - [ ] Soin du Sourcier, drones de l'Essaimeur, capacités du Faucon.
 
@@ -327,7 +327,7 @@ On avance par étapes courtes, chacune jouable et testée avant de passer à la 
    - tirs instantanés déterministes, morts et destructions qui libèrent population, grille, gisements ; tests sans fenêtre (duel, armure et bonus, riposte, attaque-déplacement, priorité, air/sol, déterminisme au bit près, ouvrier tué en récolte, bâtiment détruit) ;
    - lisibilité : barres de vie (sélection, blessés, survol ; agrandies en dézoom), traits de tir aux couleurs d'équipe, éclats, épaves et ruines qui s'effondrent, repères d'ordres rouges ou verts ;
    - démonstration `OPENRTS_DEMO=battle` (300 contre 300 avec `OPENRTS_STRESS=1`) : un pas de simulation de 300 contre 300 coûte environ 0,6 ms en moyenne (2 ms au pire) en mode optimisé.
-   *Reste : catalogue par joueur pour deux factions différentes, projectiles simulés, soin et capacités, équilibrage en test.*
+   *Reste : projectiles simulés, soin et capacités, équilibrage en test.*
 6. **Groupes de contrôle et interface** : barre de groupes, boutons d’ordres, raccourcis, minicarte.
 7. **Brouillard de guerre et IA adverse** basique qui construit et attaque par vagues.
 8. **Première faction complète** : arbre technologique, unités distinctes, vrais modèles 3D.

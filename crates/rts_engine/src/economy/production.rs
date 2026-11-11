@@ -206,7 +206,7 @@ pub(crate) fn apply_production_orders(
                 // Le style de construction décide du remboursement : complet
                 // quand l'ouvrier est resté dehors, partiel quand il est
                 // devenu le bâtiment (valeurs proposées, à revoir avec le combat).
-                players.get_mut(player).stock += catalog.style.cancel_refund(catalog.types[kind.type_index].cost);
+                players.get_mut(player).stock += catalog.style_of(kind.type_index).cancel_refund(catalog.types[kind.type_index].cost);
                 // L'ouvrier devenu ce chantier ressort de terre, devant lui.
                 if let (Some(rooted), Some(units), Some(grid)) = (rooted, units.as_deref(), grid.as_deref())
                     && let Some(unit) = units.types.get(rooted.unit_type)

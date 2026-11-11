@@ -16,7 +16,7 @@
 
 use bevy::prelude::*;
 use rts_engine::camera::RtsCamera;
-use rts_engine::buildings::{BuildingCatalog, ConstructionStyle, ConstructionTask, PlacementGhost};
+use rts_engine::buildings::{BuildingCatalog, ConstructionTask, PlacementGhost};
 use rts_engine::collision::StaticObstacle;
 use rts_engine::economy::ResourceNode;
 use rts_engine::navigation::GridFrame;
@@ -25,29 +25,11 @@ use rts_engine::players::PlayerId;
 use rts_engine::selection::Selected;
 use rts_engine::units::UnitCatalog;
 
-use crate::garde::{self, building::*, kind::*};
+use crate::garde::{building::*, kind::*};
 use crate::gisements::{self, DepositVisuals};
 
-/// Le catalogue des bâtiments de la Garde. Ils partagent les matériaux
-/// (et donc la couleur d'équipe) du catalogue d'unités `units`.
-pub fn building_catalog(
-    units: &UnitCatalog,
-    meshes: &mut Assets<Mesh>,
-    materials: &mut Assets<StandardMaterial>,
-) -> BuildingCatalog {
-    // Les Techniciens construisent, et restent sur le chantier jusqu'au bout.
-    BuildingCatalog::new(
-        garde::building_types(),
-        vec![TECHNICIEN],
-        ConstructionStyle::WorkerStays,
-        units,
-        meshes,
-        materials,
-    )
-}
-
-/// Le joueur humain (le seul pour l'instant).
-pub(crate) const HUMAN: PlayerId = PlayerId(0);
+/// Le joueur humain.
+pub(crate) use crate::HUMAN;
 
 /// Pose un bâtiment terminé centré au plus près du point (x, z).
 pub(crate) fn place(commands: &mut Commands, catalog: &BuildingCatalog, frame: GridFrame, type_index: usize, at: Vec2) -> Entity {
@@ -58,39 +40,14 @@ pub(crate) fn place(commands: &mut Commands, catalog: &BuildingCatalog, frame: G
 /// Centre du Quartier général de départ (les gisements se placent autour).
 pub const START_HQ: Vec2 = Vec2::new(0.0, -13.0);
 
-/// Partie normale : le Quartier général, deux Modules d'habitat, les
-/// gisements et quatre Techniciens qui se mettent tout de suite à récolter.
-pub fn spawn_start(
-    commands: &mut Commands,
-    buildings: &BuildingCatalog,
-    units: &UnitCatalog,
-    deposits: &DepositVisuals,
-    frame: GridFrame,
-) {
-    place(commands, buildings, frame, QUARTIER_GENERAL, START_HQ);
-    // Deux Modules d'habitat : l'armée de présentation occupe déjà plus que
-    // les 15 de population du Quartier général.
-    for x in [-8.5, 8.5] {
-        place(commands, buildings, frame, HABITAT, Vec2::new(x, -8.5));
-    }
-    let (nodes, _) = gisements::spawn_base(commands, deposits, frame, &gisements::starting_base(START_HQ));
-    let mut orders = Vec::new();
-    for (i, x) in [-3.0, -1.0, 1.0, 3.0].into_iter().enumerate() {
-        let worker = units.spawn_facing(commands, TECHNICIEN, START_HQ + Vec2::new(x, -4.6), 0.0);
-        // Chacun son gisement, au milieu de la ligne.
-        orders.push((worker, nodes[2 + i]));
-    }
-    harvest_at_start(commands, orders);
-}
-
 /// Donne des ordres de récolte au premier pas, par la file des ordres
 /// (`commands.queue` : une fonction exécutée plus tard avec tout le monde
 /// accessible, une fois les entités créées).
-pub(crate) fn harvest_at_start(commands: &mut Commands, orders: Vec<(Entity, Entity)>) {
+pub(crate) fn harvest_at_start(commands: &mut Commands, player: PlayerId, orders: Vec<(Entity, Entity)>) {
     commands.queue(move |world: &mut World| {
         let mut queue = world.resource_mut::<CommandQueue>();
         for (worker, node) in orders {
-            queue.push(HUMAN, PlayerCommand::Harvest { units: vec![worker], node });
+            queue.push(player, PlayerCommand::Harvest { units: vec![worker], node });
         }
     });
 }

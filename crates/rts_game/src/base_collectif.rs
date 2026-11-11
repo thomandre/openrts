@@ -25,46 +25,8 @@ use rts_engine::selection::Selected;
 use rts_engine::units::UnitCatalog;
 
 use crate::base::{harvest_at_start, place, HUMAN, START_HQ};
-use crate::collectif::{self, building::*, kind::*};
+use crate::collectif::{building::*, kind::*};
 use crate::gisements::{self, DepositVisuals};
-
-/// Le catalogue des bâtiments du Collectif : les Collecteurs les sertissent
-/// à distance (voir [`collectif::CONSTRUCTION`]), dans les champs de
-/// résonance dessinés au sol pendant la pose, et une gemme d'ancrage flotte
-/// au-dessus de chaque chantier.
-pub fn building_catalog(
-    units: &UnitCatalog,
-    meshes: &mut Assets<Mesh>,
-    materials: &mut Assets<StandardMaterial>,
-) -> BuildingCatalog {
-    BuildingCatalog::new(collectif::building_types(), vec![COLLECTEUR], collectif::CONSTRUCTION, units, meshes, materials)
-        .with_construction_field(collectif::FIELD_COLOR, meshes, materials)
-        .with_anchor_marker(&collectif::anchor_gem(), units, meshes)
-}
-
-/// Partie normale : l'Écrin, trois Résonateurs, les gisements et quatre
-/// Collecteurs qui se mettent tout de suite à récolter.
-pub fn spawn_start(
-    commands: &mut Commands,
-    buildings: &BuildingCatalog,
-    units: &UnitCatalog,
-    deposits: &DepositVisuals,
-    frame: GridFrame,
-) {
-    place(commands, buildings, frame, ECRIN, START_HQ);
-    // Trois Résonateurs : l'armée de présentation du Collectif (Titan,
-    // Essaimeur…) occupe déjà plus que les 15 de population de l'Écrin.
-    for at in [Vec2::new(-8.5, -8.5), Vec2::new(8.5, -8.5), Vec2::new(14.0, -12.0)] {
-        place(commands, buildings, frame, RESONATEUR, at);
-    }
-    let (nodes, _) = gisements::spawn_base(commands, deposits, frame, &gisements::starting_base(START_HQ));
-    let mut orders = Vec::new();
-    for (i, x) in [-3.0, -1.0, 1.0, 3.0].into_iter().enumerate() {
-        let worker = units.spawn_facing(commands, COLLECTEUR, START_HQ + Vec2::new(x, -4.6), 0.0);
-        orders.push((worker, nodes[2 + i]));
-    }
-    harvest_at_start(commands, orders);
-}
 
 /// Marqueur : le Collecteur de la démonstration qui partira sertir un Aiguillon.
 #[derive(Component)]
@@ -134,7 +96,7 @@ pub fn spawn_demo(
             node.extractor = Some(creuset);
         }
     });
-    harvest_at_start(commands, harvest);
+    harvest_at_start(commands, HUMAN, harvest);
 }
 
 /// Envoie le Collecteur de la démonstration sertir un Aiguillon, une seule

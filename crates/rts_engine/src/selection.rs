@@ -334,7 +334,9 @@ fn spawn_stress_test(commands: &mut Commands, catalog: &UnitCatalog) {
     let side = (COUNT as f32).sqrt().ceil() as usize;
     for i in 0..COUNT {
         let pos = (Vec2::new((i % side) as f32, (i / side) as f32) - side as f32 / 2.0) * 2.0;
-        catalog.spawn(commands, i % catalog.types.len(), pos);
+        // Les types de la première faction (celle du joueur).
+        let types = catalog.faction_types(0);
+        catalog.spawn(commands, types.start + i % types.len().max(1), pos);
     }
     info!("Test de charge : {COUNT} unités ajoutées");
 }

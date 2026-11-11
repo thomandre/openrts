@@ -153,6 +153,16 @@ impl EconomyRules {
     pub fn resource(&self, kind: ResourceKind) -> &ResourceInfo {
         &self.resources[kind.index()]
     }
+
+    /// Ajoute les règles d'une autre faction, dont les types d'unités
+    /// commencent à l'indice `first_unit` du catalogue commun (voir
+    /// `UnitCatalog::add_faction`). Ressources, charges et cadences de
+    /// récolte restent celles-ci : elles sont communes à la partie.
+    pub fn merge(&mut self, other: EconomyRules, first_unit: usize) {
+        self.units.resize(first_unit, production::UnitEconomy::default());
+        self.units.extend(other.units);
+        self.harvesters.extend(other.harvesters.into_iter().map(|h| h + first_unit));
+    }
 }
 
 /// Un gisement : une quantité finie d'une ressource, posée sur un bloc de

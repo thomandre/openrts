@@ -213,6 +213,16 @@ pub struct CombatRules {
 }
 
 impl CombatRules {
+    /// Ajoute les fiches d'une autre faction, dont les types d'unités et de
+    /// bâtiments commencent aux indices `first_unit` et `first_building` des
+    /// catalogues communs.
+    pub fn merge(&mut self, other: CombatRules, first_unit: usize, first_building: usize) {
+        self.units.resize(first_unit, CombatStats::default());
+        self.units.extend(other.units);
+        self.buildings.resize(first_building, CombatStats::default());
+        self.buildings.extend(other.buildings);
+    }
+
     fn stats(&self, kind: CombatKind) -> Option<&CombatStats> {
         match kind {
             CombatKind::Unit(i) => self.units.get(i),

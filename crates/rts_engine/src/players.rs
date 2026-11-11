@@ -37,6 +37,10 @@ pub struct LocalPlayer(pub PlayerId);
 /// L'état d'un joueur, tenu par la simulation.
 #[derive(Debug, Clone, Default)]
 pub struct PlayerState {
+    /// Sa faction : un numéro de faction des catalogues (voir
+    /// [`crate::units::UnitCatalog::add_faction`]). Il ne construit que les
+    /// bâtiments de sa faction.
+    pub faction: usize,
     /// Ressources en stock.
     pub stock: Stock,
     /// Population utilisée : unités vivantes et unités en file de production

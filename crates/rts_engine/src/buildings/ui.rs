@@ -15,7 +15,7 @@ use crate::economy::ui::format_cost;
 use crate::economy::EconomyRules;
 use crate::navigation::NavGrid;
 use crate::input::{ActionButton, BlocksPointer, GameAction, Hotkey, InputContext};
-use crate::players::{LocalPlayer, Owner};
+use crate::players::{LocalPlayer, Owner, Players};
 use crate::selection::Selected;
 use crate::units::Unit;
 
@@ -72,6 +72,7 @@ pub(crate) fn update_command_bar(
     context: Res<InputContext>,
     placement: Res<Placement>,
     local: Res<LocalPlayer>,
+    players: Res<Players>,
     selected: Query<(&Unit, &Owner), With<Selected>>,
     buildings: Query<(&Building, &Owner, Has<UnderConstruction>)>,
     mut bar: Query<&mut Visibility, With<CommandBar>>,
@@ -81,7 +82,7 @@ pub(crate) fn update_command_bar(
 ) {
     let Some(catalog) = catalog else { return };
     let Ok(mut visibility) = bar.single_mut() else {
-        spawn_command_bar(&mut commands, &catalog, rules.as_deref());
+        spawn_command_bar(&mut commands, &catalog, rules.as_deref(), players.get(local.0).faction);
         return;
     };
     let has_builder = selected.iter().any(|(unit, owner)| catalog.builders.contains(&unit.type_index) && owner.0 == local.0);
@@ -121,7 +122,9 @@ pub(crate) fn update_command_bar(
     }
 }
 
-fn spawn_command_bar(commands: &mut Commands, catalog: &BuildingCatalog, rules: Option<&EconomyRules>) {
+/// La barre ne montre que les bâtiments de la faction `faction` (celle du
+/// joueur local) : leurs raccourcis ne se mélangent pas à ceux des autres.
+fn spawn_command_bar(commands: &mut Commands, catalog: &BuildingCatalog, rules: Option<&EconomyRules>, faction: usize) {
     let font = ui_font;
     // Conteneur pleine largeur (transparent, il ne bloque pas les clics) qui
     // centre le panneau en bas de l'écran.
@@ -157,7 +160,8 @@ fn spawn_command_bar(commands: &mut Commands, catalog: &BuildingCatalog, rules: 
                 panel
                     .spawn(Node { flex_direction: FlexDirection::Row, column_gap: Val::Px(6.0), ..default() })
                     .with_children(|row| {
-                        for (type_index, building) in catalog.types.iter().enumerate() {
+                        let own = catalog.types.iter().enumerate().filter(|(i, _)| catalog.faction_of(*i) == faction);
+                        for (type_index, building) in own {
                             let cost = format_cost(building.cost, rules);
                             row.spawn((
                                 BuildButton { type_index },
