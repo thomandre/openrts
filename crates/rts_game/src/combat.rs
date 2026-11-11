@@ -40,6 +40,9 @@ pub fn garde() -> CombatRules {
             CombatStats::unit(40.0, 0.0, &[Infantry, Ranged], vec![Weapon::new(18.0, 9.0, 2.0, GROUND)]).with_sight(12.0),
             CombatStats::unit(70.0, 1.0, &[Infantry, Ranged], vec![Weapon::new(10.0, 6.0, 1.5, BOTH).with_bonus(Armored, 25.0)]).with_sight(9.0),
             CombatStats::unit(300.0, 2.0, &[Armored, Ranged], vec![Weapon::new(30.0, 6.0, 2.2, GROUND).with_splash(1.6)]).with_sight(10.0),
+            // Faucon : il survole les unités et les bâtiments (à 3 m au moins),
+            // mais compte comme une unité au sol au combat (pas de catégorie
+            // `Air`) : toutes les armes le touchent. Choix de design.
             CombatStats::unit(45.0, 0.0, &[Infantry, Ranged], vec![Weapon::new(8.0, 4.0, 0.8, GROUND)]).with_sight(10.0),
         ],
         // Ordre de `garde::building` : Quartier général, Module d'habitat,
