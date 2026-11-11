@@ -11,7 +11,11 @@
 //!
 //! Comme un joueur, elle n'agit que par la file des ordres
 //! ([`CommandQueue`]) : ses ordres sont revérifiés par la simulation (coût,
-//! prérequis, emplacement), et elle n'a aucun avantage caché. Elle tourne
+//! prérequis, emplacement), et elle n'a aucun avantage caché. Avec le
+//! brouillard de guerre ([`crate::vision`]), elle ne connaît des ennemis que
+//! ce que voit son joueur et les bâtiments qu'il a déjà aperçus. Elle suppose
+//! la carte symétrique par rapport à son centre : la base adverse est à
+//! l'opposé de la sienne. Si elle n'y trouve rien, elle explore. Elle tourne
 //! dans la simulation à pas fixe et ne lit que l'état de la simulation, dans
 //! un ordre fixe (entités triées) : la même partie donne les mêmes décisions,
 //! ce qu'exigera le multijoueur en lockstep.
@@ -38,11 +42,13 @@ use crate::combat::CombatOrder;
 use crate::economy::harvest::Harvesting;
 use crate::economy::production::ProductionQueue;
 use crate::economy::{EconomyRules, ResourceKind, ResourceNode};
+use crate::collision::MapBounds;
 use crate::navigation::{GridFrame, NavGrid};
 use crate::orders::{CommandQueue, PlayerCommand};
 use crate::players::{Owner, PlayerId, Players};
 use crate::simulation::{MoveTarget, SimPosition, SimSet, TICKS_PER_SECOND};
 use crate::units::Unit;
+use crate::vision::{CellVision, FogOfWar};
 
 /// Les réglages de l'IA (valeurs proposées).
 #[derive(Resource, Debug, Clone)]
@@ -92,11 +98,14 @@ pub struct AiPlayer {
     rallied: Vec<Entity>,
     /// Compteur des unités de combat commandées (pour varier l'armée).
     trained: usize,
+    /// Où elle suppose la base adverse : le symétrique de sa propre base par
+    /// rapport au centre de la carte (retenu à sa première réflexion).
+    enemy_start: Option<Vec2>,
 }
 
 impl AiPlayer {
     pub fn new(player: PlayerId) -> Self {
-        Self { player, wave: 0, attacking: false, rallied: Vec::new(), trained: 0 }
+        Self { player, wave: 0, attacking: false, rallied: Vec::new(), trained: 0, enemy_start: None }
     }
 }
 
@@ -117,6 +126,7 @@ impl Plugin for AiPlugin {
 }
 
 /// Une unité vue par l'IA.
+#[derive(Clone)]
 struct UnitView {
     entity: Entity,
     owner: PlayerId,
@@ -129,7 +139,8 @@ struct UnitView {
     fighting: bool,
 }
 
-/// Un bâtiment vu par l'IA.
+/// Un bâtiment vu par l'IA (pour un bâtiment ennemi : tel qu'aperçu).
+#[derive(Clone)]
 struct BuildingView {
     entity: Entity,
     owner: PlayerId,
@@ -153,6 +164,7 @@ fn think(
     mut ais: ResMut<AiPlayers>,
     settings: Res<AiSettings>,
     (catalog, rules, grid): (Option<Res<BuildingCatalog>>, Option<Res<EconomyRules>>, Option<Res<NavGrid>>),
+    (fog, bounds): (Option<Res<FogOfWar>>, Res<MapBounds>),
     players: Res<Players>,
     mut orders: ResMut<CommandQueue>,
     units: UnitQuery,
@@ -201,8 +213,46 @@ fn think(
     let mut node_list: Vec<(Entity, ResourceNode, Footprint)> = nodes.iter().map(|(e, n, f)| (e, *n, *f)).collect();
     node_list.sort_by_key(|n| n.0);
 
+    // Le brouillard, s'il est actif.
+    let fog = fog.as_deref().filter(|f| f.is_enabled());
     for ai in &mut ais.0 {
-        let view = Snapshot { catalog: &catalog, rules: &rules, grid: &grid, frame, units: &unit_views, buildings: &building_views, nodes: &node_list };
+        // Ce que sait son joueur : ses propres entités, les unités ennemies
+        // qu'il voit, et les bâtiments ennemis dont il se souvient.
+        let (known_units, known_buildings) = match fog {
+            Some(fog) => {
+                let units: Vec<UnitView> = unit_views.iter().filter(|u| fog.sees_entity(ai.player, u.owner, u.position, None)).cloned().collect();
+                let mut buildings: Vec<BuildingView> = building_views.iter().filter(|b| b.owner == ai.player).cloned().collect();
+                buildings.extend(fog.remembered(ai.player).map(|(entity, b)| BuildingView {
+                    entity,
+                    owner: b.owner,
+                    type_index: b.type_index,
+                    center: b.rect.center(),
+                    rect: b.rect,
+                    done: b.progress.is_none(),
+                    queued: 0,
+                }));
+                buildings.sort_by_key(|b| b.entity);
+                (units, buildings)
+            }
+            None => (unit_views.clone(), building_views.clone()),
+        };
+        // Sa base de départ (son premier dépôt) donne, par symétrie, celle de l'adversaire.
+        if ai.enemy_start.is_none()
+            && let Some(hq) = building_views.iter().find(|b| b.owner == ai.player && catalog.types[b.type_index].dropoff)
+        {
+            ai.enemy_start = Some(bounds.0.center() * 2.0 - hq.center);
+        }
+        let view = Snapshot {
+            catalog: &catalog,
+            rules: &rules,
+            grid: &grid,
+            frame,
+            units: &known_units,
+            buildings: &known_buildings,
+            nodes: &node_list,
+            fog,
+            bounds: bounds.0,
+        };
         let field_iter = buildings.iter().map(|(_, b, o, f, uc, _)| (b, o, f, uc));
         let fields = ConstructionFields::of_player(&catalog, frame, ai.player, field_iter);
         let completed = completed_types(&catalog, ai.player, buildings.iter().map(|(_, b, o, _, uc, _)| (b, o, uc)));
@@ -223,6 +273,9 @@ struct Snapshot<'a> {
     units: &'a [UnitView],
     buildings: &'a [BuildingView],
     nodes: &'a [(Entity, ResourceNode, Footprint)],
+    /// Le brouillard de guerre, s'il est actif.
+    fog: Option<&'a FogOfWar>,
+    bounds: Rect,
 }
 
 /// Une réflexion de l'IA pour un joueur.
@@ -502,13 +555,32 @@ impl Plan<'_> {
         hq + (target - hq).normalize_or(Vec2::Y) * 10.0
     }
 
-    /// La cible d'une attaque : le bâtiment ennemi le plus proche, sinon
-    /// l'unité ennemie la plus proche.
+    /// La cible d'une attaque : le bâtiment ennemi connu le plus proche,
+    /// sinon l'unité ennemie visible la plus proche. Sous le brouillard, à
+    /// défaut : la base adverse supposée, puis, si elle est vide, le coin de
+    /// carte le moins exploré le plus proche d'elle (exploration).
     fn enemy_target(&self, from: Vec2) -> Option<Vec2> {
         let player = self.ai.player;
         let nearest = |points: &mut dyn Iterator<Item = Vec2>| points.min_by(|a, b| a.distance(from).total_cmp(&b.distance(from)));
-        nearest(&mut self.view.buildings.iter().filter(|b| b.owner != player).map(|b| b.center))
-            .or_else(|| nearest(&mut self.view.units.iter().filter(|u| u.owner != player).map(|u| u.position)))
+        let known = nearest(&mut self.view.buildings.iter().filter(|b| b.owner != player).map(|b| b.center))
+            .or_else(|| nearest(&mut self.view.units.iter().filter(|u| u.owner != player).map(|u| u.position)));
+        let (Some(fog), None) = (self.view.fog, known) else { return known };
+        let start = self.ai.enemy_start?;
+        if !fog.is_visible(player, start) {
+            return Some(start);
+        }
+        // Des points tous les 10 m, à 5 m des bords : d'abord ceux jamais
+        // vus, puis ceux qu'on ne voit plus ; à égalité, le plus proche de la
+        // base supposée (puis le premier de la liste : ordre fixe).
+        let bounds = self.view.bounds;
+        let columns = ((bounds.width() - 10.0) / 10.0).floor().max(0.0) as i32;
+        let rows = ((bounds.height() - 10.0) / 10.0).floor().max(0.0) as i32;
+        (0..=rows)
+            .flat_map(|z| (0..=columns).map(move |x| bounds.min + 5.0 + Vec2::new(x as f32, z as f32) * 10.0))
+            .map(|p| (fog.at(player, p), p))
+            .filter(|(state, _)| *state != CellVision::Visible)
+            .min_by(|(sa, a), (sb, b)| sa.cmp(sb).then(a.distance(start).total_cmp(&b.distance(start))))
+            .map(|(_, p)| p)
     }
 
     /// L'armée : défense, puis attaque par vagues.
@@ -605,6 +677,12 @@ mod tests {
     /// ouvriers inoccupés, une ligne de gisements, de quoi construire.
     /// L'IA connaît aussi une caserne (soldats) et un abri (population).
     fn app() -> App {
+        app_at(Vec2::ZERO, false)
+    }
+
+    /// Comme [`app`], la base centrée en `hq_at` ; `fog` : avec le
+    /// brouillard de guerre et des fiches de combat (des soldats armés).
+    fn app_at(hq_at: Vec2, fog: bool) -> App {
         let mut app = App::new();
         app.add_plugins(MinimalPlugins)
             .add_message::<GameAction>()
@@ -620,6 +698,16 @@ mod tests {
                 units: vec![UnitEconomy { cost: Cost::new(50, 0), train_time: 4.0, population: 1 }; 2],
             })
             .insert_resource(AiPlayers(vec![AiPlayer::new(AI)]));
+        if fog {
+            use crate::combat::{Category, CombatRules, CombatStats, Weapon};
+            app.add_plugins(crate::vision::VisionPlugin).insert_resource(CombatRules {
+                units: vec![
+                    CombatStats::unit(40.0, 0.0, &[Category::Worker], vec![Weapon::new(3.0, 0.3, 1.5, (true, false))]),
+                    CombatStats::unit(60.0, 0.0, &[Category::Infantry], vec![Weapon::new(10.0, 4.0, 1.0, (true, false))]),
+                ],
+                buildings: vec![CombatStats::structure(0.0, &[], Vec::new()); 3],
+            });
+        }
         let (mut meshes, mut materials, mut images) = (Assets::default(), Assets::default(), Assets::default());
         let unit = |name: &str| UnitType { name: name.into(), parts: Vec::new(), footprint_radius: 0.5, mass: 1.0, speed: 4.0, hover: None };
         let units = UnitCatalog::new(vec![unit("Ouvrier"), unit("Soldat")], &palette(), &mut meshes, &mut materials, &mut images);
@@ -648,12 +736,13 @@ mod tests {
         world.resource_scope(|world, catalog: Mut<BuildingCatalog>| {
             world.resource_scope(|world, units: Mut<UnitCatalog>| {
                 let mut commands = world.commands();
-                catalog.spawn(&mut commands, frame, AI, 0, frame.min_cell_centered(Vec2::ZERO, UVec2::new(4, 4)), None);
+                catalog.spawn(&mut commands, frame, AI, 0, frame.min_cell_centered(hq_at, UVec2::new(4, 4)), None);
                 for x in [-4.0, -2.0, 0.0, 2.0, 4.0] {
-                    spawn_resource_node(&mut commands, frame, ResourceKind::Primary, frame.min_cell_centered(Vec2::new(x, -6.5), UVec2::new(2, 1)), UVec2::new(2, 1), 1000, false);
+                    let at = hq_at + Vec2::new(x, -6.5);
+                    spawn_resource_node(&mut commands, frame, ResourceKind::Primary, frame.min_cell_centered(at, UVec2::new(2, 1)), UVec2::new(2, 1), 1000, false);
                 }
                 for x in [-1.0, 1.0] {
-                    units.spawn_owned(&mut commands, AI, WORKER, Vec2::new(x, 3.5), 0.0);
+                    units.spawn_owned(&mut commands, AI, WORKER, hq_at + Vec2::new(x, 3.5), 0.0);
                 }
             });
         });
@@ -694,5 +783,35 @@ mod tests {
             second.update();
         }
         assert_eq!(summary(&mut first), summary(&mut second));
+    }
+
+    /// Sous le brouillard, l'IA ne sait pas où est l'adversaire (un joueur
+    /// passif, qui n'a qu'un dépôt) : elle le suppose à l'opposé de sa base,
+    /// n'y trouve rien (le dépôt est ailleurs), explore, le trouve et le détruit.
+    #[test]
+    fn ai_scouts_and_destroys_a_passive_enemy_under_fog() {
+        let mut app = app_at(Vec2::new(0.0, -30.0), true);
+        app.insert_resource(AiSettings { first_attack_secs: 30.0, first_wave: 4, ..default() });
+        let frame = app.world().resource::<NavGrid>().frame();
+        // Le dépôt adverse, à 20 m de l'emplacement supposé (0, 30).
+        let depot = app.world_mut().resource_scope(|world, catalog: Mut<BuildingCatalog>| {
+            let mut commands = world.commands();
+            catalog.spawn(&mut commands, frame, PlayerId(0), 0, frame.min_cell_centered(Vec2::new(20.0, 30.0), UVec2::new(4, 4)), None)
+        });
+        app.world_mut().flush();
+        for _ in 0..32 * 20 {
+            app.update();
+        }
+        assert!(app.world().resource::<FogOfWar>().remembers(AI, depot).is_none(), "l'IA n'a pas encore pu voir le dépôt");
+        for second in 0..400 {
+            if app.world().get_entity(depot).is_err() {
+                println!("Dépôt détruit après {} s", 20 + second);
+                return;
+            }
+            for _ in 0..32 {
+                app.update();
+            }
+        }
+        panic!("l'IA aurait dû trouver et détruire le dépôt adverse");
     }
 }

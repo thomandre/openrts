@@ -19,7 +19,10 @@ use crate::buildings::{BuildingCatalog, Health, UnderConstruction};
 use crate::camera::{screen_ray, RtsCamera};
 use crate::cursor::Pointer;
 use crate::players::PlayerId;
-use crate::selection::{pick, Selectable, Selected};
+use crate::players::LocalPlayer;
+use crate::selection::{pick, Pickable, Selectable, Selected};
+use crate::vision::display::FogHidden;
+use crate::vision::FogOfWar;
 use crate::simulation::{MoveTarget, SimPosition};
 use crate::units::{MaterialSlot, Unit, UnitCatalog};
 use crate::RtsSystems;
@@ -141,6 +144,7 @@ fn spawn_shot_effects(
     transforms: Query<&GlobalTransform>,
     flashes: Query<(), With<Flash>>,
     mut ready: Local<bool>,
+    (fog, local): (Option<Res<FogOfWar>>, Res<LocalPlayer>),
 ) {
     // Une fois : un matériau de trait par couleur d'équipe.
     if !*ready && let Some(catalog) = &catalog {
@@ -166,6 +170,11 @@ fn spawn_shot_effects(
     for event in events.read() {
         let CombatEvent::Shot { attacker, target, from, to, player, splash, melee } = *event else { continue };
         if budget < 2 {
+            continue;
+        }
+        // Un tir entièrement dans le brouillard ne se voit pas.
+        let seen = |p: Vec2| fog.as_ref().is_none_or(|f| f.is_visible(local.0, p));
+        if player != local.0 && !seen(from) && !seen(to) {
             continue;
         }
         // Hauteurs : le milieu des modèles (l'origine de leur racine), ou 0,8 m.
@@ -209,9 +218,15 @@ fn spawn_deaths(
     assets: Res<EffectAssets>,
     units: Option<Res<UnitCatalog>>,
     buildings: Option<Res<BuildingCatalog>>,
+    (fog, local): (Option<Res<FogOfWar>>, Res<LocalPlayer>),
 ) {
     for event in events.read() {
         let CombatEvent::Died { position, owner, kind, yaw, .. } = *event else { continue };
+        // Une mort dans le brouillard ne se voit pas (un bâtiment détruit
+        // hors de vue reste affiché comme souvenir, voir `vision::display`).
+        if owner != local.0 && fog.as_ref().is_some_and(|f| !f.is_visible(local.0, position)) {
+            continue;
+        }
         let (wreck, size, duration, tilt, depth) = match kind {
             CombatKind::Unit(type_index) => {
                 let top = units.as_ref().map_or(1.5, |u| u.model_top(type_index));
@@ -317,8 +332,9 @@ fn update_health_bars(
     pointer: Res<Pointer>,
     units: Option<Res<UnitCatalog>>,
     buildings: Option<Res<BuildingCatalog>>,
-    fighters: Query<(Entity, &Health, &Combatant, &GlobalTransform, Has<Selected>, Option<&Selectable>, Has<UnderConstruction>)>,
-    pickable: Query<(Entity, &GlobalTransform, &Selectable)>,
+    // Pas de barre pour ce que cache le brouillard.
+    fighters: Query<(Entity, &Health, &Combatant, &GlobalTransform, Has<Selected>, Option<&Selectable>, Has<UnderConstruction>), Without<FogHidden>>,
+    pickable: Pickable,
     mut bars: Query<(Entity, &HealthBar, &mut Transform, &Children), Without<HealthFill>>,
     mut fills: Query<(&mut Transform, &mut MeshMaterial3d<StandardMaterial>), With<HealthFill>>,
 ) {

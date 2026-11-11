@@ -4,7 +4,7 @@
 //! la caméra, la couche d'entrées par actions, la sélection, la file des
 //! ordres des joueurs (`orders`), les joueurs (`players`), la navigation
 //! (grille, A*), les bâtiments (pose, chantiers), l'économie, le combat, une IA
-//! adverse basique (`ai`) et le rendu
+//! adverse basique (`ai`), le brouillard de guerre (`vision`) et le rendu
 //! (module `graphics`). Le contenu (unités, bâtiments, cartes…) vit
 //! dans la crate `rts_game`.
 
@@ -24,6 +24,7 @@ pub mod players;
 pub mod selection;
 pub mod simulation;
 pub mod units;
+pub mod vision;
 
 use bevy::prelude::*;
 
@@ -64,6 +65,6 @@ impl Plugin for RtsEnginePlugin {
                 devtools::DevToolsPlugin,
             ))
             // Un `n`-uplet de plugins en compte au plus 15 : celui-ci à part.
-            .add_plugins(ai::AiPlugin);
+            .add_plugins((ai::AiPlugin, vision::VisionPlugin, vision::display::FogDisplayPlugin));
     }
 }

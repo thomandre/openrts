@@ -363,7 +363,21 @@ fn a_destroyed_building_frees_the_grid_and_its_supply() {
 #[test]
 #[ignore]
 fn battle_300_against_300_step_time() {
+    battle_300(false);
+}
+
+/// La même bataille, avec le brouillard de guerre (voir `crate::vision`).
+#[test]
+#[ignore]
+fn battle_300_against_300_step_time_with_fog() {
+    battle_300(true);
+}
+
+fn battle_300(fog: bool) {
     let mut app = app();
+    if fog {
+        app.add_plugins(crate::vision::VisionPlugin);
+    }
     let side = 20;
     let mut mine = Vec::new();
     let mut theirs = Vec::new();
@@ -387,7 +401,8 @@ fn battle_300_against_300_step_time() {
     let mut sorted = samples.clone();
     sorted.sort_by(f64::total_cmp);
     println!(
-        "300 contre 300 : {:.2} ms par pas en moyenne, {:.2} ms au 95e centile, {:.2} ms au pire ; {survivors} survivants après 20 s",
+        "300 contre 300{} : {:.2} ms par pas en moyenne, {:.2} ms au 95e centile, {:.2} ms au pire ; {survivors} survivants après 20 s",
+        if fog { " avec brouillard" } else { "" },
         average,
         sorted[sorted.len() * 95 / 100],
         sorted[sorted.len() - 1]

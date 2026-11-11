@@ -17,6 +17,7 @@ use crate::orders::{CommandQueue, PlayerCommand};
 use crate::players::{are_enemies, LocalPlayer, Owner};
 use crate::simulation::MoveSpeed;
 use crate::units::{Unit, UnitCatalog};
+use crate::vision::display::FogHidden;
 use crate::RtsSystems;
 
 /// Une entité qu'on peut sélectionner.
@@ -68,11 +69,18 @@ impl Plugin for SelectionPlugin {
     }
 }
 
+/// Les entités qu'on peut désigner à la souris : sélectionnables, et pas
+/// cachées par le brouillard de guerre (voir [`crate::vision`]).
+///
+/// `type` donne un nom court à un type long ; `'w` et `'s` sont les
+/// « durées de vie » des emprunts d'une requête Bevy (le monde, l'état du système).
+pub(crate) type Pickable<'w, 's> = Query<'w, 's, (Entity, &'static GlobalTransform, &'static Selectable), Without<FogHidden>>;
+
 /// L'entité sélectionnable sous le rayon `ray`, la plus proche de la caméra.
 ///
 /// Pour chaque entité, on regarde où le rayon traverse le plan horizontal
 /// passant par son centre : si c'est dans sa zone cliquable, elle est touchée.
-pub(crate) fn pick(ray: Ray3d, units: &Query<(Entity, &GlobalTransform, &Selectable)>) -> Option<Entity> {
+pub(crate) fn pick(ray: Ray3d, units: &Pickable) -> Option<Entity> {
     units
         .iter()
         .filter_map(|(entity, transform, selectable)| {
@@ -100,7 +108,7 @@ fn handle_actions(
     mut commands: Commands,
     mut actions: MessageReader<GameAction>,
     camera: Single<(&Camera, &GlobalTransform)>,
-    units: Query<(Entity, &GlobalTransform, &Selectable)>,
+    units: Pickable,
     selected: Query<Entity, With<Selected>>,
     // Seules les entités qui peuvent bouger (pas les bâtiments) reçoivent les ordres de déplacement.
     mobile: Query<(), With<MoveSpeed>>,
