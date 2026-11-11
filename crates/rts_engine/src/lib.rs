@@ -4,7 +4,7 @@
 //! la caméra, la couche d'entrées par actions, la sélection, la file des
 //! ordres des joueurs (`orders`), les joueurs (`players`), la navigation
 //! (grille, A*), les bâtiments (pose, chantiers), l'économie, le combat, une IA
-//! adverse basique (`ai`) et le rendu
+//! adverse basique (`ai`), les groupes de contrôle, la minicarte et le rendu
 //! (module `graphics`). Le contenu (unités, bâtiments, cartes…) vit
 //! dans la crate `rts_game`.
 
@@ -13,11 +13,13 @@ pub mod buildings;
 pub mod camera;
 pub mod collision;
 pub mod combat;
+pub mod control_groups;
 pub mod cursor;
 pub mod devtools;
 pub mod economy;
 pub mod graphics;
 pub mod input;
+pub mod minimap;
 pub mod navigation;
 pub mod orders;
 pub mod players;
@@ -63,7 +65,7 @@ impl Plugin for RtsEnginePlugin {
                 graphics::GraphicsPlugin,
                 devtools::DevToolsPlugin,
             ))
-            // Un `n`-uplet de plugins en compte au plus 15 : celui-ci à part.
-            .add_plugins(ai::AiPlugin);
+            // Un `n`-uplet de plugins en compte au plus 15 : ceux-ci à part.
+            .add_plugins((ai::AiPlugin, control_groups::ControlGroupsPlugin, minimap::MinimapPlugin));
     }
 }

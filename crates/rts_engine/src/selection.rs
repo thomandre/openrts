@@ -182,12 +182,20 @@ fn handle_actions(
                 }
             }
 
-            GameAction::CommandAt { screen_pos } => {
-                let Some(target) = screen_to_ground(camera, camera_transform, screen_pos) else { continue };
+            // Clic droit au sol, ou sur la minicarte (un point du sol, sans
+            // entité visée : seul un gisement peut s'y trouver).
+            GameAction::CommandAt { .. } | GameAction::CommandAtPoint { .. } => {
+                let (target, picked) = match *action {
+                    GameAction::CommandAt { screen_pos } => {
+                        let Some(target) = screen_to_ground(camera, camera_transform, screen_pos) else { continue };
+                        (target.xz(), screen_ray(camera, camera_transform, screen_pos).and_then(|ray| pick(ray, &units)))
+                    }
+                    GameAction::CommandAtPoint { point } => (point, None),
+                    _ => continue,
+                };
                 // Ordre contextuel : sur un gisement (ou un Extracteur), les
                 // ouvriers récoltent et les autres unités s'y rendent.
-                let picked = screen_ray(camera, camera_transform, screen_pos).and_then(|ray| pick(ray, &units));
-                let node = pick_node(target.xz(), picked, &nodes);
+                let node = pick_node(target, picked, &nodes);
                 // Les unités sélectionnées qui peuvent bouger et que l'on commande.
                 let mut movers: Vec<Entity> = selected
                     .iter()
@@ -222,12 +230,12 @@ fn handle_actions(
                 let (fighters, walkers): (Vec<Entity>, Vec<Entity>) =
                     movers.into_iter().partition(|e| armed.contains(*e) && !is_harvester(e));
                 if !fighters.is_empty() {
-                    orders.push(local.0, PlayerCommand::AttackMove { units: fighters, target: target.xz() });
-                    markers.write(OrderMarker { point: target.xz(), attack: true });
+                    orders.push(local.0, PlayerCommand::AttackMove { units: fighters, target });
+                    markers.write(OrderMarker { point: target, attack: true });
                 }
                 if !walkers.is_empty() {
-                    orders.push(local.0, PlayerCommand::Move { units: walkers, target: target.xz() });
-                    markers.write(OrderMarker { point: target.xz(), attack: false });
+                    orders.push(local.0, PlayerCommand::Move { units: walkers, target });
+                    markers.write(OrderMarker { point: target, attack: false });
                 }
                 // Les bâtiments producteurs sélectionnés y mettent leur point de ralliement.
                 let mut producers: Vec<Entity> = selected
@@ -236,13 +244,21 @@ fn handle_actions(
                     .collect();
                 producers.sort_unstable();
                 if !producers.is_empty() {
-                    let point = node.and_then(|n| nodes.get(n).ok()).map_or(target.xz(), |(_, _, o)| o.0.center());
+                    let point = node.and_then(|n| nodes.get(n).ok()).map_or(target, |(_, _, o)| o.0.center());
                     orders.push(local.0, PlayerCommand::SetRally { buildings: producers, point, node });
                 }
             }
 
-            GameAction::OrderAt { order, screen_pos, .. } => {
-                let Some(target) = screen_to_ground(camera, camera_transform, screen_pos) else { continue };
+            // Ordre préparé (A ou M) donné au sol, ou sur la minicarte.
+            GameAction::OrderAt { .. } | GameAction::OrderAtPoint { .. } => {
+                let (order, target, picked) = match *action {
+                    GameAction::OrderAt { order, screen_pos, .. } => {
+                        let Some(target) = screen_to_ground(camera, camera_transform, screen_pos) else { continue };
+                        (order, target.xz(), screen_ray(camera, camera_transform, screen_pos).and_then(|ray| pick(ray, &units)))
+                    }
+                    GameAction::OrderAtPoint { order, point, .. } => (order, point, None),
+                    _ => continue,
+                };
                 let mut movers: Vec<Entity> = selected
                     .iter()
                     .filter(|&e| mobile.contains(e) && owners.get(e).is_ok_and(|o| o.0 == local.0))
@@ -251,7 +267,6 @@ fn handle_actions(
                 if movers.is_empty() {
                     continue;
                 }
-                let picked = screen_ray(camera, camera_transform, screen_pos).and_then(|ray| pick(ray, &units));
                 let enemy = picked.filter(|&e| attackable.contains(e) && owners.get(e).is_ok_and(|o| are_enemies(local.0, o.0)));
                 match (order, enemy) {
                     // A puis clic sur un ennemi : l'attaquer.
@@ -260,13 +275,13 @@ fn handle_actions(
                     }
                     // A puis clic au sol : attaque-déplacement, ouvriers compris.
                     (TargetedOrder::AttackMove, None) => {
-                        orders.push(local.0, PlayerCommand::AttackMove { units: movers, target: target.xz() });
-                        markers.write(OrderMarker { point: target.xz(), attack: true });
+                        orders.push(local.0, PlayerCommand::AttackMove { units: movers, target });
+                        markers.write(OrderMarker { point: target, attack: true });
                     }
                     // M puis clic : déplacement simple, qui ignore les ennemis.
                     (TargetedOrder::Move, _) => {
-                        orders.push(local.0, PlayerCommand::Move { units: movers, target: target.xz() });
-                        markers.write(OrderMarker { point: target.xz(), attack: false });
+                        orders.push(local.0, PlayerCommand::Move { units: movers, target });
+                        markers.write(OrderMarker { point: target, attack: false });
                     }
                 }
             }
@@ -300,6 +315,8 @@ fn handle_actions(
             | GameAction::CancelConstruction
             | GameAction::ChooseOrder { .. }
             | GameAction::CancelOrder => {}
+            // Caméra et groupes de contrôle : voir les modules `camera` et `control_groups`.
+            GameAction::LookAt { .. } | GameAction::AssignGroup { .. } | GameAction::AddToGroup { .. } | GameAction::RecallGroup { .. } => {}
         }
     }
 }

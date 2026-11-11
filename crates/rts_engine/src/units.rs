@@ -612,6 +612,12 @@ impl UnitCatalog {
         }
     }
 
+    /// La couleur d'équipe du joueur `owner` (donnée par le jeu avec
+    /// [`UnitCatalog::set_team_colors`]), pour l'interface (minicarte).
+    pub fn team_color(&self, owner: PlayerId) -> Option<Color> {
+        self.team_colors.get(usize::from(owner.0)).copied()
+    }
+
     /// Recrée les matériaux de couleur d'équipe de la faction `faction`.
     fn apply_team_colors(&mut self, faction: usize, materials: &mut Assets<StandardMaterial>, images: &mut Assets<Image>) {
         let look = &mut self.factions[faction];
