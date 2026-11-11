@@ -62,8 +62,14 @@ the AI), or « Aléatoire » (random, drawn when the game starts), then
 | Build (a Technicien, Pousse or Collecteur selected) | B then the building's key, or a button of the bar at the bottom of the screen |
 | Place the building | Left click (Shift + click: place another one) |
 | Cancel placement | Right click or Escape |
-| Release the mouse | Escape (a click in the game captures it again; while placing, the first Escape cancels the placement) |
+| Pause menu (resume, surrender, quit) | Escape when there is nothing to cancel: the game pauses and the mouse is released (a click captures it again); while placing or targeting, the first Escape cancels instead |
 | Quit | Cmd + Q (macOS), Alt + F4 (Windows, Linux) |
+
+The **selection panel** (top center) shows the name and hit points of the
+selected unit or building (and the progress of a construction site); for a
+multiple selection, each type with its count (« Sentinelle ×6 · Lancier ×2 »).
+Hovering a unit or building shows its name next to the pointer (in red for an
+enemy).
 
 Group keys are the top-row keys, on AZERTY as on QWERTY (without Shift). A
 group only keeps the player's own units and buildings; dead ones are removed.
@@ -224,7 +230,8 @@ order queue, like a player, in a fixed order (deterministic).
 ### End of game
 
 A player is defeated when they have no building left (construction sites
-included). When only one player is left, the game is over: « Victoire » or
+included) or has surrendered (« Capituler » in the pause menu). When only one
+player is left, the game is over: « Victoire » or
 « Défaite » screen with the game duration. **Enter** (or « Continuer à
 regarder ») closes the screen, « Quitter » quits the game. A scene without an
 enemy base (demos) never ends.

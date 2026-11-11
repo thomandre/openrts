@@ -9,13 +9,20 @@
 //! joueurs) : toutes les machines d'une partie en réseau verront la même
 //! fin au même pas. L'écran de fin, lui, n'est que de l'affichage : on peut
 //! le fermer pour continuer à regarder la carte, ou quitter le jeu.
+//!
+//! **Menu de pause** : Échap (quand il n'y a rien à annuler) met la partie en
+//! pause et ouvre un menu « Reprendre / Capituler / Quitter ». Capituler est
+//! un ordre de joueur comme un autre ([`PlayerCommand::Surrender`]), appliqué
+//! par la simulation : le joueur est vaincu sur-le-champ.
 
 use bevy::app::AppExit;
 use bevy::prelude::*;
 
 use crate::buildings::ui::{ui_font, BORDER, BUTTON, KEY_TEXT, PANEL, TEXT};
 use crate::buildings::{Building, PlannedSite};
+use crate::camera::RtsCamera;
 use crate::input::{ActionButton, BlocksPointer, GameAction};
+use crate::orders::{CommandQueue, PlayerCommand, TickCommands};
 use crate::players::{LocalPlayer, Owner, PlayerId, Players};
 use crate::simulation::SimSet;
 use crate::RtsSystems;
@@ -44,14 +51,19 @@ impl Plugin for OutcomePlugin {
         app.add_message::<PlayerDefeated>()
             .init_resource::<GameOutcome>()
             .init_resource::<OutcomeScreen>()
+            .init_resource::<GameMenu>()
             .add_systems(FixedUpdate, check_defeats.after(SimSet::Combat))
-            .add_systems(Update, (handle_outcome_actions, show_outcome_screen).chain().in_set(RtsSystems::Actions));
+            .add_systems(
+                Update,
+                (handle_outcome_actions, show_outcome_screen, show_game_menu).chain().in_set(RtsSystems::Actions),
+            );
     }
 }
 
 /// Fin du pas : qui n'a plus de bâtiments ? Qui reste en lice ?
 fn check_defeats(
     time: Res<Time>,
+    tick: Res<TickCommands>,
     mut players: ResMut<Players>,
     mut outcome: ResMut<GameOutcome>,
     mut defeated: MessageWriter<PlayerDefeated>,
@@ -61,6 +73,18 @@ fn check_defeats(
     buildings: Query<&Owner, With<Building>>,
     plans: Query<&Owner, With<PlannedSite>>,
 ) {
+    // Capitulations du pas : le joueur est vaincu, quoi qu'il possède.
+    for issued in &tick.0 {
+        if issued.command == PlayerCommand::Surrender {
+            let state = players.get_mut(issued.player);
+            state.surrendered = true;
+            if state.has_built && !state.defeated {
+                state.defeated = true;
+                info!("Joueur {} : capitulation", issued.player.0);
+                defeated.write(PlayerDefeated(issued.player));
+            }
+        }
+    }
     let mut owned = vec![0usize; players.0.len()];
     for owner in buildings.iter().chain(plans.iter()) {
         let index = usize::from(owner.0 .0);
@@ -110,14 +134,39 @@ struct OutcomeScreen {
 struct OutcomeRoot;
 
 /// « Continuer à regarder » ferme l'écran ; « Quitter » ferme le jeu.
-fn handle_outcome_actions(mut actions: MessageReader<GameAction>, mut screen: ResMut<OutcomeScreen>, mut exit: MessageWriter<AppExit>) {
+fn handle_outcome_actions(
+    mut actions: MessageReader<GameAction>,
+    mut screen: ResMut<OutcomeScreen>,
+    mut menu: ResMut<GameMenu>,
+    mut orders: ResMut<CommandQueue>,
+    mut time: ResMut<Time<Virtual>>,
+    local: Res<LocalPlayer>,
+    outcome: Res<GameOutcome>,
+    // Une partie est en cours (pas le menu de départ du jeu).
+    in_game: Query<(), With<RtsCamera>>,
+    mut exit: MessageWriter<AppExit>,
+) {
     for action in actions.read() {
         match action {
             GameAction::DismissOutcome => screen.dismissed = true,
             GameAction::Quit => {
                 exit.write(AppExit::Success);
             }
+            GameAction::ToggleGameMenu if !in_game.is_empty() => menu.open = !menu.open,
+            GameAction::Surrender if menu.open && outcome.0.is_none() => {
+                orders.push(local.0, PlayerCommand::Surrender);
+                menu.open = false;
+            }
             _ => {}
+        }
+    }
+    // La partie est en pause tant que le menu est ouvert : la simulation (pas
+    // fixe) et les animations suivent le temps « virtuel » de Bevy.
+    if menu.open != time.is_paused() {
+        if menu.open {
+            time.pause();
+        } else {
+            time.unpause();
         }
     }
 }
@@ -130,11 +179,14 @@ fn format_duration(seconds: f32) -> String {
 }
 
 /// Le titre et la phrase de l'écran de fin, vus par le joueur `local`.
-fn verdict(outcome: Outcome, local: PlayerId) -> (&'static str, &'static str, Color) {
-    if outcome.winner == Some(local) {
-        ("VICTOIRE", "Tous les bâtiments adverses sont détruits.", Color::srgb(0.45, 1.0, 0.6))
-    } else {
-        ("DÉFAITE", "Tous vos bâtiments ont été détruits.", Color::srgb(1.0, 0.35, 0.28))
+/// `surrendered` : qui a capitulé (le joueur local, ou un adversaire).
+fn verdict(outcome: Outcome, local: PlayerId, local_surrendered: bool, enemy_surrendered: bool) -> (&'static str, &'static str, Color) {
+    let (win, lose) = (Color::srgb(0.45, 1.0, 0.6), Color::srgb(1.0, 0.35, 0.28));
+    match (outcome.winner == Some(local), local_surrendered, enemy_surrendered) {
+        (true, _, true) => ("VICTOIRE", "L'adversaire a capitulé.", win),
+        (true, _, false) => ("VICTOIRE", "Tous les bâtiments adverses sont détruits.", win),
+        (false, true, _) => ("DÉFAITE", "Vous avez capitulé.", lose),
+        (false, false, _) => ("DÉFAITE", "Tous vos bâtiments ont été détruits.", lose),
     }
 }
 
@@ -142,6 +194,7 @@ fn show_outcome_screen(
     mut commands: Commands,
     outcome: Res<GameOutcome>,
     local: Res<LocalPlayer>,
+    players: Res<Players>,
     mut screen: ResMut<OutcomeScreen>,
     mut roots: Query<&mut Visibility, With<OutcomeRoot>>,
 ) {
@@ -155,7 +208,9 @@ fn show_outcome_screen(
         return;
     }
     screen.spawned = true;
-    let (title, sentence, color) = verdict(outcome, local.0);
+    let local_surrendered = players.get(local.0).surrendered;
+    let enemy_surrendered = players.0.iter().enumerate().any(|(i, p)| i != usize::from(local.0 .0) && p.surrendered);
+    let (title, sentence, color) = verdict(outcome, local.0, local_surrendered, enemy_surrendered);
     // Un voile sur tout l'écran (il arrête les clics), et au centre le panneau.
     commands
         .spawn((
@@ -212,6 +267,97 @@ fn show_outcome_screen(
         });
 }
 
+// ---------------------------------------------------------------------------
+// Menu de pause (affichage seulement ; la capitulation passe par les ordres).
+// ---------------------------------------------------------------------------
+
+/// Le menu de pause est-il ouvert ?
+#[derive(Resource, Debug, Default)]
+pub struct GameMenu {
+    pub open: bool,
+}
+
+/// Marqueur : la racine du menu de pause.
+#[derive(Component)]
+struct GameMenuRoot;
+
+/// Crée le menu à la première ouverture, puis le montre ou le cache.
+fn show_game_menu(
+    mut commands: Commands,
+    menu: Res<GameMenu>,
+    outcome: Res<GameOutcome>,
+    mut roots: Query<&mut Visibility, With<GameMenuRoot>>,
+) {
+    if let Ok(mut visibility) = roots.single_mut() {
+        visibility.set_if_neq(if menu.open { Visibility::Inherited } else { Visibility::Hidden });
+        return;
+    }
+    if !menu.open {
+        return;
+    }
+    // Une partie déjà finie ne se capitule plus.
+    let buttons: Vec<(&str, GameAction)> = if outcome.0.is_none() {
+        vec![("Reprendre (Échap)", GameAction::ToggleGameMenu), ("Capituler", GameAction::Surrender), ("Quitter le jeu", GameAction::Quit)]
+    } else {
+        vec![("Reprendre (Échap)", GameAction::ToggleGameMenu), ("Quitter le jeu", GameAction::Quit)]
+    };
+    commands
+        .spawn((
+            Name::new("Menu de pause"),
+            GameMenuRoot,
+            BlocksPointer,
+            Node {
+                position_type: PositionType::Absolute,
+                left: Val::Px(0.0),
+                right: Val::Px(0.0),
+                top: Val::Px(0.0),
+                bottom: Val::Px(0.0),
+                justify_content: JustifyContent::Center,
+                align_items: AlignItems::Center,
+                ..default()
+            },
+            BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.5)),
+            // Au-dessus de tout, écran de fin compris.
+            GlobalZIndex(12),
+        ))
+        .with_children(|root| {
+            root.spawn((
+                Node {
+                    flex_direction: FlexDirection::Column,
+                    align_items: AlignItems::Stretch,
+                    padding: UiRect::axes(Val::Px(40.0), Val::Px(24.0)),
+                    row_gap: Val::Px(10.0),
+                    border: UiRect::all(Val::Px(1.0)),
+                    min_width: Val::Px(280.0),
+                    ..default()
+                },
+                BackgroundColor(PANEL),
+                BorderColor::all(BORDER),
+            ))
+            .with_children(|panel| {
+                panel.spawn((Text::new("Pause"), ui_font(32.0), TextColor(TEXT), Node { align_self: AlignSelf::Center, ..default() }));
+                for (label, action) in buttons {
+                    panel
+                        .spawn((
+                            ActionButton { action, enabled: true, hotkey: None },
+                            Node {
+                                padding: UiRect::axes(Val::Px(16.0), Val::Px(10.0)),
+                                border: UiRect::all(Val::Px(1.0)),
+                                justify_content: JustifyContent::Center,
+                                ..default()
+                            },
+                            BackgroundColor(BUTTON),
+                            BorderColor::all(BORDER),
+                        ))
+                        .with_children(|button| {
+                            let color = if action == GameAction::Surrender { Color::srgb(1.0, 0.45, 0.38) } else { TEXT };
+                            button.spawn((Text::new(label), ui_font(17.0), TextColor(color)));
+                        });
+                }
+            });
+        });
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -225,6 +371,7 @@ mod tests {
             .add_plugins(PlayersPlugin)
             .add_message::<PlayerDefeated>()
             .init_resource::<GameOutcome>()
+            .init_resource::<TickCommands>()
             .add_systems(FixedUpdate, check_defeats)
             .insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_secs_f64(1.0 / 32.0)));
         app
@@ -252,6 +399,21 @@ mod tests {
         assert_eq!(outcome.winner, Some(PlayerId(0)));
         assert!(app.world().resource::<Players>().get(PlayerId(1)).defeated);
         assert!(app.world().get_entity(mine).is_ok());
+    }
+
+    #[test]
+    fn surrendering_loses_at_once() {
+        let mut app = app();
+        building(&mut app, 0);
+        building(&mut app, 1);
+        app.update();
+        app.update();
+        // L'ordre arrive comme les autres, par les ordres du pas.
+        app.world_mut().resource_mut::<TickCommands>().0.push(crate::orders::IssuedCommand { player: PlayerId(0), command: PlayerCommand::Surrender });
+        app.update();
+        let outcome = app.world().resource::<GameOutcome>().0.expect("la capitulation aurait dû finir la partie");
+        assert_eq!(outcome.winner, Some(PlayerId(1)));
+        assert!(app.world().resource::<Players>().get(PlayerId(0)).surrendered);
     }
 
     #[test]

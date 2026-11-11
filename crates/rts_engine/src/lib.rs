@@ -26,6 +26,7 @@ pub mod orders;
 pub mod outcome;
 pub mod players;
 pub mod selection;
+pub mod selection_info;
 pub mod simulation;
 pub mod units;
 pub mod vision;
@@ -76,6 +77,7 @@ impl Plugin for RtsEnginePlugin {
                 minimap::MinimapPlugin,
                 vision::VisionPlugin,
                 vision::display::FogDisplayPlugin,
+                selection_info::SelectionInfoPlugin,
             ));
     }
 }

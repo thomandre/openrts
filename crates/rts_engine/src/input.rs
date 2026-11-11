@@ -61,8 +61,12 @@ pub enum GameAction {
     HoldPosition,
     /// Fermer l'écran de fin pour continuer à regarder (Entrée ou bouton).
     DismissOutcome,
-    /// Quitter le jeu (bouton de l'écran de fin).
+    /// Quitter le jeu (bouton de l'écran de fin ou du menu de pause).
     Quit,
+    /// Ouvrir ou fermer le menu de pause (Échap, quand il n'y a rien à annuler).
+    ToggleGameMenu,
+    /// Capituler (bouton du menu de pause).
+    Surrender,
     /// Centrer la caméra sur ce point du sol (x, z) : clic ou glissé sur la minicarte.
     LookAt { point: Vec2 },
     /// Ordre contextuel vers ce point du sol (x, z), sans rien viser dessus :
@@ -324,6 +328,10 @@ fn mouse_keyboard_backend(
         }
         if context.targeting.is_some() {
             actions.write(GameAction::CancelOrder);
+        }
+        // Rien à annuler : Échap ouvre (ou ferme) le menu de pause.
+        if !context.wants_escape() {
+            actions.write(GameAction::ToggleGameMenu);
         }
         context.key_menu = None;
     }

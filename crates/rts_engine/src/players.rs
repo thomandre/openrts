@@ -43,8 +43,10 @@ pub struct PlayerState {
     pub faction: usize,
     /// A déjà possédé au moins un bâtiment (voir `outcome`).
     pub has_built: bool,
-    /// Vaincu : il n'a plus aucun bâtiment (voir `outcome`).
+    /// Vaincu : il n'a plus aucun bâtiment, ou il a capitulé (voir `outcome`).
     pub defeated: bool,
+    /// Il a capitulé.
+    pub surrendered: bool,
     /// Ressources en stock.
     pub stock: Stock,
     /// Population utilisée : unités vivantes et unités en file de production

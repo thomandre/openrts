@@ -346,7 +346,9 @@ fn handle_actions(
             | GameAction::ChooseOrder { .. }
             | GameAction::CancelOrder
             | GameAction::DismissOutcome
-            | GameAction::Quit => {}
+            | GameAction::Quit
+            | GameAction::ToggleGameMenu
+            | GameAction::Surrender => {}
             // Caméra et groupes de contrôle : voir les modules `camera` et `control_groups`.
             GameAction::LookAt { .. } | GameAction::AssignGroup { .. } | GameAction::AddToGroup { .. } | GameAction::RecallGroup { .. } => {}
         }

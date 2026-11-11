@@ -66,6 +66,8 @@ pub enum PlayerCommand {
     Stop { units: Vec<Entity> },
     /// Tenir la position : ne plus bouger, tirer sur ce qui passe à portée.
     HoldPosition { units: Vec<Entity> },
+    /// Capituler : le joueur est vaincu tout de suite (voir `outcome`).
+    Surrender,
 }
 
 /// Un ordre et le joueur qui l'a donné.
