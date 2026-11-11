@@ -91,13 +91,17 @@ pub fn collectif() -> CombatRules {
         ],
         // Ordre de `collectif::building` : Écrin, Résonateur, Creuset,
         // Orfèvrerie, Aiguillon (défense fixe : sol et air, cadence rapide
-        // mais dégâts faibles, valeurs proposées).
+        // mais dégâts faibles, valeurs proposées), puis le palier 2 :
+        // Lapidaire, Volière, Fonderie.
         buildings: vec![
             CombatStats::structure(1.0, &[Armored], Vec::new()),
             CombatStats::structure(1.0, &[Armored], Vec::new()),
             CombatStats::structure(1.0, &[Armored], Vec::new()),
             CombatStats::structure(1.0, &[Armored], Vec::new()),
             CombatStats::structure(1.0, &[Armored], vec![Weapon::new(9.0, 7.0, 0.7, BOTH)]),
+            CombatStats::structure(1.0, &[Armored], Vec::new()),
+            CombatStats::structure(1.0, &[Armored], Vec::new()),
+            CombatStats::structure(1.0, &[Armored], Vec::new()),
         ],
     }
 }

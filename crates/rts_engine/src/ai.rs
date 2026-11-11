@@ -21,8 +21,10 @@
 //! 1. les ouvriers inoccupés récoltent (trois par bâtiment d'extraction) ;
 //! 2. dépenses, par priorité : population (avant d'être bloquée), ouvriers
 //!    jusqu'à [`AiSettings::workers`], un premier bâtiment de production,
-//!    l'extraction de la ressource rare, un second bâtiment de production
-//!    quand l'argent s'accumule, puis des unités de combat ;
+//!    l'extraction de la ressource rare, d'autres bâtiments de production
+//!    quand l'argent s'accumule (d'abord ceux d'un type qu'elle n'a pas
+//!    encore, et ce qu'ils exigent), ce qui débloque les unités grisées de
+//!    ses bâtiments de production, puis des unités de combat ;
 //! 3. armée : elle défend sa base contre les intrus, et, passé
 //!    [`AiSettings::first_attack_secs`], attaque dès qu'elle a réuni une
 //!    vague (de plus en plus grosse) ; les renforts rejoignent l'attaque.
@@ -33,7 +35,9 @@
 use bevy::prelude::*;
 
 use crate::buildings::field::ConstructionFields;
-use crate::buildings::{completed_types, Building, BuildingCatalog, ConstructionTask, Footprint, PlacementRule, PlannedSite, UnderConstruction};
+use crate::buildings::{
+    completed_types, Building, BuildingCatalog, ConstructionTask, Footprint, PlacementRule, PlannedSite, Requirement, UnderConstruction,
+};
 use crate::combat::CombatOrder;
 use crate::economy::harvest::Harvesting;
 use crate::economy::production::ProductionQueue;
@@ -318,18 +322,36 @@ impl Plan<'_> {
             }
         }
 
-        // 3. Bâtiments de production (et ce qu'ils exigent).
+        // 3. Bâtiments de production (et ce qu'ils exigent). Elle préfère un
+        // type qu'elle n'a pas encore (pour varier son armée) ; au-delà de
+        // `max_production`, elle n'ajoute plus que de nouveaux types.
         let producers = count(&producer_types);
-        let want_producer = producers == 0 || (producers < self.settings.max_production && self.stock.primary >= 300);
+        // Vrai si elle garde son argent pour un nouveau bâtiment (étapes 3 et 4 bis).
+        let mut saving = false;
+        let unowned = |t: usize| count(&[t]) == 0;
+        let any_unowned = producer_types.iter().any(|&t| unowned(t));
+        let want_producer =
+            producers == 0 || (self.stock.primary >= 300 && (producers < self.settings.max_production || any_unowned));
         if want_producer && !pending(&|t| producer_types.contains(&t)) {
-            let ready = producer_types.iter().copied().filter(|&t| catalog.requirements_met(t, &self.completed)).min_by_key(|&t| catalog.types[t].cost.primary);
-            // Sinon, ce qu'il manque pour en poser un.
+            let ready = |new: bool| {
+                producer_types
+                    .iter()
+                    .copied()
+                    .filter(|&t| unowned(t) == new && catalog.requirements_met(t, &self.completed))
+                    .min_by_key(|&t| catalog.types[t].cost.primary)
+            };
+            // Ce qu'il manque pour poser un type qu'elle n'a pas encore.
             let missing = producer_types
                 .iter()
+                .filter(|&&t| unowned(t))
                 .flat_map(|&t| catalog.types[t].requires.clone())
                 .find(|&r| !self.completed[r] && catalog.requirements_met(r, &self.completed) && !pending(&|t| t == r));
-            if let Some(type_index) = ready.or(missing) {
-                self.build(type_index, hq.1, &workers);
+            let again = if producers < self.settings.max_production { ready(false) } else { None };
+            let new_type = ready(true).or(missing);
+            if let Some(type_index) = new_type.or(again) {
+                // Un nouveau type qu'elle ne peut pas encore payer : elle
+                // met de côté (pas d'unités de combat pendant cette réflexion).
+                saving |= !self.build(type_index, hq.1, &workers) && new_type.is_some();
             }
         }
 
@@ -343,6 +365,32 @@ impl Plan<'_> {
             self.build_extractor(extractor, hq.1, &workers);
         }
 
+        // 4 bis. Un bâtiment qui débloque une option grisée de ses bâtiments
+        // de production (une unité qui attend un prérequis), quand l'argent
+        // s'accumule et qu'elle peut déjà le poser (`self.planned` compte
+        // aussi ce que l'étape 3 vient de poser pendant cette réflexion).
+        if producers > 0 && self.stock.primary >= 200 {
+            let unlock = mine
+                .iter()
+                .filter(|b| b.done)
+                .flat_map(|b| &catalog.types[b.type_index].production)
+                .flat_map(|o| &o.requires)
+                .find_map(|r| match *r {
+                    Requirement::Building(t)
+                        if !self.completed[t]
+                            && count(&[t]) == 0
+                            && !self.planned.iter().any(|(p, _)| *p == t)
+                            && catalog.requirements_met(t, &self.completed) =>
+                    {
+                        Some(t)
+                    }
+                    _ => None,
+                });
+            if let Some(type_index) = unlock {
+                saving |= !self.build(type_index, hq.1, &workers);
+            }
+        }
+
         // 5. Unités de combat.
         let rally = self.rally_point(hq.1);
         for building in mine.iter().filter(|b| b.done && producer_types.contains(&b.type_index)) {
@@ -350,7 +398,7 @@ impl Plan<'_> {
                 self.ai.rallied.push(building.entity);
                 self.orders.push(player, PlayerCommand::SetRally { buildings: vec![building.entity], point: rally, node: None });
             }
-            if building.queued >= 2 {
+            if building.queued >= 2 || saving {
                 continue;
             }
             let options: Vec<usize> = catalog.types[building.type_index]
@@ -641,6 +689,13 @@ mod tests {
     /// ouvriers inoccupés, une ligne de gisements, de quoi construire.
     /// L'IA connaît aussi une caserne (soldats) et un abri (population).
     fn app() -> App {
+        app_with(false)
+    }
+
+    /// `soldier_needs_armory` : les soldats de la caserne attendent un
+    /// quatrième bâtiment, l'armurerie (qui demande la caserne et ne produit
+    /// rien), comme une unité grisée en attente de son prérequis.
+    fn app_with(soldier_needs_armory: bool) -> App {
         let mut app = App::new();
         app.add_plugins(MinimalPlugins)
             .add_message::<GameAction>()
@@ -670,9 +725,14 @@ mod tests {
             production: vec![option(WORKER)],
             ..default()
         };
-        let barracks = BuildingType { name: "Caserne".into(), cost: Cost::new(150, 0), dropoff: false, supply: 0, production: vec![option(SOLDIER)], ..hq.clone() };
+        let mut soldier = option(SOLDIER);
+        if soldier_needs_armory {
+            soldier.requires = vec![Requirement::Building(3)];
+        }
+        let barracks = BuildingType { name: "Caserne".into(), cost: Cost::new(150, 0), dropoff: false, supply: 0, production: vec![soldier], ..hq.clone() };
         let house = BuildingType { name: "Abri".into(), footprint: UVec2::new(2, 2), cost: Cost::new(100, 0), dropoff: false, supply: 8, production: Vec::new(), ..hq.clone() };
-        let catalog = BuildingCatalog::new(vec![hq, barracks, house], vec![WORKER], ConstructionStyle::WorkerStays, &units, &mut meshes, &mut materials);
+        let armory = BuildingType { name: "Armurerie".into(), cost: Cost::new(100, 0), requires: vec![1], supply: 0, ..house.clone() };
+        let catalog = BuildingCatalog::new(vec![hq, barracks, house, armory], vec![WORKER], ConstructionStyle::WorkerStays, &units, &mut meshes, &mut materials);
         app.insert_resource(catalog).insert_resource(units);
         app.world_mut().resource_mut::<Players>().get_mut(AI).stock = Cost::new(600, 0);
         // Quelques pas : la grille de navigation est créée au premier pas de simulation.
@@ -701,7 +761,7 @@ mod tests {
     fn summary(app: &mut App) -> (usize, usize, Vec<usize>, Cost) {
         let world = app.world_mut();
         let units: Vec<usize> = world.query::<&Unit>().iter(world).map(|u| u.type_index).collect();
-        let mut buildings = vec![0; 3];
+        let mut buildings = vec![0; 4];
         for building in world.query::<&Building>().iter(world) {
             buildings[building.type_index] += 1;
         }
@@ -730,5 +790,18 @@ mod tests {
             second.update();
         }
         assert_eq!(summary(&mut first), summary(&mut second));
+    }
+
+    /// Une unité grisée en attente d'un prérequis : l'IA pose le bâtiment
+    /// qui la débloque, puis la produit.
+    #[test]
+    fn ai_builds_what_unlocks_its_units() {
+        let mut app = app_with(true);
+        for _ in 0..32 * 90 {
+            app.update();
+        }
+        let (_, soldiers, buildings, _) = summary(&mut app);
+        assert_eq!(buildings[3], 1, "l'IA aurait dû poser une armurerie : {buildings:?}");
+        assert!(soldiers >= 1, "l'IA aurait dû produire des soldats une fois l'armurerie terminée");
     }
 }

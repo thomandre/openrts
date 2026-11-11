@@ -97,18 +97,28 @@ Bâtiments et économie du Collectif (**propositions**, étape 4, à valider et 
 | Écrin | Cœur de base : dépôt, produit les Collecteurs, 15 de population | 7 × 7 m | 1 500 | 75 s | 400 P | — | E | Émet 8 m | Socle hexagonal d'émail, plateau d'équipe cerclé de perles, six griffes d'or tenant une grosse émeraude qui tourne, arche d'or du dépôt en façade |
 | Résonateur | Relais : population (+8), étend le champ | 2 × 2 m | 300 | 25 s | 100 P | — | R | Émet 6,5 m | Colonne d'or sur pied d'équipe, trois griffes tenant une émeraude qui pulse, anneau d'or ouvert qui tourne |
 | Creuset | Ressource rare : posé sur une source, il distille l'Éther | 4 × 4 m | 450 | 25 s | 75 P | — (sur une source libre) | C | — | Coupe d'or sur trois jambes plongées dans la faille, nappe émeraude, bord d'équipe, anse d'or et pierre pendue |
-| Orfèvrerie | Infanterie : Automates (Perceur grisé) | 5 × 5 m | 1 000 | 50 s | 150 P | Écrin ; dans un champ | O | — | Dalle d'émail, deux arches d'or en croix, quatre losanges d'équipe, piliers coiffés d'émeraudes |
+| Orfèvrerie | Infanterie : Automates, Perceurs (avec un Lapidaire) | 5 × 5 m | 1 000 | 50 s | 150 P | Écrin ; dans un champ | O | — | Dalle d'émail, deux arches d'or en croix, quatre losanges d'équipe, piliers coiffés d'émeraudes |
 | Aiguillon | Défense fixe | 2 × 2 m | 300 | 25 s | 100 P | Orfèvrerie ; dans un champ | A | — | Tour d'or sur pied d'équipe, tête qui balaie : cabochon d'équipe, longue aiguille d'or, émeraude, lames de couronne |
+
+Palier 2 du Collectif (**propositions**), en miroir des rôles de celui de la Garde (Armurerie, Centre de propulsion, Usine) avec une identité propre : tout passe par la **taille des grosses pierres** (le dard du Perceur, l'orbe de l'Essaimeur, le cœur du Titan), et l'air, fort chez le Collectif, a son propre atelier au lieu d'une simple option à l'Orfèvrerie. Le palier 2 coûte de l'Éther : il faut un Creuset avant de s'y lancer. Tous se posent dans un champ de résonance.
+
+| Bâtiment | Rôle | Empreinte | PV | Temps | Coût | Prérequis | Touche (après B) | Champ | Silhouette |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| Lapidaire | Spécialisation (miroir de l'Armurerie) : débloque le Perceur à l'Orfèvrerie, l'Essaimeur à la Volière et la Fonderie ; ne produit rien | 4 × 4 m | 750 | 50 s | 150 P + 100 R | Orfèvrerie ; dans un champ | L | — | Socle hexagonal d'équipe, meule d'or rayée d'émeraude qui tourne à plat, bras d'or coudé sur un pilier couronné tenant une émeraude taille brillant pointe en bas, présentoir de trois pierres |
+| Volière | Atelier aérien (miroir du Centre de propulsion) : Essaims (E), Essaimeurs (M, avec un Lapidaire) | 5 × 5 m | 1 000 | 55 s | 150 P + 100 R | Orfèvrerie ; dans un champ | V | — | Aire d'envol d'équipe (cœur d'émail) sous un dôme ajouré de six côtes d'or, ceinture d'or vieilli, couronne et flèche d'émeraude ; des guêpes tournent autour sur deux anneaux |
+| Fonderie | Géants (miroir de l'Usine) : Titans (T) | 6 × 6 m | 1 250 | 65 s | 200 P + 150 R | Lapidaire ; dans un champ | F | — | Portique en H : deux pylônes hexagonaux d'or couronnés, poutre au dos d'équipe, cloche-moule d'or pendue d'où file un jet émeraude sur un lit de coulée d'or bordé d'équipe |
+
+Les touches de production (bâtiment sélectionné) : C (Collecteur, Écrin) ; A, P (Orfèvrerie) ; E, M (Volière) ; T (Fonderie).
 
 Construction du Collectif : **le sertissage à distance** (`ConstructionStyle::RemoteAnchor` dans le moteur). À la pose, le coût est payé et l'emplacement promis au Collecteur libre le plus proche ; il vole jusque-là, pose une « gemme d'ancrage » (le chantier apparaît, la gemme tourne au-dessus) et repart aussitôt à sa récolte ; le bâtiment s'assemble seul pendant son temps de construction. C'est la troisième asymétrie : la Garde immobilise son ouvrier, les Sylves le perdent, le Collectif ne perd que quelques secondes de vol, mais ne bâtit l'essentiel que dans ses **champs de résonance**. Règles proposées :
 
-- Champ de résonance : un cercle centré sur l'Écrin (8 m) ou sur un Résonateur (6,5 m), actif seulement une fois le bâtiment terminé. L'Orfèvrerie et l'Aiguillon ne se posent que si le centre de leur empreinte est dans un champ du joueur (fantôme rouge et message « Hors champ » sinon) ; l'Écrin, le Résonateur et le Creuset se posent partout. Les champs sont dessinés au sol pendant la pose.
+- Champ de résonance : un cercle centré sur l'Écrin (8 m) ou sur un Résonateur (6,5 m), actif seulement une fois le bâtiment terminé. L'Orfèvrerie, l'Aiguillon et le palier 2 ne se posent que si le centre de leur empreinte est dans un champ du joueur (fantôme rouge et message « Hors champ » sinon) ; l'Écrin, le Résonateur et le Creuset se posent partout. Les champs sont dessinés au sol pendant la pose.
 - Un Collecteur n'a qu'un emplacement promis à la fois (« Aucun ouvrier libre » si toute la sélection est déjà en route). Un autre ordre donné avant l'arrivée annule la promesse, remboursée en entier ; l'emplacement est revérifié à l'arrivée (champ compris).
 - Annuler un chantier qui s'assemble rend **75 %** de son coût (le Collecteur, lui, n'a rien perdu).
 - Plus tard, avec le combat : un bâtiment qui n'est plus dans aucun champ (Résonateur détruit) sera désactivé. La requête existe déjà dans le moteur (`buildings::field::in_active_field`), elle n'est pas encore appliquée.
-- Économie : les Collecteurs récoltent le Cristal et l'Éther (au bord d'un Creuset terminé) avec les mêmes cadences que les autres (5 Cristal en 2,8 s, 4 Éther en 2 s) ; ils volent tout droit, par-dessus les bâtiments, sans chemin au sol. Coûts, temps et population : Collecteur 50 P, 12 s, 1 ; Automate 100 P, 24 s, 2 ; Perceur 125 P + 50 R, 30 s, 3 ; Essaim 75 P + 50 R, 25 s, 2 ; Essaimeur 300 P + 200 R, 60 s, 6 ; Titan 350 P + 250 R, 70 s, 8. Le Perceur attend le « Lapidaire » (palier 2, à concevoir) ; Essaim, Essaimeur et Titan n'ont pas encore de bâtiment.
+- Économie : les Collecteurs récoltent le Cristal et l'Éther (au bord d'un Creuset terminé) avec les mêmes cadences que les autres (5 Cristal en 2,8 s, 4 Éther en 2 s) ; ils volent tout droit, par-dessus les bâtiments, sans chemin au sol. Coûts, temps et population : Collecteur 50 P, 12 s, 1 ; Automate 100 P, 24 s, 2 ; Perceur 125 P + 50 R, 30 s, 3 ; Essaim 75 P + 50 R, 25 s, 2 ; Essaimeur 300 P + 200 R, 60 s, 6 ; Titan 350 P + 250 R, 70 s, 8. Toutes ont leur bâtiment : Collecteur à l'Écrin, Automate et Perceur (avec un Lapidaire) à l'Orfèvrerie, Essaim et Essaimeur (avec un Lapidaire) à la Volière, Titan à la Fonderie.
 
-- [ ] Palier 2 du Collectif (Lapidaire, bâtiment aérien…)
+- [x] Palier 2 du Collectif : Lapidaire, Volière, Fonderie (propositions)
 - [ ] Désactivation des bâtiments hors champ, avec le combat
 - [ ] Essaimeur : vraie mécanique de lancement de drones (fabrication, lancement, retour, perte), à concevoir avec le combat (étape 5). Pour l'instant, son escorte et les Essaims sont purement visuels.
 - [x] Unités volantes : couche de collision séparée. Elles ignorent la grille de navigation et les obstacles au sol, ne se bousculent qu'entre elles, et passent au-dessus des unités au sol.
@@ -204,7 +214,7 @@ Valeurs de combat (Garde : PV, dégâts et portées du tableau ci-dessous ; **le
 | Essaimeur | 350 | 2 | aérien, blindé, géant | 8 / 8 / 0,5 / sol et air (provisoire : représente ses drones) |
 | Titan | 600 | 3 | blindé, géant, distance | 40 en zone de 1,8 m (+10 bâtiments) / 9 / 2,8 / sol |
 
-Autres bâtiments : leurs PV de l'étape 4, armure 1, sans arme (ceux du Collectif, à venir, prennent cette valeur par défaut).
+Autres bâtiments : leurs PV de l'étape 4, armure 1, sans arme (le palier 2 du Collectif aussi).
 
 - [x] Une partie à deux factions différentes : catalogues et règles communs à la partie, où chaque faction ajoute ses types à la suite ; chaque joueur a sa faction et ne construit que ses bâtiments. Partie normale : le joueur au nord, l'adversaire (`OPENRTS_ENEMY`) au sud, base en miroir.
 - [ ] Projectiles simulés (temps de vol, esquive) si le jeu en a besoin ; tirs instantanés pour l'instant.
@@ -319,7 +329,7 @@ On avance par étapes courtes, chacune jouable et testée avant de passer à la 
    - coûts débités à la pose, chantiers annulables et remboursés ; files de production de 5 décrites en données, annulation remboursée, point de ralliement (sur un gisement : récolte directe) ; population par joueur avec plafond global réglable ;
    - interface : compteurs en haut à droite, panneau de production (boutons et raccourcis par la même `GameAction`, file et progression), panneau de chantier, messages courts.
    - *Fait pour les Sylves (propositions) :* style de construction « la Pousse devient le bâtiment » (générique dans le moteur), cinq bâtiments du palier 1, économie de base, partie de départ (`OPENRTS_FACTION=sylves`) et démonstration (`OPENRTS_DEMO=buildings`).
-   - *Fait pour le Collectif (propositions) :* style de construction « sertissage à distance » et champs de construction (génériques dans le moteur), cinq bâtiments du palier 1, économie de base avec un ouvrier volant, partie de départ (`OPENRTS_FACTION=collectif`) et démonstration (`OPENRTS_DEMO=buildings`).
+   - *Fait pour le Collectif (propositions) :* style de construction « sertissage à distance » et champs de construction (génériques dans le moteur), cinq bâtiments du palier 1 et trois du palier 2 (Lapidaire, Volière, Fonderie), économie de base avec un ouvrier volant, partie de départ (`OPENRTS_FACTION=collectif`) et démonstration (`OPENRTS_DEMO=buildings`).
    *Reste : récolte propre aux Sylves et au Collectif, contrôle de territoire à étudier.*
 5. **Combat** : portée, dégâts, armure, ciblage automatique, attaque-déplacement, mort des unités. *Fait (valeurs proposées, voir « Unités, combat et lisibilité ») :*
    - un joueur adverse (sans IA) avec sa couleur d'équipe (bleu froid) : seuls les matériaux de couleur d'équipe sont recréés par joueur ; le rectangle ne sélectionne que ses propres entités, un clic sur un ennemi le montre (anneau rouge) sans pouvoir lui donner d'ordre ;

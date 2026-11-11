@@ -37,7 +37,7 @@
 //! | `Engine` | halo vert d'eau ; `Flame` en dérive pour les ailes translucides |
 //! | `Bare`, `Rubber` | inutilisés (or clair, or vieilli) |
 //!
-//! Les bâtiments du palier 1 (section « Les bâtiments ») suivent la même
+//! Les bâtiments des paliers 1 et 2 (section « Les bâtiments ») suivent la même
 //! direction artistique : des machines aux lignes de joaillerie (socles
 //! hexagonaux d'émail, griffes de chaton, arches d'or, rangs de perles,
 //! émeraudes taillées), pas des bijoux posés au sol. Ils se construisent
@@ -744,7 +744,7 @@ fn titan() -> ModelBuilder {
 }
 
 // ---------------------------------------------------------------------------
-// Les bâtiments (palier 1, propositions : voir GAME_DESIGN.md).
+// Les bâtiments (paliers 1 et 2, propositions : voir GAME_DESIGN.md).
 // ---------------------------------------------------------------------------
 
 /// Façon de construire du Collectif : le **sertissage à distance**. Le
@@ -769,6 +769,9 @@ pub mod building {
     pub const CREUSET: usize = 2;
     pub const ORFEVRERIE: usize = 3;
     pub const AIGUILLON: usize = 4;
+    pub const LAPIDAIRE: usize = 5;
+    pub const VOLIERE: usize = 6;
+    pub const FONDERIE: usize = 7;
 }
 
 /// Les bâtiments du palier 1, mêmes rôles que ceux de la Garde et des Sylves :
@@ -779,17 +782,30 @@ pub mod building {
 ///   de résonance où se posent les autres bâtiments ;
 /// - **Creuset** (4 × 4 m) : posé sur une source d'Éther, il la distille ;
 ///   les Collecteurs le récoltent à son bord ;
-/// - **Orfèvrerie** (5 × 5 m) : l'atelier des Automates ;
+/// - **Orfèvrerie** (5 × 5 m) : l'atelier des Automates (et des Perceurs,
+///   une fois le Lapidaire terminé) ;
 /// - **Aiguillon** (2 × 2 m) : défense fixe, débloquée par l'Orfèvrerie.
 ///
-/// Orfèvrerie et Aiguillon ne se posent que **dans un champ de résonance**
-/// (celui de l'Écrin ou d'un Résonateur terminé) ; l'Écrin, le Résonateur
-/// et le Creuset se posent partout (le Résonateur, pour étendre le champ ;
+/// Puis le palier 2, en miroir des rôles de la Garde (Armurerie, Centre de
+/// propulsion, Usine), avec l'identité du Collectif : tout passe par les
+/// pierres taillées, et l'air a son propre atelier.
+///
+/// - **Lapidaire** (4 × 4 m, demande l'Orfèvrerie) : il taille les grosses
+///   pierres. Ne produit rien lui-même, mais débloque le Perceur (à
+///   l'Orfèvrerie), l'Essaimeur (à la Volière) et la Fonderie ;
+/// - **Volière** (5 × 5 m, demande l'Orfèvrerie) : l'atelier aérien, produit
+///   les Essaims, et les Essaimeurs une fois le Lapidaire terminé ;
+/// - **Fonderie** (6 × 6 m, demande le Lapidaire) : coule les Titans.
+///
+/// Tous, sauf l'Écrin, le Résonateur et le Creuset, ne se posent que **dans
+/// un champ de résonance** (celui de l'Écrin ou d'un Résonateur terminé) ;
+/// ces trois-là se posent partout (le Résonateur, pour étendre le champ ;
 /// l'Écrin, pour s'étendre vers d'autres gisements).
 ///
 /// Chiffres proposés, à ajuster en test : mêmes prix en Cristal que la
 /// Garde à peu près (le Collecteur ne perd pas son temps sur le chantier,
 /// mais le champ contraint la pose), temps de construction un peu plus longs.
+/// Le palier 2 coûte de l'Éther : il faut un Creuset avant de s'y lancer.
 pub fn building_types() -> Vec<BuildingType> {
     use building::*;
     vec![
@@ -809,16 +825,33 @@ pub fn building_types() -> Vec<BuildingType> {
             placement: PlacementRule::OnResource(ResourceKind::Rare),
             ..building_type("Creuset", (4, 4), 450.0, 25.0, (75, 0), &[], 'c', creuset())
         },
-        // L'Orfèvrerie assemble les Automates ; le Perceur attend un
-        // bâtiment du palier 2 pas encore dans le jeu.
+        // L'Orfèvrerie assemble les Automates, et les Perceurs dès qu'un
+        // Lapidaire est terminé (leur dard est une pierre taillée).
         BuildingType {
             needs_field: true,
-            production: vec![option(kind::AUTOMATE, 'a', &[]), option(kind::PERCEUR, 'p', &["Lapidaire"])],
+            production: vec![option(kind::AUTOMATE, 'a', &[]), option(kind::PERCEUR, 'p', &[LAPIDAIRE])],
             ..building_type("Orfèvrerie", (5, 5), 1000.0, 50.0, (150, 0), &[ECRIN], 'o', orfevrerie())
         },
         BuildingType {
             needs_field: true,
             ..building_type("Aiguillon", (2, 2), 300.0, 25.0, (100, 0), &[ORFEVRERIE], 'a', aiguillon())
+        },
+        // Palier 2. Le Lapidaire ne produit rien : il débloque.
+        BuildingType {
+            needs_field: true,
+            ..building_type("Lapidaire", (4, 4), 750.0, 50.0, (150, 100), &[ORFEVRERIE], 'l', lapidaire())
+        },
+        // La Volière : les Essaims tout de suite, les Essaimeurs (leur orbe
+        // est une grosse émeraude) avec le Lapidaire.
+        BuildingType {
+            needs_field: true,
+            production: vec![option(kind::ESSAIM, 'e', &[]), option(kind::ESSAIMEUR, 'm', &[LAPIDAIRE])],
+            ..building_type("Volière", (5, 5), 1000.0, 55.0, (150, 100), &[ORFEVRERIE], 'v', voliere())
+        },
+        BuildingType {
+            needs_field: true,
+            production: vec![option(kind::TITAN, 't', &[])],
+            ..building_type("Fonderie", (6, 6), 1250.0, 65.0, (200, 150), &[LAPIDAIRE], 'f', fonderie())
         },
     ]
 }
@@ -850,14 +883,11 @@ pub fn economy_rules(resources: [ResourceInfo; 2]) -> EconomyRules {
     }
 }
 
-/// Une unité produite par un bâtiment ; `requires` : noms de bâtiments qui
-/// n'existent pas encore dans le jeu (l'option reste grisée).
-fn option(unit_type: usize, hotkey: char, requires: &[&str]) -> ProductionOption {
-    ProductionOption {
-        unit_type,
-        hotkey,
-        requires: requires.iter().map(|name| Requirement::NotYetAvailable((*name).into())).collect(),
-    }
+/// Une unité produite par un bâtiment ; `requires` : indices (dans
+/// [`building_types`]) des bâtiments terminés qu'il faut posséder pour la
+/// produire (le bouton reste grisé en attendant).
+fn option(unit_type: usize, hotkey: char, requires: &[usize]) -> ProductionOption {
+    ProductionOption { unit_type, hotkey, requires: requires.iter().map(|&index| Requirement::Building(index)).collect() }
 }
 
 /// `cost` : (Cristal, Éther).
@@ -1068,6 +1098,154 @@ fn aiguillon() -> ModelBuilder {
     b
 }
 
+/// Lapidaire : l'atelier où l'on taille les grosses pierres, 3,8 m. Un
+/// socle hexagonal d'émail ourlé d'or, au plateau laqué aux couleurs du
+/// joueur ; au milieu, la meule : un grand disque d'or vieilli cerclé d'or,
+/// rayé de filets émeraude et bordé de perles, qui tourne à plat sur son
+/// moyeu. À l'arrière, un pilier d'or coiffé de trois lames de couronne
+/// porte un bras coudé ; au bout du bras, une tige tient au-dessus de la
+/// meule une émeraude taille brillant, pointe en bas, en cours de taille
+/// (elle tourne lentement en pulsant). À l'avant, un présentoir : trois
+/// petites pierres taillées sur des tiges d'or. Vu de dessus : un disque
+/// d'or qui tourne dans un hexagone d'équipe, barré d'un bras d'or.
+fn lapidaire() -> ModelBuilder {
+    let mut b = ModelBuilder::new();
+    hexc(&mut b, OLD_GOLD, 1.9, 1.95, 0.25, v(0.0, 0.125, 0.0), NO_TURN); // semelle
+    hexc(&mut b, ENAMEL, 1.7, 1.85, 0.5, v(0.0, 0.5, 0.0), NO_TURN); // socle
+    hexc(&mut b, GOLD, 1.76, 1.76, 0.08, v(0.0, 0.77, 0.0), NO_TURN); // ourlet
+    hexc(&mut b, TEAM, 1.45, 1.55, 0.14, v(0.0, 0.86, 0.0), NO_TURN); // plateau d'équipe
+    hexc(&mut b, GOLD, 0.32, 0.48, 0.5, v(0.0, 1.15, 0.0), NO_TURN); // moyeu
+    // La meule, qui tourne à plat : les filets et les perles montrent qu'elle tourne.
+    b.animated(Transform::from_xyz(0.0, 1.46, 0.0), Motion::Spin { axis: Vec3::Y, speed: 1.4 }, |b| {
+        b.cylinder(OLD_GOLD, 1.25, 0.12, Vec3::ZERO, NO_TURN);
+        b.torus(GOLD, 1.27, 0.07, TAU, Vec3::ZERO, NO_TURN);
+        for k in 0..3 {
+            plate(b, GLOW, [2.1, 0.03, 0.06], 0.01, v(0.0, 0.07, 0.0), v(0.0, k as f32 * PI / 3.0, 0.0));
+        }
+        for i in 0..8 {
+            let a = i as f32 * TAU / 8.0 + PI / 8.0;
+            ball(b, GOLD, 0.08, v(a.cos(), 0.08, a.sin()), ONE);
+        }
+    });
+    // Le pilier, à l'arrière (+z), et sa couronne de trois lames.
+    hexc(&mut b, GOLD, 0.2, 0.3, 2.7, v(0.0, 2.25, 1.4), NO_TURN);
+    hexc(&mut b, GLOW, 0.29, 0.29, 0.05, v(0.0, 1.5, 1.4), NO_TURN);
+    hexc(&mut b, OLD_GOLD, 0.3, 0.3, 0.12, v(0.0, 3.0, 1.4), NO_TURN); // bague
+    for k in -1..=1 {
+        let k = k as f32;
+        blade(&mut b, GOLD, v(k * 0.15, 3.55, 1.45), v(0.3, 0.0, -k * 0.45), 0.5);
+    }
+    // Le bras coudé, du haut du pilier jusqu'au-dessus de la meule.
+    tube(&mut b, GOLD, &[[0.0, 3.4, 1.4], [0.0, 3.6, 0.7], [0.0, 3.0, 0.0]], 0.09);
+    ball(&mut b, OLD_GOLD, 0.14, v(0.0, 3.0, 0.0), ONE); // articulation
+    b.cylinder(OLD_GOLD, 0.05, 0.75, v(0.0, 2.6, 0.0), NO_TURN); // tige
+    // La pierre en cours de taille, pointe en bas, juste au-dessus de la meule.
+    b.animated(Transform::from_xyz(0.0, 2.05, 0.0), Motion::Spin { axis: Vec3::Y, speed: 0.5 }, |b| {
+        b.pulsing(GEM_PULSE, |b| brill(b, EMERALD_STONE, 0.36, Vec3::ZERO, NO_TURN));
+    });
+    // Le présentoir, à l'avant (−z) : une barrette d'or vieilli et trois pierres taillées.
+    plate(&mut b, OLD_GOLD, [1.5, 0.12, 0.22], 0.03, v(0.0, 1.0, -1.25), NO_TURN);
+    for x in [-0.55, 0.0, 0.55] {
+        b.cylinder(GOLD, 0.03, 0.3, v(x, 1.2, -1.25), NO_TURN);
+        octa(&mut b, EMERALD_STONE, 0.14, v(x, 1.45, -1.25), v(1.0, 1.3, 1.0));
+    }
+    b
+}
+
+/// Volière : l'atelier aérien, 5,3 m. Un socle hexagonal d'émail ourlé
+/// d'or, cerclé d'un filet émeraude ; dessus, l'aire d'envol laquée aux
+/// couleurs du joueur autour d'un cœur d'émail vert. Six côtes d'or
+/// montent en dôme ajouré, serrées à mi-hauteur par une ceinture d'or
+/// vieilli, jusqu'à une couronne d'or coiffée d'une émeraude en flèche. Au
+/// milieu, un mât d'or. Autour du dôme, sur deux anneaux qui tournent en
+/// sens contraires, des guêpes d'or et d'émail (les mêmes que l'Essaim)
+/// attendent leur envol. Vu de dessus : un anneau hexagonal d'équipe sous
+/// une étoile de côtes d'or, et des guêpes qui tournent autour.
+fn voliere() -> ModelBuilder {
+    let mut b = ModelBuilder::new();
+    hexc(&mut b, OLD_GOLD, 2.4, 2.45, 0.25, v(0.0, 0.125, 0.0), NO_TURN); // semelle
+    hexc(&mut b, ENAMEL, 2.2, 2.35, 0.5, v(0.0, 0.5, 0.0), NO_TURN); // socle
+    hexc(&mut b, GLOW, 2.3, 2.3, 0.04, v(0.0, 0.45, 0.0), NO_TURN); // filet émeraude
+    hexc(&mut b, GOLD, 2.26, 2.26, 0.08, v(0.0, 0.77, 0.0), NO_TURN); // ourlet
+    hexc(&mut b, TEAM, 1.75, 1.85, 0.14, v(0.0, 0.86, 0.0), NO_TURN); // aire d'envol
+    hexc(&mut b, ENAMEL, 1.2, 1.25, 0.06, v(0.0, 0.95, 0.0), NO_TURN); // son cœur d'émail
+    hexc(&mut b, GOLD, 0.1, 0.18, 3.4, v(0.0, 2.6, 0.0), NO_TURN); // mât
+    // Les six côtes du dôme, du bord de l'aire jusqu'à la couronne.
+    for i in 0..6 {
+        let a = i as f32 * TAU / 6.0;
+        let (sin, cos) = a.sin_cos();
+        let at = |r: f32, y: f32| v(cos * r, y, sin * r);
+        b.tube(GOLD, &[at(1.95, 0.9), at(2.2, 2.4), at(1.6, 3.9), at(0.55, 4.55)], 0.08);
+        ball(&mut b, GOLD, 0.13, at(1.95, 0.95), ONE); // pied de la côte
+    }
+    b.torus(OLD_GOLD, 2.18, 0.07, TAU, v(0.0, 2.4, 0.0), NO_TURN); // ceinture
+    b.torus(GOLD, 0.58, 0.11, TAU, v(0.0, 4.55, 0.0), NO_TURN); // couronne
+    octa(&mut b, EMERALD_STONE, 0.3, v(0.0, 5.0, 0.0), v(1.0, 1.8, 1.0)); // flèche
+    // Les guêpes : quatre sur l'anneau du bas, trois sur celui du haut.
+    b.animated(Transform::from_xyz(0.0, 2.9, 0.0), Motion::Spin { axis: Vec3::Y, speed: 0.9 }, |b| {
+        for i in 0..4 {
+            orbiting_wasp(b, i as f32 * TAU / 4.0, 2.75, (i % 2) as f32 * 0.4, 1.0, 1.6);
+        }
+    });
+    b.animated(Transform::from_xyz(0.0, 4.4, 0.0), Motion::Spin { axis: Vec3::Y, speed: -1.3 }, |b| {
+        for i in 0..3 {
+            orbiting_wasp(b, i as f32 * TAU / 3.0 + 0.5, 1.5, 0.0, -1.0, 1.4);
+        }
+    });
+    b
+}
+
+/// Fonderie : le portique où l'on coule les Titans, 5,9 m. Une large dalle
+/// hexagonale d'émail sur une semelle d'or ; dessus, le lit de coulée d'or
+/// vieilli bordé d'émail du joueur, creusé d'une étoile de rigoles
+/// émeraude autour d'une nappe émeraude. De part et d'autre, deux pylônes hexagonaux d'or
+/// bagués d'émeraude et couronnés de trois lames ; entre eux, une poutre
+/// d'or vieilli au dos d'émail d'équipe, d'où pend le moule : une cloche
+/// hexagonale d'or renversée, ourlée d'émail du joueur, d'où file un mince
+/// jet émeraude jusqu'à la nappe. Vu de dessus : un portique d'or en H sur
+/// un hexagone vert, une cloche d'or au milieu.
+fn fonderie() -> ModelBuilder {
+    let mut b = ModelBuilder::new();
+    hexc(&mut b, OLD_GOLD, 2.95, 3.0, 0.3, v(0.0, 0.15, 0.0), NO_TURN); // semelle
+    hexc(&mut b, ENAMEL, 2.7, 2.9, 0.55, v(0.0, 0.575, 0.0), NO_TURN); // dalle
+    hexc(&mut b, GOLD, 2.78, 2.78, 0.08, v(0.0, 0.88, 0.0), NO_TURN); // ourlet
+    // Lit de coulée d'or vieilli, sur un liseré d'équipe qui déborde (un
+    // grand plateau tout en couleur d'équipe écrasait le reste vu de dessus).
+    hexc(&mut b, TEAM, 2.2, 2.25, 0.1, v(0.0, 0.95, 0.0), NO_TURN);
+    hexc(&mut b, OLD_GOLD, 1.85, 1.95, 0.12, v(0.0, 1.0, 0.0), NO_TURN);
+    for k in 0..3 {
+        // Rigoles : trois barres en étoile.
+        plate(&mut b, GLOW, [3.3, 0.04, 0.16], 0.01, v(0.0, 1.08, 0.0), v(0.0, k as f32 * PI / 3.0, 0.0));
+    }
+    b.cylinder(EMERALD_STONE, 0.6, 0.06, v(0.0, 1.09, 0.0), NO_TURN); // nappe
+    b.mirrored(|b, s| {
+        // Pylône : prisme hexagonal effilé, deux bagues émeraude, chapiteau
+        // d'or vieilli et trois lames de couronne.
+        hexc(b, GOLD, 0.42, 0.6, 4.3, v(s * 2.25, 3.1, 0.0), NO_TURN);
+        hexc(b, GLOW, 0.59, 0.59, 0.06, v(s * 2.25, 1.8, 0.0), NO_TURN);
+        hexc(b, GLOW, 0.52, 0.52, 0.06, v(s * 2.25, 3.6, 0.0), NO_TURN);
+        hexc(b, OLD_GOLD, 0.62, 0.5, 0.35, v(s * 2.25, 5.4, 0.0), NO_TURN); // chapiteau
+        for k in -1..=1 {
+            let k = k as f32;
+            blade(b, GOLD, v(s * 2.25 + k * 0.2, 5.5, 0.0), v(0.0, 0.0, -k * 0.4), 0.55);
+        }
+        // Contrefort d'émail, côté extérieur.
+        plate(b, ENAMEL, [0.35, 1.6, 1.3], 0.08, v(s * 2.6, 1.6, 0.0), v(0.0, 0.0, -s * 0.2));
+        // Tige qui tient le moule.
+        b.cylinder(OLD_GOLD, 0.05, 0.4, v(s * 0.5, 4.5, 0.0), NO_TURN);
+    });
+    // La poutre, et son dos d'émail d'équipe (vu de dessus).
+    plate(&mut b, OLD_GOLD, [4.5, 0.5, 0.8], 0.08, v(0.0, 4.9, 0.0), NO_TURN);
+    plate(&mut b, TEAM, [3.6, 0.08, 0.6], 0.03, v(0.0, 5.18, 0.0), NO_TURN);
+    // Le moule : une cloche hexagonale renversée, large en bas.
+    hexc(&mut b, GOLD, 0.55, 1.2, 1.3, v(0.0, 3.65, 0.0), NO_TURN);
+    hexc(&mut b, TEAM, 1.26, 1.26, 0.12, v(0.0, 3.0, 0.0), NO_TURN); // ourlet d'équipe
+    hexc(&mut b, GLOW, 0.57, 0.57, 0.06, v(0.0, 4.3, 0.0), NO_TURN);
+    // Le jet de coulée : un mince filet émeraude qui descend jusqu'à la nappe.
+    b.cylinder(GLOW, 0.07, 1.9, v(0.0, 2.0, 0.0), NO_TURN);
+    b
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1111,7 +1289,7 @@ mod tests {
         let emitters: Vec<usize> = (0..types.len()).filter(|&i| types[i].field_radius > 0.0).collect();
         assert_eq!(emitters, vec![ECRIN, RESONATEUR]);
         let needy: Vec<usize> = (0..types.len()).filter(|&i| types[i].needs_field).collect();
-        assert_eq!(needy, vec![ORFEVRERIE, AIGUILLON]);
+        assert_eq!(needy, vec![ORFEVRERIE, AIGUILLON, LAPIDAIRE, VOLIERE, FONDERIE]);
         assert!(CONSTRUCTION.builds_alone() && !CONSTRUCTION.consumes_worker());
         // Raccourcis distincts après « B », et aucun ne vaut « B » lui-même.
         let mut keys: Vec<char> = types.iter().map(|t| t.hotkey).collect();
@@ -1121,6 +1299,32 @@ mod tests {
         assert!(!keys.contains(&'b'));
         // Une ligne de coûts par type d'unité.
         assert_eq!(economy_rules(crate::gisements::resource_infos()).units.len(), unit_types().len());
+    }
+
+    /// Le palier 2 : chaque unité a un bâtiment qui la produit, chaque
+    /// prérequis est un vrai bâtiment du catalogue, et on peut tout
+    /// débloquer en partant de l'Écrin (pas de prérequis en boucle).
+    #[test]
+    fn every_unit_can_be_produced() {
+        use building::*;
+        let types = building_types();
+        for unit in 0..unit_types().len() {
+            assert!(types.iter().any(|t| t.production.iter().any(|o| o.unit_type == unit)), "unité {unit} sans bâtiment");
+        }
+        // Construit tout ce qui devient possible, jusqu'à ne plus rien gagner.
+        let mut completed = vec![false; types.len()];
+        completed[ECRIN] = true;
+        loop {
+            let next = (0..types.len()).find(|&t| !completed[t] && types[t].requires.iter().all(|&r| completed[r]));
+            let Some(next) = next else { break };
+            completed[next] = true;
+        }
+        assert!(completed.iter().all(|&done| done), "bâtiments inatteignables : {completed:?}");
+        for option in types.iter().flat_map(|t| &t.production) {
+            assert!(option.requires.iter().all(|r| r.met(&completed)), "option toujours grisée : {option:?}");
+        }
+        assert_eq!(types[ORFEVRERIE].production[1].requires, vec![Requirement::Building(LAPIDAIRE)]);
+        assert_eq!(types[FONDERIE].production[0].unit_type, kind::TITAN);
     }
 
     /// La courbe de la queue passe bien par ses deux bouts.
