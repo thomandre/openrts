@@ -207,6 +207,10 @@ Deux niveaux de qualité (`GraphicsQuality`) :
 | `OPENRTS_DEMO=economy` | Garde : l'économie en marche (douze Techniciens sur la ligne de Cristal, trois à un Extracteur, Quartier général sélectionné avec trois Techniciens en file et son point de ralliement, compteurs) |
 | `OPENRTS_DEMO=battle` | Deux armées (joueur 1 orange au sud, joueur 2 bleu au nord), chacune devant deux défenses fixes (Tourelles, Épineux, Aiguillons), qui partent à l'attaque-déplacement au bout de 8 s et se rencontrent au milieu. `OPENRTS_FACTION` et `OPENRTS_ENEMY` choisissent les factions, `OPENRTS_STRESS=1` donne 300 contre 300 |
 | `OPENRTS_POP_MAX=100` | Plafond global de population (200 par défaut) |
+| `OPENRTS_AI=0` | L'adversaire ne joue pas (par défaut, une IA basique le tient en partie normale) |
+| `OPENRTS_AI_ATTACK=60` | Délai avant la première vague de l'IA (150 s par défaut) |
+| `OPENRTS_SPEED=8` | Accélère le temps de la partie (pour observer l'IA) |
+| `OPENRTS_SCREENSHOT_DELAY=30` | Instant de la capture automatique (14 s par défaut) |
 | `OPENRTS_SCREENSHOT=capture.png` | Après 14 s : affiche les FPS moyens des 6 dernières secondes, enregistre une capture du rendu et quitte (synchronisation verticale coupée pour mesurer) |
 
 Exemples : `OPENRTS_WINDOWED=1 OPENRTS_STRESS=1 OPENRTS_SCREENSHOT=/tmp/charge.png cargo run --release`,

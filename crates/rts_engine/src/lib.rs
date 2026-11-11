@@ -3,10 +3,12 @@
 //! Cette crate ne connaît aucune faction ni aucune unité précise : elle fournit
 //! la caméra, la couche d'entrées par actions, la sélection, la file des
 //! ordres des joueurs (`orders`), les joueurs (`players`), la navigation
-//! (grille, A*), les bâtiments (pose, chantiers), l'économie, le combat et le rendu
+//! (grille, A*), les bâtiments (pose, chantiers), l'économie, le combat, une IA
+//! adverse basique (`ai`) et le rendu
 //! (module `graphics`). Le contenu (unités, bâtiments, cartes…) vit
 //! dans la crate `rts_game`.
 
+pub mod ai;
 pub mod buildings;
 pub mod camera;
 pub mod collision;
@@ -60,6 +62,8 @@ impl Plugin for RtsEnginePlugin {
                 buildings::BuildingsPlugin,
                 graphics::GraphicsPlugin,
                 devtools::DevToolsPlugin,
-            ));
+            ))
+            // Un `n`-uplet de plugins en compte au plus 15 : celui-ci à part.
+            .add_plugins(ai::AiPlugin);
     }
 }

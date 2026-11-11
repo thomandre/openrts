@@ -3,7 +3,7 @@
 //! Pour l'instant : une carte plate et deux joueurs. Le joueur humain, au
 //! nord, joue la Garde (par défaut), les Sylves ou le Collectif, qui
 //! décide de l'ambiance et du sol ; l'adversaire, au sud, joue une autre
-//! faction (pas encore d'IA). Chacun a sa base de départ et une dizaine
+//! faction, tenue par une IA basique. Chacun a sa base de départ et une dizaine
 //! d'unités de présentation.
 //!
 //! Variables d'environnement utiles en développement :
@@ -22,7 +22,11 @@
 //! - `OPENRTS_DEMO=economy` : l'économie en marche (récolte, production) ;
 //! - `OPENRTS_DEMO=battle` : deux armées qui s'affrontent (300 contre 300
 //!   avec `OPENRTS_STRESS=1`) ;
-//! - `OPENRTS_POP_MAX=100` : plafond global de population.
+//! - `OPENRTS_POP_MAX=100` : plafond global de population ;
+//! - `OPENRTS_AI=0` : l'adversaire ne joue pas (ses unités attendent) ;
+//! - `OPENRTS_AI_ATTACK=60` : délai (s) avant la première attaque de l'IA ;
+//! - `OPENRTS_SPEED=4` : accélère le temps de la partie (pour observer l'IA) ;
+//! - `OPENRTS_SCREENSHOT_DELAY=60` : instant de la capture (en s de temps réel).
 
 mod base;
 mod base_collectif;
@@ -42,6 +46,7 @@ use std::path::PathBuf;
 use bevy::diagnostic::{FrameTimeDiagnosticsPlugin, LogDiagnosticsPlugin};
 use bevy::prelude::*;
 use bevy::window::{MonitorSelection, PresentMode, WindowMode};
+use rts_engine::ai::{AiPlayer, AiPlayers, AiSettings};
 use rts_engine::buildings::BuildingCatalog;
 use rts_engine::camera::RtsCamera;
 use rts_engine::collision::MapBounds;
@@ -66,7 +71,7 @@ const MAP_SIZE: f32 = 100.0;
 /// Le joueur humain.
 pub(crate) const HUMAN: PlayerId = PlayerId(0);
 
-/// Le joueur adverse (pas encore d'IA : ses unités attendent, et ripostent).
+/// Le joueur adverse, tenu par l'IA en partie normale.
 pub(crate) const ENEMY: PlayerId = PlayerId(1);
 
 /// Bleu froid : la couleur d'équipe du second joueur, bien distincte de
@@ -371,8 +376,18 @@ fn main() {
         app.insert_resource(panels);
     }
     if let Some(path) = screenshot {
-        app.insert_resource(AutoScreenshot { path, delay_secs: 14.0 })
+        let delay_secs = std::env::var("OPENRTS_SCREENSHOT_DELAY").ok().and_then(|d| d.parse().ok()).unwrap_or(14.0);
+        app.insert_resource(AutoScreenshot { path, delay_secs })
             .add_plugins((FrameTimeDiagnosticsPlugin::default(), LogDiagnosticsPlugin::default()));
+    }
+    // `OPENRTS_SPEED=4` : le temps de la partie (et donc la simulation à pas
+    // fixe) va quatre fois plus vite que le temps réel.
+    if let Some(speed) = std::env::var("OPENRTS_SPEED").ok().and_then(|s| s.parse::<f32>().ok()) {
+        app.add_systems(Startup, move |mut time: ResMut<Time<Virtual>>| {
+            time.set_relative_speed(speed.clamp(0.1, 16.0));
+            // Sans quoi un pas d'image trop long est tronqué, et le temps ralentit.
+            time.set_max_delta(std::time::Duration::from_secs_f32(0.25 * speed.max(1.0)));
+        });
     }
     if battle::requested() {
         // La bataille fait elle-même son test de charge (300 contre 300).
@@ -519,10 +534,17 @@ fn spawn_units(
             };
             players.get_mut(HUMAN).stock = Cost::new(stock, 0);
         }
-        // Partie normale : chaque camp, sa base et son armée.
+        // Partie normale : chaque camp, sa base et son armée ; l'IA tient
+        // l'adversaire (sauf `OPENRTS_AI=0`).
         (false, None) => {
             for side in sides {
                 side::spawn_start(&mut commands, side, &buildings, &units, &deposits, frame);
+            }
+            if std::env::var("OPENRTS_AI").as_deref() != Ok("0") {
+                commands.insert_resource(AiPlayers(vec![AiPlayer::new(ENEMY)]));
+                if let Some(secs) = std::env::var("OPENRTS_AI_ATTACK").ok().and_then(|s| s.parse().ok()) {
+                    commands.insert_resource(AiSettings { first_attack_secs: secs, ..default() });
+                }
             }
         }
     }
