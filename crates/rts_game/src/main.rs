@@ -353,7 +353,10 @@ fn main() {
     app.add_plugins(DefaultPlugins.set(WindowPlugin {
         primary_window: Some(Window {
             title: "openRTS".into(),
-            mode: if windowed {
+            // Capture automatique : l'image est dessinée en mémoire (voir
+            // `devtools`), la fenêtre ne sert à rien : invisible et petite.
+            visible: screenshot.is_none(),
+            mode: if windowed || screenshot.is_some() {
                 WindowMode::Windowed
             } else {
                 // Plein écran sans bordure, sur l'écran principal.

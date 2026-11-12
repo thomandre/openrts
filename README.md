@@ -297,7 +297,7 @@ Two quality levels (`GraphicsQuality`):
 | `OPENRTS_SPEED=8` | Speeds up game time (to watch the AI) |
 | `OPENRTS_RELIEF=0` | Flat map (no plateaus, ramps or cliffs) in a normal game |
 | `OPENRTS_FOG=0` | No fog of war (everything visible). Demos (`OPENRTS_DEMO`) do without it by default; `OPENRTS_FOG=1` turns it back on |
-| `OPENRTS_SCREENSHOT=capture.png` | After 14 s: prints the average FPS of the last 6 seconds, saves a screenshot of the render and quits (vsync off to measure); skips the menu |
+| `OPENRTS_SCREENSHOT=capture.png` | After 14 s: prints the average FPS of the last 6 seconds, saves a screenshot of the render and quits (vsync off); skips the menu. The window stays invisible (the image is rendered in memory); macOS slows hidden windows down, so measure FPS in a normal game instead |
 | `OPENRTS_SCREENSHOT_DELAY=30` | Time of the automatic screenshot (14 s by default) |
 
 Examples: `OPENRTS_WINDOWED=1 OPENRTS_STRESS=1 OPENRTS_SCREENSHOT=/tmp/stress.png cargo run --release`,
