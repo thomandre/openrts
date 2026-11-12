@@ -31,7 +31,7 @@ use crate::graphics::textures::detail_images;
 use crate::graphics::Hover;
 use crate::players::{Owner, PlayerId};
 use crate::selection::{Selectable, SelectionRing};
-use crate::simulation::{MoveSpeed, SimPosition};
+use crate::simulation::{MoveSpeed, MoveTarget, SimPosition};
 
 pub use crate::graphics::animation::{Motion, Pulse};
 pub use crate::graphics::shapes::PartShape;
@@ -406,6 +406,65 @@ fn placed(at: Vec3, rotation: Vec3) -> Transform {
 pub struct HoverMotion {
     pub amplitude: f32,
     pub frequency: f32,
+    /// Se pose pour combattre : il vole tant qu'il se déplace, et se pose
+    /// dès qu'il s'arrête (pour tirer, ou arrivé). Posé, c'est une unité au
+    /// sol : il bouscule et se fait bousculer, et ne voit pas plus haut que
+    /// lui (voir [`Lander`]).
+    pub lands: bool,
+}
+
+/// Un volant qui se pose quand il ne se déplace pas (voir
+/// [`HoverMotion::lands`]). La simulation change sa couche de collision
+/// ([`Collider::layer`]) ; l'affichage le fait descendre en douceur.
+#[derive(Component, Debug, Clone, Copy)]
+pub struct Lander {
+    /// Altitude de vol, perdue une fois posé.
+    pub altitude: f32,
+    /// Hauteur du centre du modèle (l'anneau de sélection est à `-center`).
+    center: f32,
+    /// Amplitude du flottement en vol (il cesse une fois posé).
+    hover: f32,
+    /// Affichage : 0 en vol, 1 posé.
+    pub landed: f32,
+}
+
+/// Simulation : en vol s'il a une destination, au sol sinon. Avant la
+/// navigation : posé, il demande un chemin comme une unité au sol.
+pub(crate) fn land_or_fly(mut landers: Query<(&mut Collider, Has<MoveTarget>), With<Lander>>) {
+    for (mut collider, moving) in &mut landers {
+        let layer = if moving { CollisionLayer::Air } else { CollisionLayer::Ground };
+        if collider.layer != layer {
+            collider.layer = layer;
+        }
+    }
+}
+
+/// Affichage : descente ou envol en une demi-seconde environ ; l'anneau de
+/// sélection reste au sol.
+pub(crate) fn animate_landing(
+    time: Res<Time>,
+    mut landers: Query<(&mut Lander, &Collider, &Children)>,
+    mut rings: Query<&mut Transform, With<SelectionRing>>,
+    mut bodies: Query<&mut Hover>,
+) {
+    let blend = 1.0 - (-6.0 * time.delta_secs()).exp();
+    for (mut lander, collider, children) in &mut landers {
+        let wanted = if collider.layer == CollisionLayer::Ground { 1.0 } else { 0.0 };
+        if (lander.landed - wanted).abs() < 1e-3 {
+            continue;
+        }
+        lander.landed += (wanted - lander.landed) * blend;
+        let ring_y = -lander.center - lander.altitude * (1.0 - lander.landed) + 0.03;
+        for child in children.iter() {
+            if let Ok(mut ring) = rings.get_mut(child) {
+                ring.translation.y = ring_y;
+            }
+            // Posé, les pieds au sol : plus de flottement.
+            if let Ok(mut hover) = bodies.get_mut(child) {
+                hover.amplitude = lander.hover * (1.0 - lander.landed);
+            }
+        }
+    }
 }
 
 /// Description d'un type d'unité, purement en données.
@@ -789,6 +848,9 @@ impl UnitCatalog {
                 }
                 body.with_children(|body| spawn_model(body, visual, jitter, self.materials_for(self.faction_of(type_index), owner)));
             })
+            .insert_if(Lander { altitude, center, hover: unit_type.hover.map_or(0.0, |h| h.amplitude), landed: 0.0 }, || {
+                unit_type.hover.is_some_and(|h| h.lands)
+            })
             .id()
     }
 }
@@ -976,6 +1038,36 @@ fn surface_material(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Un volant qui se pose : en vol tant qu'il va quelque part, posé (au
+    /// sol pour les collisions) une fois arrivé.
+    #[test]
+    fn a_lander_flies_while_moving_and_lands_when_it_stops() {
+        use crate::simulation::SimulationPlugin;
+        use bevy::time::TimeUpdateStrategy;
+        let mut app = App::new();
+        app.add_plugins((MinimalPlugins, SimulationPlugin))
+            .insert_resource(TimeUpdateStrategy::ManualDuration(std::time::Duration::from_secs_f64(1.0 / 32.0)));
+        let lander = app
+            .world_mut()
+            .spawn((
+                SimPosition::new(Vec2::ZERO),
+                MoveSpeed(6.0),
+                Collider { radius: 0.5, mass: 1.0, layer: CollisionLayer::Air },
+                Lander { altitude: 3.0, center: 0.5, hover: 0.1, landed: 0.0 },
+                MoveTarget(Vec2::new(6.0, 0.0)),
+            ))
+            .id();
+        let layer = |app: &App| app.world().get::<Collider>(lander).unwrap().layer;
+        app.update();
+        app.update();
+        assert_eq!(layer(&app), CollisionLayer::Air);
+        for _ in 0..80 {
+            app.update();
+        }
+        assert!(app.world().get::<MoveTarget>(lander).is_none(), "arrivé");
+        assert_eq!(layer(&app), CollisionLayer::Ground);
+    }
 
     fn palette() -> Palette {
         let plain = SurfaceStyle::new(Color::WHITE, 0.0, 0.5, SurfaceDetail::Smooth);

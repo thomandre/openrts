@@ -82,6 +82,8 @@ impl Plugin for SimulationPlugin {
                         .chain()
                         .in_set(SimSet::Navigation),
                     move_units.in_set(SimSet::Movement),
+                    // Les volants qui se posent : couche choisie avant la navigation.
+                    crate::units::land_or_fly.after(SimSet::Orders).before(SimSet::Navigation),
                 ),
             )
             .add_systems(PostUpdate, sync_transforms.before(TransformSystems::Propagate));

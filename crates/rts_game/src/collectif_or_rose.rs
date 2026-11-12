@@ -133,18 +133,18 @@ pub fn ground_pattern() -> GroundPattern {
 pub fn unit_types() -> Vec<UnitType> {
     vec![
         UnitType {
-            hover: Some(HoverMotion { amplitude: 0.15, frequency: 0.25 }),
+            hover: Some(HoverMotion { amplitude: 0.15, frequency: 0.25, lands: false }),
             ..unit("Collecteur", collecteur(), 0.55, 0.8, 4.2)
         },
         unit("Automate", automate(), 0.48, 1.0, 3.4),
         // Le Fauve prend la place (et les stats) du Perceur.
         unit("Fauve", fauve(), 1.0, 3.0, 4.4),
         UnitType {
-            hover: Some(HoverMotion { amplitude: 0.25, frequency: 0.4 }),
+            hover: Some(HoverMotion { amplitude: 0.25, frequency: 0.4, lands: false }),
             ..unit("Essaim", essaim(), 0.9, 0.5, 5.8)
         },
         UnitType {
-            hover: Some(HoverMotion { amplitude: 0.2, frequency: 0.08 }),
+            hover: Some(HoverMotion { amplitude: 0.2, frequency: 0.08, lands: false }),
             ..unit("Essaimeur", essaimeur(), 2.2, 10.0, 2.2)
         },
         unit("Titan", titan(), 2.1, 18.0, 1.7),

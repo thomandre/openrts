@@ -34,6 +34,7 @@ use bevy::prelude::*;
 
 use crate::collision::{MapBounds, StaticObstacle};
 use crate::simulation::{SimPosition, SimSet};
+use crate::units::Lander;
 
 /// Écart de hauteur (mètres) au-delà duquel on ne passe plus d'une case à sa
 /// voisine : la case haute est une falaise. Une rampe de 7,5 m pour un
@@ -627,7 +628,10 @@ impl Plugin for TerrainPlugin {
             .add_systems(FixedUpdate, sync_cliffs.before(SimSet::Navigation))
             .add_systems(
                 PostUpdate,
-                follow_terrain.after(crate::simulation::sync_transforms).before(TransformSystems::Propagate),
+                (crate::units::animate_landing, follow_terrain)
+                    .chain()
+                    .after(crate::simulation::sync_transforms)
+                    .before(TransformSystems::Propagate),
             );
     }
 }
@@ -651,13 +655,12 @@ fn sync_cliffs(mut commands: Commands, terrain: Res<Terrain>, cliffs: Query<Enti
     }
 }
 
-/// Pose chaque entité [`OnTerrain`] sur le sol affiché, à son décalage.
-fn follow_terrain(terrain: Res<Terrain>, mut entities: Query<(&TerrainOffset, &mut Transform)>) {
-    if terrain.is_flat() && !terrain.is_changed() {
-        return;
-    }
-    for (offset, mut transform) in &mut entities {
-        let y = offset.0 + terrain.height_at(transform.translation.xz());
+/// Pose chaque entité [`OnTerrain`] sur le sol affiché, à son décalage
+/// (moins l'altitude perdue par un volant posé, voir [`Lander`]).
+fn follow_terrain(terrain: Res<Terrain>, mut entities: Query<(&TerrainOffset, &mut Transform, Option<&Lander>)>) {
+    for (offset, mut transform, lander) in &mut entities {
+        let landed = lander.map_or(0.0, |l| l.altitude * l.landed);
+        let y = offset.0 - landed + terrain.height_at(transform.translation.xz());
         // N'écrire que si ça change (pas de propagation inutile).
         if (transform.translation.y - y).abs() > 1e-4 {
             transform.translation.y = y;

@@ -175,8 +175,11 @@ A hit deals the weapon's damage, plus its bonus, minus the target's armor
   colors, sparks, collapsing wrecks.
 - A killed unit frees its supply; a destroyed building frees its footprint
   (units can pass again) and the supply it provided.
-- The Faucon flies over units and buildings but counts as a ground unit in
-  combat: every weapon can hit it.
+- The Faucon flies while it moves (over units, buildings and cliffs) and
+  **lands to fight**: as soon as it stops, to shoot or because it arrived,
+  it sets down and becomes a ground unit (it pushes and gets pushed, and
+  no longer sees higher than itself). It counts as a ground unit in combat
+  either way: every weapon can hit it.
 
 ### Fog of war
 

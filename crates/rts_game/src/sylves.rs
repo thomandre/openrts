@@ -152,7 +152,7 @@ pub fn unit_types() -> Vec<UnitType> {
         unit("Lanceur de spores", lanceur(), 1.0, 4.0, 2.2),
         unit("Gardien", gardien(), 1.9, 14.0, 2.0),
         UnitType {
-            hover: Some(HoverMotion { amplitude: 0.18, frequency: 0.35 }),
+            hover: Some(HoverMotion { amplitude: 0.18, frequency: 0.35, lands: false }),
             ..unit("Samare", samare(), 0.6, 0.8, 6.0)
         },
     ]
