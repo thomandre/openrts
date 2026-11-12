@@ -179,10 +179,10 @@ pub fn match_terrain(bounds: Rect) -> Terrain {
         v(-36.0, -30.0),
         v(-60.0, -32.0),
     ];
-    let base_ramp = Ramp { bottom: v(14.0, -8.6), top: v(14.0, -16.4), width: 6.5 };
+    let base_ramp = Ramp { bottom: v(14.0, -8.6), top: v(14.0, -16.4), width: 8.0 };
     // La butte ouest, et sa rampe vers le centre.
     let mesa = vec![v(-35.0, 3.0), v(-33.0, -2.0), v(-28.0, -4.0), v(-20.0, -3.0), v(-17.0, 2.0), v(-21.0, 7.0), v(-30.0, 7.0)];
-    let mesa_ramp = Ramp { bottom: v(-13.1, 2.0), top: v(-20.9, 2.0), width: 5.5 };
+    let mesa_ramp = Ramp { bottom: v(-13.1, 2.0), top: v(-20.9, 2.0), width: 8.0 };
 
     let mirror = |points: &[Vec2]| points.iter().map(|p| -*p).collect::<Vec<_>>();
     let flip = |ramp: Ramp| Ramp { bottom: -ramp.bottom, top: -ramp.top, ..ramp };
@@ -194,4 +194,28 @@ pub fn match_terrain(bounds: Rect) -> Terrain {
     ];
     let ramps = vec![base_ramp, flip(base_ramp), mesa_ramp, flip(mesa_ramp)];
     Terrain::new(bounds, DEFAULT_LEVEL_HEIGHT, plateaus, ramps)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rts_engine::navigation::{plan_path, NavGrid, PathScratch};
+
+    /// Les plus grosses unités (le Bastion : 1,8 m de rayon) descendent de
+    /// leur base et montent sur les buttes.
+    #[test]
+    fn big_units_can_cross_the_map() {
+        let bounds = Rect::new(-50.0, -50.0, 50.0, 50.0);
+        let terrain = match_terrain(bounds);
+        let mut grid = NavGrid::new(bounds, 1.0);
+        grid.set_terrain(&terrain);
+        grid.set_obstacles(terrain.cliff_rects().into_iter());
+        let mut scratch = PathScratch::default();
+        for radius in [0.5, 1.2, 1.8] {
+            for goal in [Vec2::new(0.0, 22.0), Vec2::new(-26.0, 2.0), Vec2::new(26.0, -2.0)] {
+                let path = plan_path(&grid, Vec2::new(2.5, -23.5), goal, radius, &mut scratch).expect("un chemin");
+                assert!(path.goal.distance(goal) < 1.0, "rayon {radius} : vers {goal}, arrêt en {}", path.goal);
+            }
+        }
+    }
 }
